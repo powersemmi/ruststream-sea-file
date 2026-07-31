@@ -1,0 +1,17 @@
+[package]
+name = "ruststream-sea-file"
+description = "File and stdio stream implementation of the RustStream broker contract, built on sea-streamer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../README.md"
+keywords = ["file", "stdio", "streaming", "broker", "faststream"]
+categories = ["asynchronous", "network-programming"]
+
+[lints]
+workspace = true
+
+[dependencies]
