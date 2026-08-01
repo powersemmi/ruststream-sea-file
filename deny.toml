@@ -18,6 +18,10 @@ allow = [
     # unicode-ident is (MIT OR Apache-2.0) AND Unicode-3.0; the Unicode license
     # only covers the embedded character tables and is permissive.
     "Unicode-3.0",
+    # The client's file-watcher tree (notify/inotify): ISC is OSI-approved and
+    # permissive; CC0-1.0 (notify) is a public-domain dedication.
+    "ISC",
+    "CC0-1.0",
 ]
 
 [bans]

@@ -5,13 +5,33 @@ members = ["crates/ruststream-sea-file"]
 [workspace.package]
 version = "0.6.0"
 edition = "2024"
-rust-version = "1.85"
+# 1.88 rather than the core's 1.85 floor: the RustSec fix for the time crate (a
+# sea-streamer dependency) resolves only from 1.88 (a dependent may exceed its
+# dependency's floor).
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream-sea-file"
 authors = ["RustStream contributors"]
 
 [workspace.dependencies]
 ruststream-sea-file = { path = "crates/ruststream-sea-file" }
+
+ruststream = { version = ">=0.6.0, <0.7.0", default-features = false }
+
+# The 1.0 release-candidate line: edition 2024 and the 1.85 floor, matching the core exactly
+# (the 0.5 stable line is over a year older). Pre-releases must be pinned explicitly.
+# The client's runtime features are mutually exclusive upstream; tokio is this project's
+# hardcoded runtime, so it is forwarded unconditionally - without it the build compiles and
+# then panics at runtime.
+sea-streamer-types = { version = "=1.0.0-rc.1", default-features = false }
+sea-streamer-file = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio"] }
+sea-streamer-stdio = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio"] }
+base64 = "0.22"
+bytes = "1"
+futures = "0.3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
