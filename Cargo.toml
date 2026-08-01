@@ -16,7 +16,7 @@ authors = ["RustStream contributors"]
 [workspace.dependencies]
 ruststream-sea-file = { path = "crates/ruststream-sea-file" }
 
-ruststream = { version = "0.6.0", default-features = false }
+ruststream = { version = ">=0.6.0, <0.7.0", default-features = false }
 
 # The 1.0 release-candidate line: edition 2024 and the 1.85 floor, matching the core exactly
 # (the 0.5 stable line is over a year older). Pre-releases must be pinned explicitly.
