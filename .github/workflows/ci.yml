@@ -61,6 +61,9 @@ jobs:
       - name: cargo check (all features)
         run: cargo check --workspace --all-targets --all-features
 
+      # The full suite - conformance, lifecycle, seeking, replay, and the stdio loopback -
+      # runs on temp files and in-process pipes; there is no external broker, which is the
+      # point of the crate.
       - name: cargo test
         run: cargo test --workspace --all-features
 
