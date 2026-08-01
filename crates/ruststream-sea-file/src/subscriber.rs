@@ -171,6 +171,10 @@ async fn drive(
     epoch: Arc<AtomicU64>,
 ) {
     loop {
+        // Captured before awaiting: a delivery resolved out of `next()` was positioned before
+        // any seek that lands mid-await, so it must carry the pre-await generation - stamping
+        // after the await would let a concurrent seek's bump leak onto a stale delivery.
+        let current = epoch.load(Ordering::Acquire);
         tokio::select! {
             biased;
             cmd = cmd_rx.recv() => {
@@ -203,7 +207,6 @@ async fn drive(
             }
             () = out.closed() => break,
             next = consumer.next() => {
-                let current = epoch.load(Ordering::Acquire);
                 match next {
                     Ok(message) => {
                         let item = Stamped {
