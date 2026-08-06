@@ -22,6 +22,7 @@ struct Job {
     id: u64,
 }
 
+// --8<-- [start:seek]
 /// Replays the jobs from the beginning of the file; on the poison marker it jumps to the
 /// live tail, dropping everything still queued from the replay.
 #[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
@@ -36,7 +37,9 @@ async fn replay(job: &Job, Seek(seeker): Seek<FileSeeker>) -> HandlerResult {
     println!("replayed job {}", job.id);
     HandlerResult::Ack
 }
+// --8<-- [end:seek]
 
+// --8<-- [start:publish]
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("replay-demo", "0.1.0"))
@@ -59,3 +62,4 @@ fn app() -> impl App {
             b.include(replay);
         })
 }
+// --8<-- [end:publish]
