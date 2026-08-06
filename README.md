@@ -6,10 +6,17 @@
 
 <p align="center">
   <a href="https://github.com/powersemmi/ruststream-sea-file/actions/workflows/ci.yml"><img src="https://github.com/powersemmi/ruststream-sea-file/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/ruststream-sea-file"><img src="https://img.shields.io/crates/v/ruststream-sea-file.svg" alt="crates.io"></a>
+  <a href="https://crates.io/crates/ruststream-sea-file"><img src="https://img.shields.io/crates/dr/ruststream-sea-file" alt="Recent downloads"></a>
+  <a href="https://docs.rs/ruststream-sea-file"><img src="https://img.shields.io/docsrs/ruststream-sea-file" alt="docs.rs"></a>
   <img src="https://img.shields.io/badge/MSRV-1.88-blue.svg" alt="MSRV 1.88">
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License">
   <a href="https://t.me/ruststream_community"><img src="https://img.shields.io/badge/-Telegram-blue?logo=telegram&label=News" alt="Telegram news channel"></a>
   <a href="https://t.me/ruststream_communuty_ru_chat"><img src="https://img.shields.io/badge/-Telegram-blue?logo=telegram&label=RU" alt="Telegram RU chat"></a>
+</p>
+
+<p align="center">
+  <b><a href="https://powersemmi.github.io/ruststream-sea-file/">Documentation</a></b>
 </p>
 
 ---
@@ -27,10 +34,6 @@ There is no server anywhere in this crate: a broker is a `.ss` stream file on di
 - **Stdio pipelines.** `StdioBroker` turns stdin into subscriptions and stdout into the publisher: `producer | service | consumer` in a shell. Binary payloads survive the line-oriented transport through the same envelope. `loopback()` wires stdout back into stdin for self-contained tests.
 - **Acknowledgement is unsupported.** The transport keeps no consumer positions, so `ack` reports `AckError::Unsupported` instead of reporting success; resume explicitly from a captured `FilePosition`.
 - **In-process test broker** (feature `testing`). `FileTestBroker` reproduces core routing with no file at all and implements `ruststream::testing::TestableBroker`.
-
-## Status
-
-Implemented and verified: the framework's conformance, lifecycle, and seeking suites plus the replay and stdio integration tests run in CI on temp files and in-process pipes, with no external broker. Published on crates.io, tracking the `ruststream` 0.6 line. The design issue is [powersemmi/ruststream#193](https://github.com/powersemmi/ruststream/issues/193).
 
 ## Install
 
@@ -73,7 +76,20 @@ fn app() -> impl App {
 
 ## Test it
 
-Everything runs locally: `just test` covers the unit, conformance, lifecycle, seeking, replay, and stdio suites on temp files and in-process pipes. The `testing` feature offers the in-process `FileTestBroker` for handler tests with no filesystem at all.
+The `testing` feature runs handlers against an in-process stand-in - no file, no pipe, same routing, same ladder. Inject a message as an external producer would with `TestableBroker::inject`, then assert on what a handler published with the free `expect_published`:
+
+```rust
+use ruststream::{Broker, OutgoingMessage};
+use ruststream::testing::{TestableBroker, expect_published};
+use ruststream_sea_file::testing::FileTestBroker;
+
+let broker = FileTestBroker::new().connect().await?;
+broker.inject(OutgoingMessage::new("orders", br#"{"id":1}"#));
+let confirmations =
+    expect_published(&broker, "confirmations", 1, std::time::Duration::from_secs(1)).await;
+```
+
+Transport-specific behaviour (replay to the end-of-stream mark, seeking, the header envelope) is covered by the suite that runs against real stream files and pipes instead: `just test` exercises it on temp files, needing no external broker.
 
 ## Layout
 
