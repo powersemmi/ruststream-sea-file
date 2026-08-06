@@ -71,30 +71,6 @@ fn app() -> impl App {
 }
 ```
 
-## Seek
-
-The subscription opens at a chosen position with the `start_at` clause, and a handler
-repositions its own subscription through the injected seeker:
-
-```rust
-use ruststream::Seeker;
-use ruststream::runtime::{HandlerResult, Seek};
-use ruststream::subscriber;
-use ruststream_sea_file::{FilePosition, FileSeeker, FileStream};
-
-#[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
-async fn replay(job: &Job, Seek(seeker): Seek<FileSeeker>) -> HandlerResult {
-    if job.id == 999 {
-        // Skip the poisoned region: jump to the live tail.
-        if seeker.seek(FilePosition::end()).await.is_err() {
-            return HandlerResult::retry();
-        }
-        return HandlerResult::Ack;
-    }
-    HandlerResult::Ack
-}
-```
-
 ## Test it
 
 Everything runs locally: `just test` covers the unit, conformance, lifecycle, seeking, replay, and stdio suites on temp files and in-process pipes. The `testing` feature offers the in-process `FileTestBroker` for handler tests with no filesystem at all.

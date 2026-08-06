@@ -14,6 +14,26 @@ serde = { version = "1", features = ["derive"] }
 
 The file transport does not build on Windows, an upstream constraint of the file client.
 
+## Capabilities
+
+Which of the framework's optional capability traits this crate implements natively:
+
+| Capability | Native | Notes |
+| --- | --- | --- |
+| `Subscribe` | Yes | Both connected brokers resolve a string-literal stream key, so `#[subscriber("key")]` works without a descriptor. See [Subscriptions](#subscriptions). |
+| `Seekable` + `Positioned` | Yes | `FileSubscriber` mints a `FileSeeker`, and `SeaMessage` reports a `FilePosition`. This crate is the framework's reference implementation of the capability. `StdioSubscriber` is not seekable: standard input has no retained log. See [Seeking](#seeking). |
+| `Partitioned` | No | The transport has no partition or key concept; a stream file is a single ordered log. |
+| `BatchSubscriber` | No | The client delivers one message at a time; the framework's own batching layer applies unchanged. |
+| `RequestReply` | No | Neither transport has a reply-address concept, and stdio is one-directional per stream. |
+| `TransactionalPublisher` | No | A stream file has no atomic multi-write unit; each publish appends and flushes on its own. |
+| `OwnedTransactions` | No | Same reason: there is no transaction to own. |
+| `DescribeServer` | Yes | Both brokers report an in-process server spec (`file` with the path, `stdio`), which is what AsyncAPI generation reads. |
+
+Acknowledgement is not a capability trait, and this transport reports it as unsupported: the client
+keeps no consumer positions (its resumable mode is unimplemented upstream), so `ack` and `nack`
+return `AckError::Unsupported` rather than claiming progress that nothing records. Resume is
+explicit instead. See [Acknowledgement](#acknowledgement).
+
 ## The two brokers
 
 `FileBroker::new(path)` records the path of a `.ss` stream file. `StdioBroker::new()` records
