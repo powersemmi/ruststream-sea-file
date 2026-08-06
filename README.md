@@ -30,7 +30,18 @@ There is no server anywhere in this crate: a broker is a `.ss` stream file on di
 
 ## Status
 
-Implemented and verified: the framework's conformance, lifecycle, and seeking suites plus the replay and stdio integration tests run in CI on temp files and in-process pipes, with no external broker. Published on crates.io as `ruststream-sea-file = "0.6"`, tracking the `ruststream` 0.6 line. Design and scope are tracked in [powersemmi/ruststream#193](https://github.com/powersemmi/ruststream/issues/193).
+Implemented and verified: the framework's conformance, lifecycle, and seeking suites plus the replay and stdio integration tests run in CI on temp files and in-process pipes, with no external broker. Published on crates.io, tracking the `ruststream` 0.6 line. The design issue is [powersemmi/ruststream#193](https://github.com/powersemmi/ruststream/issues/193).
+
+## Install
+
+```toml
+[dependencies]
+ruststream = { version = "0.6", features = ["macros", "json"] }
+ruststream-sea-file = "0.6"
+serde = { version = "1", features = ["derive"] }
+```
+
+The file transport is not supported on Windows (an upstream constraint of the file client).
 
 ## Write a service
 
