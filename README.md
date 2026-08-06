@@ -16,7 +16,7 @@
 
 `ruststream-sea-file` implements the RustStream broker contract over [`sea-streamer-file`](https://crates.io/crates/sea-streamer-file) and [`sea-streamer-stdio`](https://crates.io/crates/sea-streamer-stdio). Handlers, routers, codecs, and middleware come from the framework; this crate supplies the transport - and nothing broker-specific leaks back into the framework.
 
-There is no server anywhere in this crate: a broker is a `.ss` stream file on disk (durable, replayable, shared between processes) or the process's own standard input and output (a service as a stage of a shell pipeline). That makes it the zero-infrastructure entry point to the framework - and the reference implementation of the `Seekable` capability.
+There is no server anywhere in this crate: a broker is a `.ss` stream file on disk (durable, replayable, shared between processes) or the process's own standard input and output (a service as a stage of a shell pipeline). That makes it the zero-infrastructure entry point to the framework, and the reference implementation of the `Seekable` capability.
 
 ## Features
 
@@ -25,12 +25,12 @@ There is no server anywhere in this crate: a broker is a `.ss` stream file on di
 - **The `Seekable` capability.** `FileSubscriber` mints a `FileSeeker`; positions are `FilePosition::{beginning, end, sequence, timestamp}`. Captured positions (`Positioned::position`) carry the framework's pinned semantics: seeking to one redelivers exactly that message. The `start_at(..)` clause and the `Seek` handler parameter work out of the box.
 - **Headers without breaking the file format.** A text-safe envelope is applied only when a message actually carries headers; payloads published without headers stay verbatim, so stream files remain readable by any `sea-streamer` consumer and existing files remain readable by this crate.
 - **Stdio pipelines.** `StdioBroker` turns stdin into subscriptions and stdout into the publisher: `producer | service | consumer` in a shell. Binary payloads survive the line-oriented transport through the same envelope. `loopback()` wires stdout back into stdin for self-contained tests.
-- **Honest acknowledgement.** The transport keeps no consumer positions, so `ack` reports `AckError::Unsupported` instead of pretending; resume explicitly from a captured `FilePosition`.
+- **Acknowledgement is unsupported.** The transport keeps no consumer positions, so `ack` reports `AckError::Unsupported` instead of reporting success; resume explicitly from a captured `FilePosition`.
 - **In-process test broker** (feature `testing`). `FileTestBroker` reproduces core routing with no file at all and implements `ruststream::testing::TestableBroker`.
 
 ## Status
 
-Implemented and verified: the framework's conformance, lifecycle, and seeking suites plus the replay and stdio integration tests run in CI on temp files and in-process pipes - this crate needs no external broker, which is the point. Design and scope are tracked in [powersemmi/ruststream#193](https://github.com/powersemmi/ruststream/issues/193).
+Implemented and verified: the framework's conformance, lifecycle, and seeking suites plus the replay and stdio integration tests run in CI on temp files and in-process pipes, with no external broker. Design and scope are tracked in [powersemmi/ruststream#193](https://github.com/powersemmi/ruststream/issues/193).
 
 ## Write a service
 

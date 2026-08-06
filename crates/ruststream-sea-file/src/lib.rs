@@ -1,19 +1,19 @@
 //! File and stdio stream implementation of the `RustStream` broker contract, built on
 //! `sea-streamer`.
 //!
-//! The gap this crate fills: running a service against a persistent stream without an
-//! external broker. Two transports in one crate, over
+//! Two transports in one crate run a service against a persistent stream with no external
+//! broker, over
 //! [`sea-streamer-file`](https://docs.rs/sea-streamer-file) and
 //! [`sea-streamer-stdio`](https://docs.rs/sea-streamer-stdio):
 //!
 //! - [`FileBroker`] - a persistent, replayable stream on disk: survives restarts, records
-//!   and replays, and repositioning is first-class - [`FileSubscriber`] implements the
+//!   and replays, and repositions on demand - [`FileSubscriber`] implements the
 //!   framework's `Seekable` capability with pinned captured positions (a sequence rewind is
 //!   inclusive) plus beginning/end/timestamp forms.
 //! - [`StdioBroker`] - standard input and output as one stream, so a service becomes a stage
-//!   of a shell pipeline; something no network broker can offer.
+//!   of a shell pipeline.
 //!
-//! Honest scope: the client keeps no consumer positions (its resumable mode is
+//! Scope and limits: the client keeps no consumer positions (its resumable mode is
 //! unimplemented upstream), so acknowledgement reports
 //! [`AckError::Unsupported`](ruststream::AckError::Unsupported) on both transports - resume
 //! explicitly via the descriptor's start position or a captured [`FilePosition`]. Payloads
