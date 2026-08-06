@@ -19,7 +19,7 @@ use sea_streamer_types::{
 use tokio::sync::OnceCell;
 
 use crate::error::{SeaFileError, box_err};
-use crate::stream::{FileStream, Start};
+use crate::stream::FileStream;
 use crate::subscriber::FileSubscriber;
 use crate::wire;
 
@@ -230,9 +230,13 @@ impl ConnectedFileBroker {
         let key = StreamKey::new(descriptor.stream())
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", descriptor.stream())))?;
         let mut options = FileConsumerOptions::new(ConsumerMode::RealTime);
-        options.set_auto_stream_reset(match descriptor.start_value() {
-            Start::Latest => AutoStreamReset::Latest,
-            Start::Beginning => AutoStreamReset::Earliest,
+        // A live subscription tails the file; where reading begins is the framework's
+        // start_at / Seek surface. Replay is the one mode a seek cannot express: it reads
+        // the retained file from the start and completes the stream at its end.
+        options.set_auto_stream_reset(if descriptor.replay_value() {
+            AutoStreamReset::Earliest
+        } else {
+            AutoStreamReset::Latest
         });
         options.set_live_streaming(!descriptor.replay_value());
         let consumer = self

@@ -38,5 +38,5 @@ pub use error::SeaFileError;
 pub use file::{ConnectedFileBroker, FileBroker, FilePublish, FilePublisher};
 pub use message::{FilePosition, SEQUENCE_HEADER, SeaMessage};
 pub use stdio::{ConnectedStdioBroker, StdioBroker, StdioPublish, StdioPublisher, StdioSubscriber};
-pub use stream::{FileStream, Start};
+pub use stream::FileStream;
 pub use subscriber::{FileSeeker, FileSubscriber};
