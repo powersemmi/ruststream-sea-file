@@ -35,5 +35,8 @@ tracing.workspace = true
 [dev-dependencies]
 ruststream = { workspace = true, features = ["conformance", "testing", "macros", "json"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# 1.0.85 rather than 1: serde_json 1.0.0 declares only `serde = "1.0"` while calling into
+# `BorrowedStrDeserializer` and the 128-bit methods, so the pair it claims to accept does not
+# build. Naming a floor that works keeps the resolution honest instead of pinning it downstream.
+serde_json = "1.0.85"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
