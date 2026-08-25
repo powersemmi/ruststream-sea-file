@@ -11,7 +11,7 @@
 //! ```
 
 // --8<-- [start:pipeline]
-use ruststream_sea_file::prelude::*;
+use ruststream_sea_file::stdio::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]

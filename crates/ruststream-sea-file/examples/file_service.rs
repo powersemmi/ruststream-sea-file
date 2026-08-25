@@ -2,7 +2,7 @@
 //! external broker.
 
 // --8<-- [start:handler]
-use ruststream_sea_file::prelude::*;
+use ruststream_sea_file::file::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

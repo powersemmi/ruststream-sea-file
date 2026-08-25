@@ -49,7 +49,7 @@ The file transport is not supported on Windows (an upstream constraint of the fi
 ## Write a service
 
 ```rust
-use ruststream_sea_file::prelude::*;
+use ruststream_sea_file::file::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

@@ -36,6 +36,16 @@ explicit instead. See [Acknowledgement](#acknowledgement).
 
 ## The two brokers
 
+Each transport is a *form*, with a module of its own carrying that form's types, its `Publish`
+policy alias and its prelude. A service on stream files opens with
+`use ruststream_sea_file::file::prelude::*;` and one on a pipeline with
+`use ruststream_sea_file::stdio::prelude::*;`, and needs nothing else from either crate. A form
+prelude also states that form's capabilities: it re-exports the framework capability traits the
+transport supports, so seeking is in scope on the file form and nothing is on the stdio form.
+Globbing both preludes collides on `Publish` alone, reported at the `use` line; a service that
+genuinely spans both forms globs `ruststream_sea_file::prelude` instead and writes `file::Publish`
+and `stdio::Publish` where they differ.
+
 `FileBroker::new(path)` records the path of a `.ss` stream file. `StdioBroker::new()` records
 nothing at all. Both are synchronous and do no I/O, so both compose with the `#[ruststream::app]`
 builder, and both follow the framework's ladder of consuming transitions:
@@ -126,6 +136,15 @@ writes into the stream file; `StdioPublish` pairs into `StdioPublisher` and writ
 standard output. Each is its broker's default publish policy, so a
 `#[subscriber(.., publish("dest"))]` handler mounted without an explicit publisher replies through
 it.
+
+A service that names a policy explicitly writes `Publish`, not the prefixed name: each form
+aliases its policy vocabulary to prefix-free concept names in its prelude, so an include site
+names the concept and never the transport. Moving a service between the two forms then changes
+the prelude it globs and leaves the composition root alone. A concept a form does not support has
+no name in its prelude at all, which is the same manifest idea applied to policies; both forms
+here support one policy, so `Publish` is the whole vocabulary on each. The prefixed
+`FilePublish` and `StdioPublish` stay at the crate root, where a service mixing both forms needs
+to tell them apart.
 
 The file publisher flushes on every publish: the sink buffers, and live subscribers (and external
 tails of the same file) observe the file, not the buffer.

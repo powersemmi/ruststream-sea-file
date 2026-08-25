@@ -1,19 +1,20 @@
-//! The imports a service on stream files writes every time, in one glob.
+//! The imports a service spanning both transports writes every time, in one glob.
 //!
-//! `use ruststream_sea_file::prelude::*;` brings in the framework's own prelude and this
-//! crate's user-facing surface on top of it: the two brokers, the file subscription
-//! descriptor, the position type its `start_at` clause and its seeker speak in, and the
-//! publish policies. A service file that mounts handlers on a stream file or on standard
-//! input needs nothing else from either crate.
+//! Most services run on one form and glob that form's prelude instead: [`file::prelude`] or
+//! [`stdio::prelude`]. This one is for a service that mounts on both, and differs from them in
+//! two ways.
 //!
-//! It is also this broker's capability manifest. The framework's capability traits are
-//! optional, and the ones a service writes down are those it names in a bound or whose
-//! methods it calls on a value it was handed; the glob carries exactly those, which here
-//! means repositioning a live subscription and reading a delivery's position. What a service
-//! can call is then visible from the import rather than from a table somewhere else. The
-//! capability traits come from the framework, so they are the same items whichever broker
-//! crate re-exports them: a service on two brokers can glob both preludes and let the
-//! compiler check the overlap instead of hand-picking imports.
+//! It carries **no bare `Publish`**. The two forms each name their own policy `Publish`, and at
+//! crate level there is no honest answer to which one that should be, so the form modules come
+//! in instead: write `file::Publish` and `stdio::Publish` where the forms differ. Globbing the
+//! two form preludes together would collide on exactly that name, which rustc reports as
+//! `E0659` at the `use` line - the signal to come here.
+//!
+//! Its capability manifest is the **union** of the forms', so it is a weaker statement than a
+//! form prelude's: it says a capability exists somewhere in this crate, not that it works on
+//! the transport a given handler runs over. The file form can seek and report positions and the
+//! stdio form can do neither, so a service mixing them should read [`file::prelude`] and
+//! [`stdio::prelude`] to see which of its handlers may call what.
 //!
 //! # Examples
 //!
@@ -26,21 +27,29 @@
 //!     id: u64,
 //! }
 //!
-//! // Everything this handler needs came from the one glob, the `Seeker` trait behind
-//! // `seek` included - which is the capability manifest doing its job.
 //! #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
-//! async fn handle(order: &Order, Seek(seeker): Seek<FileSeeker>) -> HandlerResult {
-//!     if order.id == 0 {
-//!         let _ = seeker.seek(FilePosition::end()).await;
-//!     }
+//! async fn record(order: &Order) -> HandlerResult {
+//!     println!("recorded order {}", order.id);
 //!     HandlerResult::Ack
 //! }
 //!
+//! #[subscriber("orders")]
+//! async fn tee(order: &Order) -> HandlerResult {
+//!     println!("teed order {}", order.id);
+//!     HandlerResult::Ack
+//! }
+//!
+//! // The policies are told apart by their form, not by a transport-specific type name.
 //! #[ruststream::app]
 //! fn app() -> impl App {
 //!     RustStream::new(AppInfo::new("orders", "0.1.0"))
 //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-//!             b.include(handle);
+//!             b.after_startup(file::Publish, async move |_publisher| Ok::<_, std::io::Error>(()));
+//!             b.include(record);
+//!         })
+//!         .with_broker(StdioBroker::new(), |b| {
+//!             b.after_startup(stdio::Publish, async move |_publisher| Ok::<_, std::io::Error>(()));
+//!             b.include(tee);
 //!         })
 //! }
 //! ```
@@ -52,21 +61,24 @@
 // it. One import then serves a service file.
 pub use ruststream::prelude::*;
 
-// The capability manifest: the capability traits a service writes down, which are the ones it
-// names in a bound and the ones whose methods it calls on a value it was handed. Both here are
-// the second kind - `Seeker::seek` on the seeker bound by a `Seek<..>` parameter, and
-// `Positioned::position` on a delivered message. The transports implement no capability a
-// service names in a bound - a stream file has no transaction and no request-reply - so this
-// list is an inventory rather than a convenience, and a capability gained later is added here in
-// the same change.
+// The union of the two form manifests, which is why it is the weaker statement: `Seeker` and
+// `Positioned` are the file form's, and the stdio form has neither. A form prelude says what the
+// transport under a handler can do; this says only that something in the crate can.
 pub use ruststream::{Positioned, Seeker};
 
+// The forms themselves, which is how a mixed service reaches `file::Publish` and
+// `stdio::Publish` without either shadowing the other.
+pub use crate::{file, stdio};
+
+// The shared surface, all of it unambiguously named, so a mixed service still writes the broker
+// and descriptor types directly. Only the policy alias needs the form path.
 pub use crate::{
     FileBroker, FilePosition, FilePublish, FileSeeker, FileStream, StdioBroker, StdioPublish,
 };
 
 // Deliberately absent, each for its own reason:
 //
+// - a bare `Publish`: see the note above - the forms disagree, and the disagreement is the point.
 // - `testing`: broker-author and test-harness tooling behind a feature gate, not the surface a
 //   service writes against, so a test module names it and says by that import what it is doing.
 // - the connected brokers, the live publishers and the subscribers (`ConnectedFileBroker`,

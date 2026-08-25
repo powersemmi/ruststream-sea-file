@@ -13,7 +13,7 @@ use std::{fs, io};
 // The prelude covers the service surface, seeking included; the recording hook below works one
 // layer under it, assembling an outgoing message by hand, so it names that layer explicitly.
 use ruststream::OutgoingMessage;
-use ruststream_sea_file::prelude::*;
+use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
 const DEMO_FILE: &str = "/tmp/ruststream-file-replay-example.ss";
@@ -50,7 +50,7 @@ fn app() -> impl App {
         .with_broker(FileBroker::new(DEMO_FILE), |b| {
             // The recording side, as a lifecycle hook: it runs once the broker is connected
             // and the subscriptions are open, so the paired publisher arrives live.
-            b.after_startup(FilePublish, async move |publisher| -> io::Result<()> {
+            b.after_startup(Publish, async move |publisher| -> io::Result<()> {
                 for id in [1u64, 999, 3, 4] {
                     let payload = serde_json::to_vec(&Job { id }).map_err(io::Error::other)?;
                     publisher

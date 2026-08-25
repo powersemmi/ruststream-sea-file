@@ -13,6 +13,12 @@
 //! - [`StdioBroker`] - standard input and output as one stream, so a service becomes a stage
 //!   of a shell pipeline.
 //!
+//! Each transport is a *form*, with a module of its own ([`mod@file`], [`stdio`]) carrying
+//! that form's types, its `Publish` policy alias and a prelude of its own. A service on one
+//! form globs that form's prelude and never writes a form-specific policy name at an include
+//! site; a service spanning both globs the [crate-level prelude](prelude) and reaches the
+//! aliases as `file::Publish` and `stdio::Publish`.
+//!
 //! Scope and limits: the client keeps no consumer positions (its resumable mode is
 //! unimplemented upstream), so acknowledgement reports
 //! [`AckError::Unsupported`](ruststream::AckError::Unsupported) on both transports - resume
@@ -25,10 +31,10 @@
 #![forbid(unsafe_code)]
 
 mod error;
-mod file;
+pub mod file;
 mod message;
 pub mod prelude;
-mod stdio;
+pub mod stdio;
 mod stream;
 mod subscriber;
 #[cfg(feature = "testing")]
