@@ -1,6 +1,7 @@
 //! The stdio transport: [`StdioBroker`], standard input and output as one stream - a service
 //! that composes with ordinary command-line tools.
 
+use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -321,7 +322,10 @@ pub struct StdioPublish;
 impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     type Live = StdioPublisher;
 
-    async fn pair(self, connected: &ConnectedStdioBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedStdioBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
 }

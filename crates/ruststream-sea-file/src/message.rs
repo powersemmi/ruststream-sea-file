@@ -1,5 +1,7 @@
 //! [`SeaMessage`]: a delivered message, shared by the file and stdio transports.
 
+use std::future::{Future, ready};
+
 use bytes::Bytes;
 use ruststream::{AckError, Headers, IncomingMessage, Positioned};
 use sea_streamer_types::{Buffer as _, Message as _, SharedMessage};
@@ -117,11 +119,11 @@ impl IncomingMessage for SeaMessage {
         &self.headers
     }
 
-    async fn ack(self) -> Result<(), AckError> {
-        Err(AckError::Unsupported)
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 
-    async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-        Err(AckError::Unsupported)
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 }

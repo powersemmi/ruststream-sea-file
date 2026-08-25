@@ -2,6 +2,7 @@
 //! stream on disk.
 
 use std::fs;
+use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -346,8 +347,11 @@ pub struct FilePublish;
 impl PublishPolicy<ConnectedFileBroker> for FilePublish {
     type Live = FilePublisher;
 
-    async fn pair(self, connected: &ConnectedFileBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedFileBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
 }
 
