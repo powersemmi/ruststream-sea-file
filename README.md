@@ -39,8 +39,8 @@ There is no server anywhere in this crate: a broker is a `.ss` stream file on di
 
 ```toml
 [dependencies]
-ruststream = { version = "0.6", features = ["macros", "json"] }
-ruststream-sea-file = "0.6"
+ruststream = { version = "0.7", features = ["macros", "json"] }
+ruststream-sea-file = "0.7"
 serde = { version = "1", features = ["derive"] }
 ```
 

@@ -7,8 +7,8 @@ middleware) carry over unchanged - see the
 [RustStream documentation](https://powersemmi.github.io/ruststream/) for those.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "json"] }
-ruststream-sea-file = "0.6"
+ruststream = { version = "0.7", features = ["macros", "json"] }
+ruststream-sea-file = "0.7"
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -136,6 +136,21 @@ tails of the same file) observe the file, not the buffer.
 
 The stdio publisher rejects an empty message with `SeaFileError::Invalid`, because the client's
 line format silently drops empty lines.
+
+### Per-message arguments
+
+RustStream 0.7 unified publishing behind one builder: `publisher.message(&value).publish()` and
+`publisher.raw(&bytes).to(key).publish()` resolve the destination, the codec, and the headers, then
+make a single call to the broker's `Publisher::publish`. A broker that carries an argument of its
+own on each message grafts it onto that same path with a publisher adapter: a step taken on the
+publisher before the builder starts, returning a small publisher that captures the argument, applies
+it to the outgoing message, and delegates to the one underneath. The builder comes along for free.
+
+This transport ships no such step, because it has nothing per-message to carry. The client sends a
+stream key and a payload and accepts nothing else, and the builder already addresses both. What this
+crate decides on top - the header envelope and the per-publish flush - belongs to the transport and
+the publisher rather than to a single message, so a message-level knob for either would describe
+something that is not true of the file.
 
 ## The header envelope
 
