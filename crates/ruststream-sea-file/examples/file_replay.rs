@@ -10,8 +10,6 @@
 
 use std::{fs, io};
 
-// The prelude covers the service surface, seeking included; the recording hook below works one
-// layer under it, assembling an outgoing message by hand, so it names that layer explicitly.
 use ruststream::OutgoingMessage;
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};

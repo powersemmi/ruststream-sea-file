@@ -1,9 +1,7 @@
 //! The stdio transport: [`StdioBroker`], standard input and output as one stream - a service
 //! that composes with ordinary command-line tools.
 //!
-//! This is one of the crate's two forms. Its [`prelude`] is what a service on a shell pipeline
-//! globs, and [`Publish`] is this form's publish policy under the name every form uses, so an
-//! include site names the policy without naming the transport.
+//! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -330,16 +328,9 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     }
 }
 
-/// The plain publish policy of this form, under its prefix-free concept name.
+/// The publish policy of this form, under the name every form uses.
 ///
-/// A form's policy vocabulary is aliased this way in full: every policy the form supports
-/// appears under the concept it implements, so an include site names the concept and never the
-/// transport, and a concept the form lacks has no name at all. This form supports one policy,
-/// so this is the whole of its vocabulary.
-///
-/// This is a publish *policy* - the value a mount site pairs with the connected broker. It is
-/// unrelated to the framework's `runtime::Publish`, which is the publish builder a handler
-/// calls.
+/// This is a publish policy, not the framework's `runtime::Publish` builder.
 ///
 /// # Examples
 ///
@@ -354,32 +345,8 @@ pub use StdioPublish as Publish;
 pub mod prelude {
     //! The imports a service on a shell pipeline writes every time, in one glob.
     //!
-    //! `use ruststream_sea_file::stdio::prelude::*;` brings in the framework's own prelude, the
-    //! shared surface of this crate, and everything the stdio form adds: its broker and its
-    //! policy vocabulary. A subscription here is a plain stream key, resolved through the
-    //! framework's `Subscribe` capability, so this form has no descriptor type to import.
-    //!
-    //! That vocabulary is aliased to prefix-free concept names. Every publish policy a form
-    //! supports appears under the concept it implements, with the transport prefix stripped, so
-    //! an include site names the concept and never the transport; a concept a form does not
-    //! support simply has no name here, and reaching for it fails at the `use` line. That is the
-    //! manifest principle applied to the policy layer, and it is why moving a service between
-    //! forms - or between brokers that follow the convention - changes the prelude it globs and
-    //! leaves the composition root alone. This form supports one policy, so
-    //! [`Publish`] is the whole of its vocabulary; the prefixed
-    //! [`StdioPublish`](crate::StdioPublish) stays at the crate root for a mixed file that needs
-    //! to tell the two forms' policies apart by name.
-    //!
-    //! It is also this form's capability manifest, and this form's is empty. That is the point
-    //! of splitting the preludes per form: standard input is a pipe with no retained log, so
-    //! there is nothing to reposition and nothing to reposition to, and a service that globs
-    //! this prelude gets a compile error the moment it reaches for a capability the transport
-    //! does not have. See the note on the manifest below.
-    //!
-    //! Globbing two form preludes together collides on `Publish` alone, which rustc reports as
-    //! `E0659` at the `use` line rather than at a call site. That is the signal to glob
-    //! [`ruststream_sea_file::prelude`](crate::prelude) instead and write `file::Publish` and
-    //! `stdio::Publish` where the forms differ.
+    //! The framework's prelude, this form's broker, and [`Publish`]. A subscription here is a
+    //! plain stream key, so this form has no descriptor type.
     //!
     //! # Examples
     //!
@@ -411,23 +378,9 @@ pub mod prelude {
     //! }
     //! ```
 
-    // The framework's prelude stops short of brokers on purpose, because which broker a service
-    // runs on is the one thing every service states for itself. Importing a form prelude is that
-    // statement, and a sharper one than a crate path alone: the transport is named on the `use`
-    // line, so the framework's glob can ride along instead of being repeated underneath it.
     pub use ruststream::prelude::*;
 
-    // This form's capability manifest is deliberately empty. `StdioSubscriber` implements no
-    // `Seekable` and there is no stdio seeker to call `Seeker` on: standard input has no
-    // retained log to move around in. `Positioned` is the near miss - both forms deliver the
-    // same message type, so a stdio delivery does report a sequence - but the only thing that
-    // consumes such a position is the file form's seeker, so carrying the trait here would
-    // advertise a round trip this transport cannot make. A service that needs it says so
-    // explicitly and takes on the question of what it means over a pipe.
-
+    // No capability traits: `SeaMessage` implements `Positioned`, but a pipe cannot seek back to
+    // one - do not add it here.
     pub use crate::stdio::{Publish, StdioBroker};
-
-    // Absent for the same reasons as at the crate root: the `testing` module, the connected
-    // broker and live publisher and subscriber, `SeaMessage` and `SEQUENCE_HEADER`,
-    // `SeaFileError`, and the contract traits.
 }

@@ -13,11 +13,9 @@
 //! - [`StdioBroker`] - standard input and output as one stream, so a service becomes a stage
 //!   of a shell pipeline.
 //!
-//! Each transport is a *form*, with a module of its own ([`mod@file`], [`stdio`]) carrying
-//! that form's types, its `Publish` policy alias and a prelude of its own. A service on one
-//! form globs that form's prelude and never writes a form-specific policy name at an include
-//! site; a service spanning both globs the [crate-level prelude](prelude) and reaches the
-//! aliases as `file::Publish` and `stdio::Publish`.
+//! Each transport has a module of its own ([`mod@file`], [`stdio`]) holding that transport's
+//! types, its `Publish` policy and its prelude. A service globs the prelude of the transport it
+//! runs on, or the [crate-level one](prelude) when it spans both.
 //!
 //! Scope and limits: the client keeps no consumer positions (its resumable mode is
 //! unimplemented upstream), so acknowledgement reports

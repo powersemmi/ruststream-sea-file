@@ -1,9 +1,7 @@
 //! The file transport: [`FileBroker`] -> [`ConnectedFileBroker`], a persistent, replayable
 //! stream on disk.
 //!
-//! This is one of the crate's two forms. Its [`prelude`] is what a service on stream files
-//! globs, and [`Publish`] is this form's publish policy under the name every form uses, so an
-//! include site names the policy without naming the transport.
+//! A service on stream files globs this form's [`prelude`] and names its policy [`Publish`].
 
 use std::fs;
 use std::sync::Arc;
@@ -359,16 +357,9 @@ impl DefaultPublish for ConnectedFileBroker {
     type Policy = FilePublish;
 }
 
-/// The plain publish policy of this form, under its prefix-free concept name.
+/// The publish policy of this form, under the name every form uses.
 ///
-/// A form's policy vocabulary is aliased this way in full: every policy the form supports
-/// appears under the concept it implements, so an include site names the concept and never the
-/// transport, and a concept the form lacks has no name at all. This form supports one policy,
-/// so this is the whole of its vocabulary.
-///
-/// This is a publish *policy* - the value a mount site pairs with the connected broker. It is
-/// unrelated to the framework's `runtime::Publish`, which is the publish builder a handler
-/// calls.
+/// This is a publish policy, not the framework's `runtime::Publish` builder.
 ///
 /// # Examples
 ///
@@ -383,32 +374,8 @@ pub use FilePublish as Publish;
 pub mod prelude {
     //! The imports a service on a stream file writes every time, in one glob.
     //!
-    //! `use ruststream_sea_file::file::prelude::*;` brings in the framework's own prelude, the
-    //! shared surface of this crate, and everything the file form adds: its broker, its
-    //! subscription descriptor, the position type its `start_at` clause and its seeker speak
-    //! in, and its policy vocabulary.
-    //!
-    //! That vocabulary is aliased to prefix-free concept names. Every publish policy a form
-    //! supports appears under the concept it implements, with the transport prefix stripped, so
-    //! an include site names the concept and never the transport; a concept a form does not
-    //! support simply has no name here, and reaching for it fails at the `use` line. That is the
-    //! manifest principle applied to the policy layer, and it is why moving a service between
-    //! forms - or between brokers that follow the convention - changes the prelude it globs and
-    //! leaves the composition root alone. This form supports one policy, so
-    //! [`Publish`] is the whole of its vocabulary; the prefixed
-    //! [`FilePublish`](crate::FilePublish) stays at the crate root for a mixed file that needs
-    //! to tell the two forms' policies apart by name.
-    //!
-    //! It is also this form's capability manifest. The framework's capability traits are
-    //! optional, and the ones a service writes down are those it names in a bound and those
-    //! whose methods it calls on a value it was handed; the glob carries exactly those, for
-    //! this form. Reading a manifest therefore tells a reader what the transport underneath
-    //! this service can do, not what the crate can do somewhere else.
-    //!
-    //! Globbing two form preludes together collides on `Publish` alone, which rustc reports as
-    //! `E0659` at the `use` line rather than at a call site. That is the signal to glob
-    //! [`ruststream_sea_file::prelude`](crate::prelude) instead and write `file::Publish` and
-    //! `stdio::Publish` where the forms differ.
+    //! The framework's prelude, this form's broker, subscription descriptor, position and seeker
+    //! types, the seeking capability traits, and [`Publish`].
     //!
     //! # Examples
     //!
@@ -421,8 +388,6 @@ pub mod prelude {
     //!     id: u64,
     //! }
     //!
-    //! // Everything this handler needs came from the one glob, the `Seeker` trait behind
-    //! // `seek` included - which is the capability manifest doing its job.
     //! #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
     //! async fn handle(order: &Order, Seek(seeker): Seek<FileSeeker>) -> HandlerResult {
     //!     if order.id == 0 {
@@ -440,27 +405,11 @@ pub mod prelude {
     //! }
     //! ```
 
-    // The framework's prelude stops short of brokers on purpose, because which broker a service
-    // runs on is the one thing every service states for itself. Importing a form prelude is that
-    // statement, and a sharper one than a crate path alone: the transport is named on the `use`
-    // line, so the framework's glob can ride along instead of being repeated underneath it.
     pub use ruststream::prelude::*;
-
-    // This form's capability manifest: the capability traits a service writes down, which are
-    // the ones it names in a bound and the ones whose methods it calls on a value it was handed.
-    // Both here are the second kind - `Seeker::seek` on the seeker a `Seek<..>` parameter binds,
-    // and `Positioned::position` on a delivered message, which on this form is a position the
-    // seeker accepts back. This form implements no capability a service names in a bound: a
-    // stream file has no transaction and no request-reply.
+    // `Seekable` is implemented here too, but on the subscriber the runtime consumes, never named
+    // by a service - do not add it.
     pub use ruststream::{Positioned, Seeker};
 
     pub use crate::file::{FileBroker, Publish};
     pub use crate::{FilePosition, FileSeeker, FileStream};
-
-    // Absent for the same reasons as at the crate root: the `testing` module, the connected
-    // broker and live publisher and subscriber, `SeaMessage` and `SEQUENCE_HEADER`,
-    // `SeaFileError`, and the contract traits. `Seekable` is absent although this form
-    // implements it, because it sits on `FileSubscriber` - the subscriber side, which the
-    // runtime's plumbing consumes. A service names the seeker type in `Seek<FileSeeker>` and
-    // calls `Seeker` on what it gets back; it never names that trait.
 }

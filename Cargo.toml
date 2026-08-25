@@ -32,9 +32,7 @@ bytes = "1"
 futures = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-# 0.1.40 rather than 0.1: the crate records `Duration` and `Option<&str>` field values, and the
-# `Value` impls for both arrived well after 0.1.0. A bare "0.1" is a promise the code cannot keep,
-# which the minimal-versions job is what surfaces.
+# The `Value` impls for `Duration` and `Option<&str>` land in 0.1.40; do not loosen to "0.1".
 tracing = "0.1.40"
 
 [workspace.lints.rust]

@@ -36,15 +36,11 @@ explicit instead. See [Acknowledgement](#acknowledgement).
 
 ## The two brokers
 
-Each transport is a *form*, with a module of its own carrying that form's types, its `Publish`
-policy alias and its prelude. A service on stream files opens with
-`use ruststream_sea_file::file::prelude::*;` and one on a pipeline with
-`use ruststream_sea_file::stdio::prelude::*;`, and needs nothing else from either crate. A form
-prelude also states that form's capabilities: it re-exports the framework capability traits the
-transport supports, so seeking is in scope on the file form and nothing is on the stdio form.
-Globbing both preludes collides on `Publish` alone, reported at the `use` line; a service that
-genuinely spans both forms globs `ruststream_sea_file::prelude` instead and writes `file::Publish`
-and `stdio::Publish` where they differ.
+Each transport has a module of its own holding that transport's types, its `Publish` policy and
+its prelude. A service on stream files opens with `use ruststream_sea_file::file::prelude::*;`
+and one on a pipeline with `use ruststream_sea_file::stdio::prelude::*;`, and needs nothing else
+from either crate. A service that spans both globs `ruststream_sea_file::prelude` and writes
+`file::Publish` and `stdio::Publish` where the two differ.
 
 `FileBroker::new(path)` records the path of a `.ss` stream file. `StdioBroker::new()` records
 nothing at all. Both are synchronous and do no I/O, so both compose with the `#[ruststream::app]`
@@ -137,14 +133,9 @@ standard output. Each is its broker's default publish policy, so a
 `#[subscriber(.., publish("dest"))]` handler mounted without an explicit publisher replies through
 it.
 
-A service that names a policy explicitly writes `Publish`, not the prefixed name: each form
-aliases its policy vocabulary to prefix-free concept names in its prelude, so an include site
-names the concept and never the transport. Moving a service between the two forms then changes
-the prelude it globs and leaves the composition root alone. A concept a form does not support has
-no name in its prelude at all, which is the same manifest idea applied to policies; both forms
-here support one policy, so `Publish` is the whole vocabulary on each. The prefixed
-`FilePublish` and `StdioPublish` stay at the crate root, where a service mixing both forms needs
-to tell them apart.
+A service that names a policy explicitly writes `Publish`, which each form's prelude supplies for
+its own transport. The prefixed `FilePublish` and `StdioPublish` stay at the crate root, for a
+service mixing both forms.
 
 The file publisher flushes on every publish: the sink buffers, and live subscribers (and external
 tails of the same file) observe the file, not the buffer.
@@ -158,18 +149,10 @@ line format silently drops empty lines.
 
 ### Per-message arguments
 
-RustStream 0.7 unified publishing behind one builder: `publisher.message(&value).publish()` and
-`publisher.raw(&bytes).to(key).publish()` resolve the destination, the codec, and the headers, then
-make a single call to the broker's `Publisher::publish`. A broker that carries an argument of its
-own on each message grafts it onto that same path with a publisher adapter: a step taken on the
-publisher before the builder starts, returning a small publisher that captures the argument, applies
-it to the outgoing message, and delegates to the one underneath. The builder comes along for free.
-
-This transport ships no such step, because it has nothing per-message to carry. The client sends a
-stream key and a payload and accepts nothing else, and the builder already addresses both. What this
-crate decides on top - the header envelope and the per-publish flush - belongs to the transport and
-the publisher rather than to a single message, so a message-level knob for either would describe
-something that is not true of the file.
+A handler publishes through the framework's builder: `publisher.message(&value).publish()`, or
+`publisher.raw(&bytes).to(key).publish()` to name the stream key. This transport adds no
+per-message step of its own; the stream key and the payload are all it carries, and the builder
+supplies both.
 
 ## The header envelope
 
