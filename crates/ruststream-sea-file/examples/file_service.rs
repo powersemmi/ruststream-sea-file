@@ -2,9 +2,7 @@
 //! external broker.
 
 // --8<-- [start:handler]
-use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
-use ruststream_sea_file::{FileBroker, FilePosition, FileStream};
+use ruststream_sea_file::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

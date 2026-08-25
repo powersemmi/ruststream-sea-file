@@ -49,9 +49,7 @@ The file transport is not supported on Windows (an upstream constraint of the fi
 ## Write a service
 
 ```rust
-use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
-use ruststream_sea_file::{FileBroker, FilePosition, FileStream};
+use ruststream_sea_file::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

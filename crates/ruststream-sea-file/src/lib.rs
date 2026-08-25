@@ -27,6 +27,7 @@
 mod error;
 mod file;
 mod message;
+pub mod prelude;
 mod stdio;
 mod stream;
 mod subscriber;

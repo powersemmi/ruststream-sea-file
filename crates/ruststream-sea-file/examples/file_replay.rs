@@ -10,9 +10,10 @@
 
 use std::{fs, io};
 
-use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream, Seek};
-use ruststream::{OutgoingMessage, Publisher, Seeker, subscriber};
-use ruststream_sea_file::{FileBroker, FilePosition, FilePublish, FileSeeker, FileStream};
+// The prelude covers the service surface, seeking included; the recording hook below works one
+// layer under it, assembling an outgoing message by hand, so it names that layer explicitly.
+use ruststream::OutgoingMessage;
+use ruststream_sea_file::prelude::*;
 use serde::{Deserialize, Serialize};
 
 const DEMO_FILE: &str = "/tmp/ruststream-file-replay-example.ss";
