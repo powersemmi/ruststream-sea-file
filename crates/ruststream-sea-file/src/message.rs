@@ -1,7 +1,7 @@
 //! [`SeaMessage`]: a delivered message, shared by the file and stdio transports.
 
 use bytes::Bytes;
-use ruststream::{AckError, Headers, IncomingMessage, Positioned};
+use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned};
 use sea_streamer_types::{Buffer as _, Message as _, SharedMessage};
 
 use crate::wire;
@@ -65,7 +65,7 @@ impl FilePosition {
 /// explicitly via the descriptor's start position or a captured [`FilePosition`].
 pub struct SeaMessage {
     payload: Bytes,
-    headers: Headers,
+    headers: HeaderMap,
     stream: String,
     sequence: u64,
 }
@@ -113,7 +113,7 @@ impl IncomingMessage for SeaMessage {
         &self.payload
     }
 
-    fn headers(&self) -> &Headers {
+    fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
