@@ -3,6 +3,7 @@
 //!
 //! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
 
+use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -323,8 +324,11 @@ pub struct StdioPublish;
 impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     type Live = StdioPublisher;
 
-    async fn pair(self, connected: &ConnectedStdioBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedStdioBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
 }
 
