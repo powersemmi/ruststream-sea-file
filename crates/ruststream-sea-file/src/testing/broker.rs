@@ -22,7 +22,7 @@ pub(crate) struct TestState {
 }
 
 impl TestState {
-    fn coordinator(&self) -> Option<&Coordinator> {
+    pub(crate) fn coordinator(&self) -> Option<&Coordinator> {
         self.coordinator.get()
     }
 
@@ -100,18 +100,27 @@ impl ConnectedBroker for ConnectedFileTestBroker {
     }
 }
 
+impl ConnectedFileTestBroker {
+    /// Opens an in-process subscription on `name`: what both the `Subscribe` capability and the
+    /// file transport's own [`FileStream`](crate::FileStream) descriptor resolve to.
+    pub(crate) fn open(&self, name: &str) -> FileTestSubscriber {
+        let (id, requeue, rx) = self.state.router.subscribe(name.to_owned());
+        FileTestSubscriber::new(
+            Arc::clone(&self.state),
+            id,
+            name.to_owned(),
+            rx,
+            requeue,
+            self.state.coordinator().cloned(),
+        )
+    }
+}
+
 impl Subscribe for ConnectedFileTestBroker {
     type Subscriber = FileTestSubscriber;
 
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
-        let (id, requeue, rx) = self.state.router.subscribe(name.to_owned());
-        ready(Ok(FileTestSubscriber::new(
-            Arc::clone(&self.state),
-            id,
-            rx,
-            requeue,
-            self.state.coordinator().cloned(),
-        )))
+        ready(Ok(self.open(name)))
     }
 }
 

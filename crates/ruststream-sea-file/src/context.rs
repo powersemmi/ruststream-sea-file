@@ -111,6 +111,29 @@ impl BuildBatchContext<FileMessage> for FileBatchContext {
     }
 }
 
+// The in-process transport delivers under the same contexts and the same keys: it reports a
+// position and hands out a `FileSeeker` too, so a service that seeks mounts on the test broker
+// with no edit at all. Standard input implements neither, which is what keeps a seeking handler
+// off it at compile time.
+#[cfg(feature = "testing")]
+impl BuildContext<crate::testing::FileTestMessage> for FileContext {
+    fn build(msg: &crate::testing::FileTestMessage) -> Self {
+        Self {
+            position: ruststream::Positioned::position(msg),
+            seeker: msg.seeker().clone(),
+        }
+    }
+}
+
+#[cfg(feature = "testing")]
+impl BuildBatchContext<crate::testing::FileTestMessage> for FileBatchContext {
+    fn build(first: &crate::testing::FileTestMessage) -> Self {
+        Self {
+            seeker: first.seeker().clone(),
+        }
+    }
+}
+
 /// The key reading this delivery's [`FilePosition`] out of [`FileContext`].
 ///
 /// The value is the pinned form: seeking back to it redelivers exactly this message.

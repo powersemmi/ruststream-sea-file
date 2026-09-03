@@ -2,7 +2,11 @@
 
 use ruststream::SubscriptionSource;
 use ruststream::runtime::IntoSource;
+#[cfg(feature = "testing")]
+use ruststream::{Seekable, Seeker};
 
+#[cfg(feature = "testing")]
+use crate::FilePosition;
 use crate::error::SeaFileError;
 use crate::file::ConnectedFileBroker;
 use crate::subscriber::FileSubscriber;
@@ -88,6 +92,34 @@ impl SubscriptionSource<ConnectedFileBroker> for FileStream {
         connected: &ConnectedFileBroker,
     ) -> Result<FileSubscriber, SeaFileError> {
         connected.subscribe_stream(self).await
+    }
+}
+
+/// The descriptor resolves against the in-process transport too, so a service written on
+/// `FileStream` mounts on [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
+///
+/// [`replay`](FileStream::replay) opens at the start of the retained log rather than at its tail.
+/// Nothing in process writes an end-of-stream mark, so the subscription does not complete the way
+/// a finished file's does; that part of replay is verified against real files.
+#[cfg(feature = "testing")]
+impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream {
+    type Subscriber = crate::testing::FileTestSubscriber;
+
+    fn name(&self) -> &str {
+        self.stream()
+    }
+
+    async fn subscribe(
+        self,
+        connected: &crate::testing::ConnectedFileTestBroker,
+    ) -> Result<Self::Subscriber, SeaFileError> {
+        self.validate()?;
+        let subscriber = connected.open(self.stream());
+        if self.replay {
+            let seeker = Seekable::seeker(&subscriber);
+            Seeker::seek(&seeker, FilePosition::Beginning).await?;
+        }
+        Ok(subscriber)
     }
 }
 

@@ -171,15 +171,59 @@ impl IncomingMessage for FileMessage {
     }
 }
 
+/// What a [`FileSeeker`] repositions: the subscription it was minted from.
+///
+/// One variant per transport that delivers under the file form's contexts, each carrying only
+/// its own machinery, so a handle can never hold the wrong half. The seeker itself is one type
+/// on purpose: it is the value the [`SeekHandle`](crate::SeekHandle) key yields, so a handler
+/// that seeks reads the same way against a stream file and against the in-process transport its
+/// tests run on.
+#[derive(Clone)]
+enum SeekBackend {
+    /// The stream file's driver task, which owns the client consumer.
+    Driver {
+        cmd: mpsc::UnboundedSender<SeekCmd>,
+        epoch: Arc<AtomicU64>,
+    },
+    /// The in-process retained log of the `testing` transport, repositioned inside the
+    /// subscriber's own poll.
+    #[cfg(feature = "testing")]
+    Log(crate::testing::LogSeeker),
+}
+
 /// Repositions a [`FileSubscriber`] while its stream runs; minted by
-/// [`Seekable::seeker`](ruststream::Seekable::seeker).
+/// [`Seekable::seeker`](ruststream::Seekable::seeker), and carried to handlers by the
+/// [`SeekHandle`](crate::SeekHandle) context key.
 #[derive(Clone)]
 pub struct FileSeeker {
-    cmd: mpsc::UnboundedSender<SeekCmd>,
-    epoch: Arc<AtomicU64>,
     // Arc rather than String: the per-delivery context clones the handle, and the clone must
     // stay allocation-free on the dispatch path.
     stream: Arc<str>,
+    backend: SeekBackend,
+}
+
+impl FileSeeker {
+    /// The seeker of an in-process subscription on the `testing` transport.
+    #[cfg(feature = "testing")]
+    pub(crate) fn in_process(stream: Arc<str>, log: crate::testing::LogSeeker) -> Self {
+        Self {
+            stream,
+            backend: SeekBackend::Log(log),
+        }
+    }
+
+    /// The stream key of the subscription this handle repositions.
+    #[must_use]
+    pub fn stream_key(&self) -> &str {
+        &self.stream
+    }
+
+    fn dead(&self, why: &'static str) -> SeaFileError {
+        SeaFileError::Seek {
+            stream: self.stream.to_string(),
+            source: Box::from(why),
+        }
+    }
 }
 
 impl std::fmt::Debug for FileSeeker {
@@ -195,20 +239,23 @@ impl Seeker for FileSeeker {
     type Error = SeaFileError;
 
     async fn seek(&self, to: FilePosition) -> Result<(), SeaFileError> {
-        // Bump the generation first: deliveries already queued (or an in-flight forward)
-        // belong to the pre-seek position and are discarded on the way out.
-        self.epoch.fetch_add(1, Ordering::Release);
-        let (done, wait) = oneshot::channel();
-        self.cmd
-            .send(SeekCmd { position: to, done })
-            .map_err(|_| SeaFileError::Seek {
-                stream: self.stream.to_string(),
-                source: Box::from("the subscription's driver task has shut down"),
-            })?;
-        wait.await.map_err(|_| SeaFileError::Seek {
-            stream: self.stream.to_string(),
-            source: Box::from("the subscription's driver task has shut down"),
-        })?
+        match &self.backend {
+            SeekBackend::Driver { cmd, epoch } => {
+                // Bump the generation first: deliveries already queued (or an in-flight forward)
+                // belong to the pre-seek position and are discarded on the way out.
+                epoch.fetch_add(1, Ordering::Release);
+                let (done, wait) = oneshot::channel();
+                cmd.send(SeekCmd { position: to, done })
+                    .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
+                wait.await
+                    .map_err(|_| self.dead("the subscription's driver task has shut down"))?
+            }
+            // The in-process transport needs no task: the target is handed to the subscriber,
+            // which applies it at the top of its next poll, inside the reaction the test
+            // harness drives to quiescence.
+            #[cfg(feature = "testing")]
+            SeekBackend::Log(log) => log.request(to),
+        }
     }
 }
 
@@ -217,9 +264,11 @@ impl Seekable for FileSubscriber {
 
     fn seeker(&self) -> FileSeeker {
         FileSeeker {
-            cmd: self.cmd.clone(),
-            epoch: Arc::clone(&self.epoch),
             stream: Arc::clone(&self.stream),
+            backend: SeekBackend::Driver {
+                cmd: self.cmd.clone(),
+                epoch: Arc::clone(&self.epoch),
+            },
         }
     }
 }
