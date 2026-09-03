@@ -36,11 +36,11 @@ explicit instead. See [Acknowledgement](#acknowledgement).
 
 ## The two brokers
 
-Each transport has a module of its own holding that transport's types, its publish policy and
+Each transport has a module of its own holding that transport's types, its `Publish` policy and
 its prelude. A service on stream files opens with `use ruststream_sea_file::file::prelude::*;`
 and one on a pipeline with `use ruststream_sea_file::stdio::prelude::*;`, and needs nothing else
-from either crate. A service that spans both globs `ruststream_sea_file::prelude`, which carries
-everything from both.
+from either crate. A service that spans both globs `ruststream_sea_file::prelude` and writes
+`FilePublish` and `StdioPublish` where the two forms differ.
 
 `FileBroker::new(path)` records the path of a `.ss` stream file. `StdioBroker::new()` records
 nothing at all. Both are synchronous and do no I/O, so both compose with the `#[ruststream::app]`
@@ -153,9 +153,12 @@ standard output. Each is its broker's default publish policy, so a
 `#[subscriber(.., publish("dest"))]` handler mounted without an explicit publisher replies through
 it.
 
-Both names stay prefixed, in every prelude of the crate: the bare `Publish` is the framework's slot
-capability trait, the one a handler parameter is bound by, and a policy re-exported under that name
-would shadow it wherever the two globs meet.
+A service writes two vocabularies, in two kinds of file. A mount site globs a transport prelude and
+names a policy by concept - `Publish`, whichever form it is on - so moving a service between forms
+changes the glob and leaves the composition root alone. A handler body globs `ruststream::prelude`
+instead and bounds an injected publisher by the framework's capability traits, never by a broker
+type. The prefixed `FilePublish` and `StdioPublish` are for the one place the concept name is
+ambiguous: a mount site that spans both forms.
 
 The file publisher flushes on every publish: the sink buffers, and live subscribers (and external
 tails of the same file) observe the file, not the buffer.

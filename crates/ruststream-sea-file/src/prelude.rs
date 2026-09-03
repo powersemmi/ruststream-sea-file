@@ -2,7 +2,9 @@
 //!
 //! The framework's prelude, this crate's broker, descriptor, position, seeker and policy types,
 //! the seeking capability traits and context keys, and the [`mod@file`] and [`stdio`] modules. A
-//! service on one form globs that form's prelude instead.
+//! service on one form globs that form's prelude instead, where the policy is named by concept
+//! (`file::Publish`, `stdio::Publish`); a mount site that spans both forms writes the prefixed
+//! names, since the two forms would claim the same one here.
 //!
 //! # Examples
 //!
@@ -50,6 +52,6 @@ pub use crate::{
 };
 pub use crate::{file, stdio};
 
-// The policies keep their prefixed names. The bare `Publish` is the framework's slot capability
-// trait, which arrives through the glob above; re-exporting a policy under that name would win
-// over the glob and silently shadow the trait - do not add one.
+// No bare `Publish` here: the two forms disagree on what it names, so a mixed mount site goes
+// through `FilePublish` / `StdioPublish` (or `file::Publish` / `stdio::Publish` by path) - do not
+// add one.

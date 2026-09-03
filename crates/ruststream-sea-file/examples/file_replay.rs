@@ -48,7 +48,7 @@ fn app() -> impl App {
         .with_broker(FileBroker::new(DEMO_FILE), |b| {
             // The recording side, as a lifecycle hook: it runs once the broker is connected
             // and the subscriptions are open, so the paired publisher arrives live.
-            b.after_startup(FilePublish, async move |publisher| -> io::Result<()> {
+            b.after_startup(Publish, async move |publisher| -> io::Result<()> {
                 for id in [1u64, 999, 3, 4] {
                     publisher
                         .message(&Job { id })

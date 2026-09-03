@@ -1,8 +1,7 @@
 //! The stdio transport: [`StdioBroker`], standard input and output as one stream - a service
 //! that composes with ordinary command-line tools.
 //!
-//! A service on a shell pipeline globs this form's [`prelude`] and names its policy
-//! [`StdioPublish`].
+//! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
 
 use std::future::{Future, ready};
 use std::sync::Arc;
@@ -333,14 +332,31 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     }
 }
 
+/// The publish policy of this form, under the name every form uses.
+///
+/// A mount site names the concept, never the transport: moving a service from one form to
+/// another changes the prelude it globs and leaves the composition root alone. The prefixed
+/// [`StdioPublish`] stays at the crate root, for a service that mixes both forms.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream_sea_file::stdio::Publish;
+///
+/// let policy = Publish::default();
+/// # let _ = policy;
+/// ```
+pub use StdioPublish as Publish;
+
 pub mod prelude {
     //! The imports a service on a shell pipeline writes every time, in one glob.
     //!
-    //! The framework's prelude, this form's broker, and [`StdioPublish`]. A subscription here is
-    //! a plain stream key, so this form has no descriptor type.
+    //! The framework's prelude, this form's broker, and [`Publish`]. A subscription here is a
+    //! plain stream key, so this form has no descriptor type.
     //!
-    //! The policy keeps its prefixed name: the bare `Publish` belongs to the framework's slot
-    //! capability trait, which arrives through the glob below - do not alias over it.
+    //! This is the routes-side vocabulary: a mount site globs it and names policies by concept.
+    //! A handler body globs `ruststream::prelude` instead and bounds an injected publisher by
+    //! the framework's capability traits, so the two vocabularies never meet in one file.
     //!
     //! # Examples
     //!
@@ -376,5 +392,5 @@ pub mod prelude {
 
     // No capability traits: `SeaMessage` implements `Positioned`, but a pipe cannot seek back to
     // one - do not add it here.
-    pub use crate::stdio::{StdioBroker, StdioPublish};
+    pub use crate::stdio::{Publish, StdioBroker};
 }

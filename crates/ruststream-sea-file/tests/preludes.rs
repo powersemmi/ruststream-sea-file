@@ -1,46 +1,57 @@
-//! Every prelude of this crate must leave the framework's own names alone.
+//! Each prelude of this crate must carry the vocabulary its side of a service writes.
 //!
-//! Each module below globs one prelude and then names the bare `Publish` as a trait bound. That
-//! resolves only while `Publish` is the framework's slot capability trait: re-exporting a publish
-//! policy under the bare name would win over the `ruststream::prelude::*` glob and turn these
-//! into "expected trait, found struct". The policies therefore stay prefixed, which is what the
-//! test below reads back.
-
-mod crate_wide {
-    use ruststream_sea_file::prelude::*;
-
-    fn _publish_is_the_core_slot_trait<T: Publish>() {}
-
-    pub(super) fn policies() -> (FilePublish, StdioPublish) {
-        (FilePublish, StdioPublish)
-    }
-}
+//! A mount site globs a transport prelude and names policies by concept, so the bare `Publish`
+//! there is this form's policy: a value, constructible, handed to `after_startup` and to an
+//! include site. A handler body globs `ruststream::prelude` instead and bounds an injected
+//! publisher by the framework's capability traits. The two vocabularies live in different files,
+//! which is what lets a form reuse the concept name.
+//!
+//! Each module below pins both halves for one prelude: the concept name resolves to this form's
+//! policy value, and the framework's publisher capability is still nameable as a bound through
+//! the same glob.
 
 mod file_form {
     use ruststream_sea_file::file::prelude::*;
 
-    fn _publish_is_the_core_slot_trait<T: Publish>() {}
+    fn _p<T: Publisher>() {}
 
-    pub(super) fn policy() -> FilePublish {
-        FilePublish
+    // The spelling a mount site writes. `Publish` naming a value rather than a trait is the
+    // whole assertion; `Publish::default()` is the same thing and lives in the rustdoc example.
+    pub(super) fn policy() -> Publish {
+        Publish
     }
 }
 
 mod stdio_form {
     use ruststream_sea_file::stdio::prelude::*;
 
-    fn _publish_is_the_core_slot_trait<T: Publish>() {}
+    fn _p<T: Publisher>() {}
 
-    pub(super) fn policy() -> StdioPublish {
-        StdioPublish
+    // The spelling a mount site writes. `Publish` naming a value rather than a trait is the
+    // whole assertion; `Publish::default()` is the same thing and lives in the rustdoc example.
+    pub(super) fn policy() -> Publish {
+        Publish
+    }
+}
+
+mod crate_wide {
+    use ruststream_sea_file::prelude::*;
+
+    fn _p<T: Publisher>() {}
+
+    // Both forms would claim the bare name here, so a mount site spanning them writes the
+    // prefixed ones.
+    pub(super) fn policies() -> (FilePublish, StdioPublish) {
+        (FilePublish, StdioPublish)
     }
 }
 
 #[test]
-fn every_prelude_carries_its_policies_under_their_prefixed_names() {
+fn each_transport_prelude_names_its_own_policy_by_concept() {
+    assert_eq!(format!("{:?}", file_form::policy()), "FilePublish");
+    assert_eq!(format!("{:?}", stdio_form::policy()), "StdioPublish");
+
     let (file, stdio) = crate_wide::policies();
     assert_eq!(format!("{file:?}"), "FilePublish");
     assert_eq!(format!("{stdio:?}"), "StdioPublish");
-    assert_eq!(format!("{:?}", file_form::policy()), "FilePublish");
-    assert_eq!(format!("{:?}", stdio_form::policy()), "StdioPublish");
 }

@@ -15,7 +15,7 @@
 //!   of a shell pipeline.
 //!
 //! Each transport has a module of its own ([`mod@file`], [`stdio`]) holding that transport's
-//! types, its publish policy and its prelude. A service globs the prelude of the transport it
+//! types, its `Publish` policy and its prelude. A service globs the prelude of the transport it
 //! runs on, or the [crate-level one](prelude) when it spans both.
 //!
 //! Scope and limits: the client keeps no consumer positions (its resumable mode is
