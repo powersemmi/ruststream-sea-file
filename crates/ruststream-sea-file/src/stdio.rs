@@ -1,7 +1,8 @@
 //! The stdio transport: [`StdioBroker`], standard input and output as one stream - a service
 //! that composes with ordinary command-line tools.
 //!
-//! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
+//! A service on a shell pipeline globs this form's [`prelude`] and names its policy
+//! [`StdioPublish`].
 
 use std::future::{Future, ready};
 use std::sync::Arc;
@@ -332,25 +333,14 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     }
 }
 
-/// The publish policy of this form, under the name every form uses.
-///
-/// This is a publish policy, not the framework's `runtime::Publish` builder.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream_sea_file::stdio::Publish;
-///
-/// let policy = Publish::default();
-/// # let _ = policy;
-/// ```
-pub use StdioPublish as Publish;
-
 pub mod prelude {
     //! The imports a service on a shell pipeline writes every time, in one glob.
     //!
-    //! The framework's prelude, this form's broker, and [`Publish`]. A subscription here is a
-    //! plain stream key, so this form has no descriptor type.
+    //! The framework's prelude, this form's broker, and [`StdioPublish`]. A subscription here is
+    //! a plain stream key, so this form has no descriptor type.
+    //!
+    //! The policy keeps its prefixed name: the bare `Publish` belongs to the framework's slot
+    //! capability trait, which arrives through the glob below - do not alias over it.
     //!
     //! # Examples
     //!
@@ -386,5 +376,5 @@ pub mod prelude {
 
     // No capability traits: `SeaMessage` implements `Positioned`, but a pipe cannot seek back to
     // one - do not add it here.
-    pub use crate::stdio::{Publish, StdioBroker};
+    pub use crate::stdio::{StdioBroker, StdioPublish};
 }

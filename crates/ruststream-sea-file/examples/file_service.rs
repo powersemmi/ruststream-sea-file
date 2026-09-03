@@ -11,9 +11,9 @@ struct Order {
 }
 
 #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

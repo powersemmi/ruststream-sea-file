@@ -62,6 +62,9 @@ impl FilePosition {
 
 /// A message delivered by one of this crate's subscribers.
 ///
+/// This is the whole delivery on standard input; a stream file wraps it in a
+/// [`FileMessage`](crate::FileMessage), which adds the subscription's reposition handle.
+///
 /// The transport keeps no consumer positions (its resumable mode is unimplemented upstream),
 /// so acknowledgement reports [`AckError::Unsupported`] rather than pretending; resume
 /// explicitly via the descriptor's start position or a captured [`FilePosition`].

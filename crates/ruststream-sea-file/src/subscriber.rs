@@ -5,11 +5,12 @@
 //! a driver task owns the consumer: seeks arrive as commands and run to completion outside
 //! any `select!`, while `next()` (which is cancel-safe) feeds the delivery channel.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::Stream;
-use ruststream::Subscriber;
+use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Seekable, Seeker, Subscriber};
 use sea_streamer_file::{FileConsumer, FileErr};
 use sea_streamer_types::{Consumer as _, SeqPos, StreamErr, Timestamp};
 use tokio::sync::{mpsc, oneshot};
@@ -30,12 +31,12 @@ pub(crate) struct Stamped {
     item: Option<Result<SeaMessage, SeaFileError>>,
 }
 
-/// A subscription to one stream key in the file; yields [`SeaMessage`]s.
+/// A subscription to one stream key in the file; yields [`FileMessage`]s.
 ///
 /// Dropping the subscriber stops the driver task. A replay subscription completes (the
 /// stream ends) at the end of the file.
 pub struct FileSubscriber {
-    stream: String,
+    stream: Arc<str>,
     rx: mpsc::Receiver<Stamped>,
     cmd: mpsc::UnboundedSender<SeekCmd>,
     epoch: Arc<AtomicU64>,
@@ -69,7 +70,7 @@ impl FileSubscriber {
             Arc::clone(&epoch),
         ));
         Self {
-            stream,
+            stream: Arc::from(stream),
             rx: out_rx,
             cmd: cmd_tx,
             epoch,
@@ -78,10 +79,14 @@ impl FileSubscriber {
 }
 
 impl Subscriber for FileSubscriber {
-    type Message = SeaMessage;
+    type Message = FileMessage;
     type Error = SeaFileError;
 
-    fn stream(&mut self) -> impl Stream<Item = Result<SeaMessage, SeaFileError>> + Send + '_ {
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+        // Minted once per opened stream, before the closure takes the receiver: every delivery
+        // then carries a reference-counted clone, so the per-delivery context that reads the
+        // seek handle by key allocates nothing.
+        let seeker = Arc::new(Seekable::seeker(&*self));
         // Poll the channel in place rather than wrapping it in an owning stream, so `stream`
         // can be called again after the returned stream is dropped (the runtime and the
         // conformance helpers re-enter it per call). Items queued under an older generation
@@ -91,7 +96,12 @@ impl Subscriber for FileSubscriber {
                 match self.rx.poll_recv(cx) {
                     std::task::Poll::Ready(Some(stamped)) => {
                         if stamped.epoch == self.epoch.load(Ordering::Acquire) {
-                            return std::task::Poll::Ready(stamped.item);
+                            return std::task::Poll::Ready(stamped.item.map(|item| {
+                                item.map(|message| FileMessage {
+                                    message,
+                                    seeker: Arc::clone(&seeker),
+                                })
+                            }));
                         }
                     }
                     std::task::Poll::Ready(None) => return std::task::Poll::Ready(None),
@@ -102,13 +112,74 @@ impl Subscriber for FileSubscriber {
     }
 }
 
+/// A delivery from a stream file: the transport's [`SeaMessage`] plus the subscription's
+/// reposition handle.
+///
+/// The handle is what makes the file transport's per-delivery context
+/// ([`FileContext`](crate::FileContext)) buildable, and carrying it in the message type is what
+/// keeps that context off the transports that cannot seek: standard input yields a plain
+/// [`SeaMessage`], so a handler declaring the seeking context does not compile against it.
+pub struct FileMessage {
+    message: SeaMessage,
+    seeker: Arc<FileSeeker>,
+}
+
+impl std::fmt::Debug for FileMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileMessage")
+            .field("message", &self.message)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FileMessage {
+    /// The stream key this message was published to.
+    #[must_use]
+    pub fn stream(&self) -> &str {
+        self.message.stream()
+    }
+
+    /// The reposition handle of the subscription that delivered this message.
+    pub(crate) fn seeker(&self) -> &FileSeeker {
+        &self.seeker
+    }
+}
+
+impl Positioned for FileMessage {
+    type Position = FilePosition;
+
+    fn position(&self) -> FilePosition {
+        self.message.position()
+    }
+}
+
+impl IncomingMessage for FileMessage {
+    fn payload(&self) -> &[u8] {
+        self.message.payload()
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        self.message.headers()
+    }
+
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        self.message.ack()
+    }
+
+    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        self.message.nack(requeue)
+    }
+}
+
 /// Repositions a [`FileSubscriber`] while its stream runs; minted by
 /// [`Seekable::seeker`](ruststream::Seekable::seeker).
 #[derive(Clone)]
 pub struct FileSeeker {
     cmd: mpsc::UnboundedSender<SeekCmd>,
     epoch: Arc<AtomicU64>,
-    stream: String,
+    // Arc rather than String: the per-delivery context clones the handle, and the clone must
+    // stay allocation-free on the dispatch path.
+    stream: Arc<str>,
 }
 
 impl std::fmt::Debug for FileSeeker {
@@ -119,7 +190,7 @@ impl std::fmt::Debug for FileSeeker {
     }
 }
 
-impl ruststream::Seeker for FileSeeker {
+impl Seeker for FileSeeker {
     type Position = FilePosition;
     type Error = SeaFileError;
 
@@ -131,24 +202,24 @@ impl ruststream::Seeker for FileSeeker {
         self.cmd
             .send(SeekCmd { position: to, done })
             .map_err(|_| SeaFileError::Seek {
-                stream: self.stream.clone(),
+                stream: self.stream.to_string(),
                 source: Box::from("the subscription's driver task has shut down"),
             })?;
         wait.await.map_err(|_| SeaFileError::Seek {
-            stream: self.stream.clone(),
+            stream: self.stream.to_string(),
             source: Box::from("the subscription's driver task has shut down"),
         })?
     }
 }
 
-impl ruststream::Seekable for FileSubscriber {
+impl Seekable for FileSubscriber {
     type Seeker = FileSeeker;
 
     fn seeker(&self) -> FileSeeker {
         FileSeeker {
             cmd: self.cmd.clone(),
             epoch: Arc::clone(&self.epoch),
-            stream: self.stream.clone(),
+            stream: Arc::clone(&self.stream),
         }
     }
 }

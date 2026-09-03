@@ -1,7 +1,7 @@
 //! The file transport: [`FileBroker`] -> [`ConnectedFileBroker`], a persistent, replayable
 //! stream on disk.
 //!
-//! A service on stream files globs this form's [`prelude`] and names its policy [`Publish`].
+//! A service on stream files globs this form's [`prelude`] and names its policy [`FilePublish`].
 
 use std::fs;
 use std::future::{Future, ready};
@@ -361,25 +361,14 @@ impl DefaultPublish for ConnectedFileBroker {
     type Policy = FilePublish;
 }
 
-/// The publish policy of this form, under the name every form uses.
-///
-/// This is a publish policy, not the framework's `runtime::Publish` builder.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream_sea_file::file::Publish;
-///
-/// let policy = Publish::default();
-/// # let _ = policy;
-/// ```
-pub use FilePublish as Publish;
-
 pub mod prelude {
     //! The imports a service on a stream file writes every time, in one glob.
     //!
     //! The framework's prelude, this form's broker, subscription descriptor, position and seeker
-    //! types, the seeking capability traits, and [`Publish`].
+    //! types, the seeking capability traits and context keys, and [`FilePublish`].
+    //!
+    //! The policy keeps its prefixed name: the bare `Publish` belongs to the framework's slot
+    //! capability trait, which arrives through the glob below - do not alias over it.
     //!
     //! # Examples
     //!
@@ -393,11 +382,11 @@ pub mod prelude {
     //! }
     //!
     //! #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
-    //! async fn handle(order: &Order, Seek(seeker): Seek<FileSeeker>) -> HandlerResult {
+    //! async fn handle(order: &Order, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     //!     if order.id == 0 {
     //!         let _ = seeker.seek(FilePosition::end()).await;
     //!     }
-    //!     HandlerResult::Ack
+    //!     HandlerOutcome::ack()
     //! }
     //!
     //! #[ruststream::app]
@@ -414,6 +403,8 @@ pub mod prelude {
     // by a service - do not add it.
     pub use ruststream::{Positioned, Seeker};
 
-    pub use crate::file::{FileBroker, Publish};
-    pub use crate::{FilePosition, FileSeeker, FileStream};
+    pub use crate::file::{FileBroker, FilePublish};
+    pub use crate::{
+        FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream, Position, SeekHandle,
+    };
 }

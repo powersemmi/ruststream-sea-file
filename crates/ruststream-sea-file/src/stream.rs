@@ -1,6 +1,7 @@
 //! [`FileStream`]: the subscription descriptor for the file transport.
 
 use ruststream::SubscriptionSource;
+use ruststream::runtime::IntoSource;
 
 use crate::error::SeaFileError;
 use crate::file::ConnectedFileBroker;
@@ -10,12 +11,13 @@ use crate::subscriber::FileSubscriber;
 ///
 /// A plain descriptor follows the live tail; where reading begins is the framework's
 /// `start_at(..)` clause with a [`FilePosition`](crate::FilePosition) (or a live seek through
-/// the `Seek` parameter). [`replay`](Self::replay) is the one reading mode the position API
-/// cannot express: it reads the finished file and completes the stream at its end instead of
-/// following live writes.
+/// the [`SeekHandle`](crate::SeekHandle) context key). [`replay`](Self::replay) is the one
+/// reading mode the position API cannot express: it reads the finished file and completes the
+/// stream at its end instead of following live writes.
 ///
 /// Implements [`SubscriptionSource`], so it can sit inline in the `#[subscriber(..)]`
-/// decorator:
+/// decorator, and [`IntoSource`], so the manual path's `subscriber(..)` constructor takes it
+/// the way it takes a subject string:
 ///
 /// ```
 /// use ruststream_sea_file::FileStream;
@@ -63,6 +65,14 @@ impl FileStream {
             return Err(SeaFileError::Invalid("stream key must be non-empty".into()));
         }
         Ok(())
+    }
+}
+
+impl IntoSource for FileStream {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
     }
 }
 
