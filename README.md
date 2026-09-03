@@ -29,7 +29,7 @@ There is no server anywhere in this crate: a broker is a `.ss` stream file on di
 
 - **Lazy startup contract.** `FileBroker::new(path)` and `StdioBroker::new()` are synchronous and do no I/O; the runtime connects once at startup, so both compose with `#[ruststream::app]`. The file broker creates the file by default (`existing_only()` opts out), can finish it with an end-of-stream mark on shutdown (`end_with_eos()`), and tunes the beacon interval (`beacon_interval(n)`).
 - **Replayable subscriptions.** `FileStream::new(key)` follows the live tail; where reading begins is the framework's `start_at(..)` clause with a `FilePosition` (everything retained, a timestamp, a captured position). `.replay()` reads a finished file and completes the stream when it ends - batch-style processing of a recorded log.
-- **The `Seekable` capability.** `FileSubscriber` mints a `FileSeeker`; positions are `FilePosition::{beginning, end, sequence, timestamp}`. Captured positions (`Positioned::position`) carry the framework's pinned semantics: seeking to one redelivers exactly that message. The `start_at(..)` clause and the `Seek` handler parameter work out of the box.
+- **The `Seekable` capability.** `FileSubscriber` mints a `FileSeeker`; positions are `FilePosition::{beginning, end, sequence, timestamp}`. Captured positions (`Positioned::position`) carry the framework's pinned semantics: seeking to one redelivers exactly that message. A handler reaches both through the transport's context keys - `Ctx<Position>` for where this delivery sat, `Ctx<SeekHandle>` for the live subscription handle - and `start_at(..)` chooses where a subscription opens.
 - **Headers without breaking the file format.** A text-safe envelope is applied only when a message actually carries headers; payloads published without headers stay verbatim, so stream files remain readable by any `sea-streamer` consumer and existing files remain readable by this crate.
 - **Stdio pipelines.** `StdioBroker` turns stdin into subscriptions and stdout into the publisher: `producer | service | consumer` in a shell. Binary payloads survive the line-oriented transport through the same envelope. `loopback()` wires stdout back into stdin for self-contained tests.
 - **Acknowledgement is unsupported.** The transport keeps no consumer positions, so `ack` reports `AckError::Unsupported` instead of reporting success; resume explicitly from a captured `FilePosition`.
@@ -58,9 +58,9 @@ struct Order {
 }
 
 #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 
 #[ruststream::app]

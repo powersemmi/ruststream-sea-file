@@ -21,7 +21,7 @@ Which of the framework's optional capability traits this crate implements native
 | Capability | Native | Notes |
 | --- | --- | --- |
 | `Subscribe` | Yes | Both connected brokers resolve a string-literal stream key, so `#[subscriber("key")]` works without a descriptor. See [Subscriptions](#subscriptions). |
-| `Seekable` + `Positioned` | Yes | `FileSubscriber` mints a `FileSeeker`, and `SeaMessage` reports a `FilePosition`. This crate is the framework's reference implementation of the capability. `StdioSubscriber` is not seekable: standard input has no retained log. See [Seeking](#seeking). |
+| `Seekable` + `Positioned` | Yes | `FileSubscriber` mints a `FileSeeker`, and a file delivery reports a `FilePosition`; both reach handlers through the `Position` and `SeekHandle` context keys. This crate is the framework's reference implementation of the capability. `StdioSubscriber` is not seekable: standard input has no retained log. See [Seeking](#seeking). |
 | `Partitioned` | No | The transport has no partition or key concept; a stream file is a single ordered log. |
 | `BatchSubscriber` | No | The client delivers one message at a time; the framework's own batching layer applies unchanged. |
 | `RequestReply` | No | Neither transport has a reply-address concept, and stdio is one-directional per stream. |
@@ -36,11 +36,11 @@ explicit instead. See [Acknowledgement](#acknowledgement).
 
 ## The two brokers
 
-Each transport has a module of its own holding that transport's types, its `Publish` policy and
+Each transport has a module of its own holding that transport's types, its publish policy and
 its prelude. A service on stream files opens with `use ruststream_sea_file::file::prelude::*;`
 and one on a pipeline with `use ruststream_sea_file::stdio::prelude::*;`, and needs nothing else
-from either crate. A service that spans both globs `ruststream_sea_file::prelude` and writes
-`file::Publish` and `stdio::Publish` where the two differ.
+from either crate. A service that spans both globs `ruststream_sea_file::prelude`, which carries
+everything from both.
 
 `FileBroker::new(path)` records the path of a `.ss` stream file. `StdioBroker::new()` records
 nothing at all. Both are synchronous and do no I/O, so both compose with the `#[ruststream::app]`
@@ -82,6 +82,10 @@ Mount it on the broker; the `with_broker` / `include` part is identical to the i
 --8<-- "crates/ruststream-sea-file/examples/file_service.rs:app"
 ```
 
+The same descriptor is what the macro-free path passes to the mount constructor -
+`subscriber(FileStream::new("orders"), body)` - so both spellings name the subscription the same
+way.
+
 On the stdio broker a subscription is a string-literal stream key, resolved through the framework's
 `Subscribe` capability: `#[subscriber("jobs")]` consumes the `jobs` key off standard input.
 
@@ -107,23 +111,39 @@ implementation. Positions are `FilePosition`:
 | `FilePosition::sequence(n)` | A message sequence, redelivered inclusively. |
 | `FilePosition::timestamp(millis)` | The earliest message strictly later than that instant, in milliseconds since the Unix epoch. |
 
-A captured position (`Positioned::position` on a delivered message) carries the framework's pinned
-semantics: seeking to it redelivers exactly that message, then the rest of the log in order. The
-sequence rewind is inclusive, which is what makes that hold.
+A captured position carries the framework's pinned semantics: seeking to it redelivers exactly that
+message, then the rest of the log in order. The sequence rewind is inclusive, which is what makes
+that hold.
 
 Where a subscription begins is the `start_at(..)` clause on the decorator, applied before the first
-delivery. A handler repositions its own live subscription through the injected `Seek` parameter:
+delivery. A handler repositions its own live subscription through the transport's context keys,
+which the runtime resolves at compile time:
+
+| Key | Reads | Available on |
+| --- | --- | --- |
+| `Position` | this delivery's `FilePosition` | `FileContext` |
+| `SeekHandle` | the subscription's `FileSeeker` | `FileContext`, `FileBatchContext` |
+
+`FileContext` is the per-delivery context: a handler names it as its context type, or takes the
+keys as parameters with the `Ctx` extractor and names nothing at all.
 
 ```rust
 --8<-- "crates/ruststream-sea-file/examples/file_replay.rs:seek"
 ```
 
+`FileBatchContext` is the page counterpart. A page spans many deliveries, so it carries the seek
+handle and no position; a page body names it (`ctx: &mut Context<'_, FileBatchContext>`) and reads
+the handle with `ctx.context(SeekHandle)`. Per-delivery positions ride the elements instead - every
+delivery carries its sequence in the `stream-sequence` header.
+
+Both context types belong to the file transport's own delivery type, so a handler that reads either
+key does not compile against `StdioBroker`: standard input has no retained log, and offers no
+repositioning at all.
+
 Deliveries queued from before a seek are discarded, so the next message the handler sees comes from
 the new position. See
 [Seeking](https://powersemmi.github.io/ruststream/latest/guides/subscribers/#seeking) in the
 framework docs for the capability itself.
-
-Standard input has no retained log, so `StdioSubscriber` offers no repositioning at all.
 
 ## Publishing
 
@@ -133,9 +153,9 @@ standard output. Each is its broker's default publish policy, so a
 `#[subscriber(.., publish("dest"))]` handler mounted without an explicit publisher replies through
 it.
 
-A service that names a policy explicitly writes `Publish`, which each form's prelude supplies for
-its own transport. The prefixed `FilePublish` and `StdioPublish` stay at the crate root, for a
-service mixing both forms.
+Both names stay prefixed, in every prelude of the crate: the bare `Publish` is the framework's slot
+capability trait, the one a handler parameter is bound by, and a policy re-exported under that name
+would shadow it wherever the two globs meet.
 
 The file publisher flushes on every publish: the sink buffers, and live subscribers (and external
 tails of the same file) observe the file, not the buffer.
@@ -149,10 +169,12 @@ line format silently drops empty lines.
 
 ### Per-message arguments
 
-A handler publishes through the framework's builder: `publisher.message(&value).publish()`, or
-`publisher.raw(&bytes).to(key).publish()` to name the stream key. This transport adds no
-per-message step of its own; the stream key and the payload are all it carries, and the builder
-supplies both.
+A handler publishes through the framework's builder: `publisher.message(&value).publish()`, with
+`.to(key)` where the value's own `#[derive(Outgoing)]` leaves the stream key to the call. This
+transport adds no per-message step of its own; the stream key and the payload are all it carries,
+and the builder supplies both. Opaque bytes go the same way, as a value whose type declares itself
+already serialized (`#[derive(Outgoing, Serialized)] struct Frame(Vec<u8>)`), so no codec runs on
+them.
 
 ## The header envelope
 
