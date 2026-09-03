@@ -224,12 +224,28 @@ Everything in this crate runs locally: the framework's conformance, lifecycle, a
 plus the replay and stdio integration tests exercise temp files and in-process pipes, with no
 external broker to start.
 
-The `testing` feature ships `FileTestBroker`, an in-process transport that reproduces the crate's
-core routing with no file at all. It follows the same ladder as the real brokers, and its connected
-form implements `ruststream::testing::TestableBroker`, so it drives the `TestApp` harness: inject
-traffic with `broker.inject(OutgoingMessage::new(..))` and assert on published output with the free
-`ruststream::testing::expect_published`. See
-[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp).
+Your own handlers are tested with the framework's `TestApp` harness, against the `testing`
+feature's `FileTestBroker`. It follows the same ladder as the real brokers, its connected form
+implements `ruststream::testing::TestableBroker`, and it routes over a **retained, positioned log** -
+the one transport property a stream file's handlers are written against. So a seeking service
+mounts on it with no edit at all: `FileStream` resolves here, a delivery reports a `FilePosition`,
+the subscription hands out a `FileSeeker`, and `FileContext` and `FileBatchContext` build off its
+deliveries the way they build off a file's.
 
-`FileTestBroker` routes by exact address match and simulates none of the file semantics: replay,
-seeking, the end-of-stream mark, and the envelope are covered against real stream files instead.
+```rust
+--8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
+```
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/seek_context.rs:test"
+```
+
+The harness supplies the input, drives the reaction to a standstill, and records what happened, so
+a test needs no waiting and no collector of its own. See
+[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)
+for the assertion surface.
+
+What the in-process broker deliberately leaves alone is everything a file is for: files and
+beacons, the end-of-stream mark that completes a replay, the header envelope, timing, and the
+`AckError::Unsupported` the real transport reports. Those are covered against real stream files by
+this repo's own suite, which needs no server either.
