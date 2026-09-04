@@ -18,6 +18,10 @@
 //! types, its `Publish` policy and its prelude. A service globs the prelude of the transport it
 //! runs on, or the [crate-level one](prelude) when it spans both.
 //!
+//! Both transports serve page handlers. Neither client reads several entries at a time, so the
+//! pages are assembled on the client and the size a mount site names in `batch(n)` is honoured
+//! there; nothing at the mount site says which of the two it is.
+//!
 //! Scope and limits: the client keeps no consumer positions (its resumable mode is
 //! unimplemented upstream), so acknowledgement reports
 //! [`AckError::Unsupported`](ruststream::AckError::Unsupported) on both transports - resume
@@ -33,6 +37,7 @@ mod context;
 mod error;
 pub mod file;
 mod message;
+mod paging;
 pub mod prelude;
 pub mod stdio;
 mod stream;

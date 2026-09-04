@@ -4,13 +4,14 @@
 //! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
 
 use std::future::{Future, ready};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::Stream;
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
+    BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
 use sea_streamer_types::{
@@ -21,6 +22,7 @@ use tokio::sync::{OnceCell, mpsc};
 
 use crate::error::{SeaFileError, box_err};
 use crate::message::SeaMessage;
+use crate::paging::PAGE_MAX_WAIT;
 use crate::wire;
 
 pub(crate) struct StdioCore {
@@ -210,7 +212,7 @@ impl Subscribe for ConnectedStdioBroker {
         });
         Ok(StdioSubscriber {
             stream: name.to_owned(),
-            rx,
+            inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(PAGE_MAX_WAIT),
         })
     }
 }
@@ -222,10 +224,12 @@ impl DefaultPublish for ConnectedStdioBroker {
 /// A subscription to one stream key on standard input; yields [`SeaMessage`]s.
 ///
 /// Standard input has no retained log: there is no acknowledgement and no repositioning, and
-/// both are reported as unsupported rather than pretended.
+/// both are reported as unsupported rather than pretended. Pages it does serve: the client
+/// reads one line at a time, so they are assembled here, capped at the size the mount site
+/// named.
 pub struct StdioSubscriber {
     stream: String,
-    rx: mpsc::Receiver<Result<SeaMessage, SeaFileError>>,
+    inner: BufferedSubscriber<StdioDeliveries>,
 }
 
 impl std::fmt::Debug for StdioSubscriber {
@@ -237,6 +241,31 @@ impl std::fmt::Debug for StdioSubscriber {
 }
 
 impl Subscriber for StdioSubscriber {
+    type Message = SeaMessage;
+    type Error = SeaFileError;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<SeaMessage, SeaFileError>> + Send + '_ {
+        self.inner.stream()
+    }
+}
+
+impl BatchSubscriber for StdioSubscriber {
+    type Batch = Vec<SeaMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+        self.inner.batches(size)
+    }
+}
+
+/// The reader task's deliveries, before paging: one line per poll, in arrival order.
+struct StdioDeliveries {
+    rx: mpsc::Receiver<Result<SeaMessage, SeaFileError>>,
+}
+
+impl Subscriber for StdioDeliveries {
     type Message = SeaMessage;
     type Error = SeaFileError;
 

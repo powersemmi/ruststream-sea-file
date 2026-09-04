@@ -4,19 +4,27 @@
 //! The client's `seek`/`rewind` need `&mut Consumer` and are explicitly not cancel-safe, so
 //! a driver task owns the consumer: seeks arrive as commands and run to completion outside
 //! any `select!`, while `next()` (which is cancel-safe) feeds the delivery channel.
+//!
+//! Pages sit on top of that channel rather than in the client, which reads one message at a
+//! time; see [`crate::paging`] for why, and for the deadline that closes a partial one.
 
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::Stream;
-use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Seekable, Seeker, Subscriber};
+use ruststream::{
+    AckError, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage, Positioned,
+    Seekable, Seeker, Subscriber,
+};
 use sea_streamer_file::{FileConsumer, FileErr};
 use sea_streamer_types::{Consumer as _, SeqPos, StreamErr, Timestamp};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{SeaFileError, box_err};
 use crate::message::{FilePosition, SeaMessage};
+use crate::paging::PAGE_MAX_WAIT;
 
 /// How many undelivered messages may sit between the driver and the consumer.
 const CHANNEL_CAPACITY: usize = 64;
@@ -36,10 +44,11 @@ pub(crate) struct Stamped {
 /// Dropping the subscriber stops the driver task. A replay subscription completes (the
 /// stream ends) at the end of the file.
 pub struct FileSubscriber {
+    // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
-    rx: mpsc::Receiver<Stamped>,
-    cmd: mpsc::UnboundedSender<SeekCmd>,
-    epoch: Arc<AtomicU64>,
+    // The driver task's deliveries plus client-side paging: the file client reads one message
+    // at a time, so pages are assembled here - see the `paging` module.
+    inner: BufferedSubscriber<Deliveries>,
 }
 
 impl std::fmt::Debug for FileSubscriber {
@@ -69,16 +78,59 @@ impl FileSubscriber {
             replay,
             Arc::clone(&epoch),
         ));
+        let stream: Arc<str> = Arc::from(stream);
         Self {
-            stream: Arc::from(stream),
-            rx: out_rx,
-            cmd: cmd_tx,
-            epoch,
+            stream: Arc::clone(&stream),
+            inner: BufferedSubscriber::new(Deliveries {
+                stream,
+                rx: out_rx,
+                cmd: cmd_tx,
+                epoch,
+            })
+            .max_wait(PAGE_MAX_WAIT),
         }
     }
 }
 
 impl Subscriber for FileSubscriber {
+    type Message = FileMessage;
+    type Error = SeaFileError;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+        self.inner.stream()
+    }
+}
+
+impl BatchSubscriber for FileSubscriber {
+    type Batch = Vec<FileMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+        self.inner.batches(size)
+    }
+}
+
+impl Seekable for FileSubscriber {
+    type Seeker = FileSeeker;
+
+    fn seeker(&self) -> FileSeeker {
+        // Paging does not move the subscription: this is the driver's own handle, reached
+        // through the buffer.
+        self.inner.seeker()
+    }
+}
+
+/// The driver task's deliveries, before paging: one message per poll, in publish order.
+struct Deliveries {
+    stream: Arc<str>,
+    rx: mpsc::Receiver<Stamped>,
+    cmd: mpsc::UnboundedSender<SeekCmd>,
+    epoch: Arc<AtomicU64>,
+}
+
+impl Subscriber for Deliveries {
     type Message = FileMessage;
     type Error = SeaFileError;
 
@@ -109,6 +161,20 @@ impl Subscriber for FileSubscriber {
                 }
             }
         })
+    }
+}
+
+impl Seekable for Deliveries {
+    type Seeker = FileSeeker;
+
+    fn seeker(&self) -> FileSeeker {
+        FileSeeker {
+            stream: Arc::clone(&self.stream),
+            backend: SeekBackend::Driver {
+                cmd: self.cmd.clone(),
+                epoch: Arc::clone(&self.epoch),
+            },
+        }
     }
 }
 
@@ -255,20 +321,6 @@ impl Seeker for FileSeeker {
             // harness drives to quiescence.
             #[cfg(feature = "testing")]
             SeekBackend::Log(log) => log.request(to),
-        }
-    }
-}
-
-impl Seekable for FileSubscriber {
-    type Seeker = FileSeeker;
-
-    fn seeker(&self) -> FileSeeker {
-        FileSeeker {
-            stream: Arc::clone(&self.stream),
-            backend: SeekBackend::Driver {
-                cmd: self.cmd.clone(),
-                epoch: Arc::clone(&self.epoch),
-            },
         }
     }
 }

@@ -3,18 +3,23 @@
 
 mod common;
 
+use std::num::NonZeroUsize;
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
 use ruststream::{
-    AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
-    Subscribe, Subscriber,
+    AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
+    OutgoingMessage, Publisher, Subscribe, Subscriber,
 };
 use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The page size the stdio check opens its subscription at: smaller than the run, so a page
+/// carrying more than the mount site asked for is caught rather than missed.
+const STDIO_PAGE: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
 fn tmp_path(name: &str) -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -118,8 +123,11 @@ fn a_finished_file_replays_and_completes() {
     });
 }
 
+/// Both stdio checks share one test: shutting the transport down ends every stdio consumer and
+/// producer in the process, so a second stdio test running beside this one would be torn down by
+/// it.
 #[test]
-fn stdio_loopback_round_trips_binary_payloads() {
+fn stdio_loopback_carries_binary_payloads_and_pages() {
     common::rt().block_on(async {
         let connected = StdioBroker::new()
             .loopback()
@@ -138,14 +146,41 @@ fn stdio_loopback_round_trips_binary_payloads() {
             .await
             .expect("publish succeeds");
 
-        let mut stream = pin!(subscriber.stream());
-        let message = tokio::time::timeout(RECV_TIMEOUT, stream.next())
-            .await
-            .expect("delivery arrives")
-            .expect("stream is open")
-            .expect("delivery is ok");
-        // The stdio line format is text; the envelope carried the binary payload through it.
-        assert_eq!(message.payload(), raw.as_slice());
+        {
+            let mut stream = pin!(subscriber.stream());
+            let message = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok");
+            // The stdio line format is text; the envelope carried the binary payload through it.
+            assert_eq!(message.payload(), raw.as_slice());
+        }
+
+        // Standard input delivers one line at a time, so the pages are assembled on the client;
+        // what the mount site asks for is still the cap a page may never exceed.
+        for i in 0..3u8 {
+            publisher
+                .publish(OutgoingMessage::new("pipe", [i].as_slice()))
+                .await
+                .expect("publish succeeds");
+        }
+        let mut received = Vec::new();
+        let mut pages = pin!(subscriber.batches(STDIO_PAGE));
+        while received.len() < 3 {
+            let page = tokio::time::timeout(RECV_TIMEOUT, pages.next())
+                .await
+                .expect("page arrives")
+                .expect("stream is open")
+                .expect("page is ok");
+            assert!(!page.is_empty(), "a yielded page must not be empty");
+            assert!(
+                page.len() <= STDIO_PAGE.get(),
+                "a page must never carry more than the size it was opened with",
+            );
+            received.extend(page.iter().map(|msg| msg.payload().to_vec()));
+        }
+        assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
 
         connected.shutdown().await.expect("shutdown succeeds");
     });

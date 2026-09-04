@@ -1,17 +1,20 @@
 //! [`FileTestSubscriber`] and [`FileTestMessage`], plus the seeker that repositions them.
 
 use std::future::{Future, ready};
+use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock};
 use std::task::Poll;
 
 use futures::Stream;
 
 use ruststream::{
-    AckError, HeaderMap, IncomingMessage, Positioned, Seekable, Subscriber, testing::Coordinator,
+    AckError, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage, Positioned,
+    Seekable, Subscriber, testing::Coordinator,
 };
 
 use crate::error::SeaFileError;
 use crate::message::{FilePosition, SEQUENCE_HEADER};
+use crate::paging::PAGE_MAX_WAIT;
 use crate::subscriber::FileSeeker;
 use crate::testing::broker::TestState;
 use crate::testing::router::{
@@ -47,17 +50,12 @@ impl LogSeeker {
 /// Subscriber returned by [`ConnectedFileTestBroker`](crate::testing::ConnectedFileTestBroker).
 ///
 /// Dropping it unregisters the subscription, so handlers stop receiving as soon as their task
-/// finishes.
+/// finishes. It pages the way the real transports do - on the client, through the framework's
+/// buffer - so a page handler mounts here exactly as it mounts on a stream file.
 pub struct FileTestSubscriber {
-    state: Arc<TestState>,
-    id: SubscriptionId,
+    // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
-    rx: DeliveryReceiver,
-    requeue: DeliverySender,
-    seek: Arc<SeekControl>,
-    /// A clone of the broker's harness coordinator, threaded into each yielded message so a
-    /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
-    coordinator: Option<Coordinator>,
+    inner: BufferedSubscriber<Deliveries>,
 }
 
 impl std::fmt::Debug for FileTestSubscriber {
@@ -77,17 +75,65 @@ impl FileTestSubscriber {
         requeue: DeliverySender,
         coordinator: Option<Coordinator>,
     ) -> Self {
+        let stream: Arc<str> = Arc::from(stream);
         Self {
-            state,
-            id,
-            stream: Arc::from(stream),
-            rx,
-            requeue,
-            seek: Arc::new(SeekControl::default()),
-            coordinator,
+            stream: Arc::clone(&stream),
+            inner: BufferedSubscriber::new(Deliveries {
+                state,
+                id,
+                stream,
+                rx,
+                requeue,
+                seek: Arc::new(SeekControl::default()),
+                coordinator,
+            })
+            .max_wait(PAGE_MAX_WAIT),
         }
     }
+}
 
+impl Subscriber for FileTestSubscriber {
+    type Message = FileTestMessage;
+    type Error = SeaFileError;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        self.inner.stream()
+    }
+}
+
+impl BatchSubscriber for FileTestSubscriber {
+    type Batch = Vec<FileTestMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+        self.inner.batches(size)
+    }
+}
+
+impl Seekable for FileTestSubscriber {
+    type Seeker = FileSeeker;
+
+    fn seeker(&self) -> FileSeeker {
+        self.inner.seeker()
+    }
+}
+
+/// The subscription's queued deliveries, before paging: one per poll, in log order.
+struct Deliveries {
+    state: Arc<TestState>,
+    id: SubscriptionId,
+    stream: Arc<str>,
+    rx: DeliveryReceiver,
+    requeue: DeliverySender,
+    seek: Arc<SeekControl>,
+    /// A clone of the broker's harness coordinator, threaded into each yielded message so a
+    /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
+    coordinator: Option<Coordinator>,
+}
+
+impl Deliveries {
     /// Applies a reposition requested through a [`FileSeeker`], if one is pending.
     ///
     /// Runs at the top of the subscriber's own poll, which is what makes `&mut` access to the
@@ -126,13 +172,13 @@ impl FileTestSubscriber {
     }
 }
 
-impl Drop for FileTestSubscriber {
+impl Drop for Deliveries {
     fn drop(&mut self) {
         self.state.router.unsubscribe(self.id);
     }
 }
 
-impl Seekable for FileTestSubscriber {
+impl Seekable for Deliveries {
     type Seeker = FileSeeker;
 
     fn seeker(&self) -> FileSeeker {
@@ -147,7 +193,7 @@ impl Seekable for FileTestSubscriber {
     }
 }
 
-impl Subscriber for FileTestSubscriber {
+impl Subscriber for Deliveries {
     type Message = FileTestMessage;
     type Error = SeaFileError;
 

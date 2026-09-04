@@ -8,8 +8,6 @@
 
 #![cfg(feature = "testing")]
 
-use std::time::Duration;
-
 use ruststream::testing::TestApp;
 use ruststream_sea_file::file::prelude::*;
 use ruststream_sea_file::testing::FileTestBroker;
@@ -180,7 +178,7 @@ async fn a_page_body_reaches_the_seek_handle_through_the_batch_context()
     record(&broker, "digest", poisoned_run()).await?;
 
     let app = RustStream::new(AppInfo::new("batch-context", "0.1.0")).with_broker(broker, |b| {
-        b.include(digest.buffered(nonzero!(4), Duration::from_millis(20)));
+        b.include(digest.batch(nonzero!(4)));
     });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
