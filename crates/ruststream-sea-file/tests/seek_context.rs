@@ -10,7 +10,7 @@
 
 use ruststream::testing::TestApp;
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::FileTestBroker;
+use ruststream_sea_file::testing::{FileTestBroker, FileTestPublish};
 use serde::{Deserialize, Serialize};
 
 /// The producer's cursor contract: an entry carrying `resume_at` asks the consumer to skip
@@ -113,7 +113,9 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
     let app = RustStream::new(AppInfo::new("seek-context", "0.1.0")).with_broker(
         FileTestBroker::new(),
         |b| {
-            b.include(work);
+            // The audit reply through the policy the mount site names, rather than through the
+            // broker's default: the same route the other tests take by omission.
+            b.include(work).out(Reply, FileTestPublish);
         },
     );
     let tb = TestApp::start(app).await?;
