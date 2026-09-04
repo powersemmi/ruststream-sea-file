@@ -16,14 +16,14 @@ The file transport does not build on Windows, an upstream constraint of the file
 
 ## Capabilities
 
-Which of the framework's optional capability traits this crate implements natively:
+Which of the framework's optional capability traits this crate implements, and how:
 
-| Capability | Native | Notes |
+| Capability | Implemented | Notes |
 | --- | --- | --- |
 | `Subscribe` | Yes | Both connected brokers resolve a string-literal stream key, so `#[subscriber("key")]` works without a descriptor. See [Subscriptions](#subscriptions). |
 | `Seekable` + `Positioned` | Yes | `FileSubscriber` mints a `FileSeeker`, and a file delivery reports a `FilePosition`; both reach handlers through the `Position` and `SeekHandle` context keys. This crate is the framework's reference implementation of the capability. `StdioSubscriber` is not seekable: standard input has no retained log. See [Seeking](#seeking). |
 | `Partitioned` | No | The transport has no partition or key concept; a stream file is a single ordered log. |
-| `BatchSubscriber` | No | The client delivers one message at a time; the framework's own batching layer applies unchanged. |
+| `BatchSubscriber` | Yes, on the client | Neither client reads several entries at a time, nor offers a count to translate a page size into, so both subscribers assemble their pages through the framework's own buffer. A mount site names `batch(n)` and gets pages of at most that size either way. See [Pages](#pages). |
 | `RequestReply` | No | Neither transport has a reply-address concept, and stdio is one-directional per stream. |
 | `TransactionalPublisher` | No | A stream file has no atomic multi-write unit; each publish appends and flushes on its own. |
 | `OwnedTransactions` | No | Same reason: there is no transaction to own. |
@@ -99,6 +99,32 @@ Pair it with a writer that called `end_with_eos()`, so the reader sees the end-o
 Replay is the one reading mode the position API cannot express. Everything else about where a
 subscription begins is the framework's seek surface.
 
+### Pages
+
+A handler taking `&[T]` consumes a page:
+
+```rust
+--8<-- "crates/ruststream-sea-file/examples/file_pages.rs:page"
+```
+
+and the mount site names how large one may be - the whole of what it has to say about paging:
+
+```rust
+--8<-- "crates/ruststream-sea-file/examples/file_pages.rs:mount"
+```
+
+Neither client reads several entries at a time - a `sea-streamer` consumer yields one message per
+call, off a stream file and off standard input alike, and exposes no count to translate that size
+into. So both subscribers assemble their pages on the client, out of the framework's own buffer.
+Nothing at the mount site says which of the two it is, and the contract is the same either way: a
+page never carries more than the size it was opened with, and carries fewer whenever that is all
+the transport had. The run above records ten readings and settles them in pages of at most four.
+
+A partial page goes out 10 ms after its first delivery. That deadline belongs to this crate rather
+than to the mount site: every transport here is local, and the file client reads a burst greedily
+once one starts, so deliveries that already exist land far inside the window. What it bounds is how
+long a page waits at an idle tail.
+
 ## Seeking
 
 `FileSubscriber` implements the framework's `Seekable` capability, and this crate is its reference
@@ -131,10 +157,10 @@ keys as parameters with the `Ctx` extractor and names nothing at all.
 --8<-- "crates/ruststream-sea-file/examples/file_replay.rs:seek"
 ```
 
-`FileBatchContext` is the page counterpart. A page spans many deliveries, so it carries the seek
-handle and no position; a page body names it (`ctx: &mut Context<'_, FileBatchContext>`) and reads
-the handle with `ctx.context(SeekHandle)`. Per-delivery positions ride the elements instead - every
-delivery carries its sequence in the `stream-sequence` header.
+`FileBatchContext` is the counterpart for a [page](#pages). A page spans many deliveries, so it
+carries the seek handle and no position; a page body names it (`ctx: &mut Context<'_,
+FileBatchContext>`) and reads the handle with `ctx.context(SeekHandle)`. Per-delivery positions ride
+the elements instead - every delivery carries its sequence in the `stream-sequence` header.
 
 Both context types belong to the file transport's own delivery type, so a handler that reads either
 key does not compile against `StdioBroker`: standard input has no retained log, and offers no
@@ -233,7 +259,8 @@ implements `ruststream::testing::TestableBroker`, and it routes over a **retaine
 the one transport property a stream file's handlers are written against. So a seeking service
 mounts on it with no edit at all: `FileStream` resolves here, a delivery reports a `FilePosition`,
 the subscription hands out a `FileSeeker`, and `FileContext` and `FileBatchContext` build off its
-deliveries the way they build off a file's.
+deliveries the way they build off a file's. It pages the same way too, so a page handler sees pages
+of the size its mount site asked for here as well.
 
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
