@@ -20,9 +20,9 @@ use sea_streamer_types::{
 };
 use tokio::sync::{OnceCell, mpsc};
 
+use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
 use crate::message::SeaMessage;
-use crate::paging::PAGE_MAX_WAIT;
 use crate::wire;
 
 pub(crate) struct StdioCore {
@@ -212,7 +212,7 @@ impl Subscribe for ConnectedStdioBroker {
         });
         Ok(StdioSubscriber {
             stream: name.to_owned(),
-            inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(PAGE_MAX_WAIT),
+            inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(BATCH_MAX_WAIT),
         })
     }
 }
@@ -224,7 +224,7 @@ impl DefaultPublish for ConnectedStdioBroker {
 /// A subscription to one stream key on standard input; yields [`SeaMessage`]s.
 ///
 /// Standard input has no retained log: there is no acknowledgement and no repositioning, and
-/// both are reported as unsupported rather than pretended. Pages it does serve: the client
+/// both are reported as unsupported rather than pretended. Batches it does serve: the client
 /// reads one line at a time, so they are assembled here, capped at the size the mount site
 /// named.
 pub struct StdioSubscriber {
@@ -260,7 +260,7 @@ impl BatchSubscriber for StdioSubscriber {
     }
 }
 
-/// The reader task's deliveries, before paging: one line per poll, in arrival order.
+/// The reader task's deliveries, before batching: one line per poll, in arrival order.
 struct StdioDeliveries {
     rx: mpsc::Receiver<Result<SeaMessage, SeaFileError>>,
 }

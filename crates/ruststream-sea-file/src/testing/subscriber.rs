@@ -12,9 +12,9 @@ use ruststream::{
     Seekable, Subscriber, testing::Coordinator,
 };
 
+use crate::batching::BATCH_MAX_WAIT;
 use crate::error::SeaFileError;
 use crate::message::{FilePosition, SEQUENCE_HEADER};
-use crate::paging::PAGE_MAX_WAIT;
 use crate::subscriber::FileSeeker;
 use crate::testing::broker::TestState;
 use crate::testing::router::{
@@ -50,8 +50,8 @@ impl LogSeeker {
 /// Subscriber returned by [`ConnectedFileTestBroker`](crate::testing::ConnectedFileTestBroker).
 ///
 /// Dropping it unregisters the subscription, so handlers stop receiving as soon as their task
-/// finishes. It pages the way the real transports do - on the client, through the framework's
-/// buffer - so a page handler mounts here exactly as it mounts on a stream file.
+/// finishes. It batches the way the real transports do - on the client, through the framework's
+/// buffer - so a batch handler mounts here exactly as it mounts on a stream file.
 pub struct FileTestSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
@@ -87,7 +87,7 @@ impl FileTestSubscriber {
                 seek: Arc::new(SeekControl::default()),
                 coordinator,
             })
-            .max_wait(PAGE_MAX_WAIT),
+            .max_wait(BATCH_MAX_WAIT),
         }
     }
 }
@@ -120,7 +120,7 @@ impl Seekable for FileTestSubscriber {
     }
 }
 
-/// The subscription's queued deliveries, before paging: one per poll, in log order.
+/// The subscription's queued deliveries, before batching: one per poll, in log order.
 struct Deliveries {
     state: Arc<TestState>,
     id: SubscriptionId,
@@ -283,7 +283,7 @@ impl FileTestMessage {
         coordinator: Option<Coordinator>,
     ) -> Self {
         let sequence = delivery.sequence;
-        // The same well-known header the file transport writes, so a page body that reads
+        // The same well-known header the file transport writes, so a batch body that reads
         // positions off its elements works identically here.
         let mut headers = delivery.headers.clone();
         headers.insert(SEQUENCE_HEADER, sequence.to_string());

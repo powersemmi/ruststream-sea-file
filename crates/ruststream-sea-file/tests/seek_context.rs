@@ -66,17 +66,17 @@ async fn work(job: &Job, Ctx(at): Ctx<Position>, Ctx(seeker): Ctx<SeekHandle>) -
 }
 // --8<-- [end:handler]
 
-/// The page counterpart: the seek handle is subscription-scoped, so it rides the batch context,
+/// The batch counterpart: the seek handle is subscription-scoped, so it rides the batch context,
 /// while the target rides the elements themselves.
 #[subscriber(FileStream::new("digest"), start_at(FilePosition::beginning()))]
-async fn digest(page: &[Job], ctx: &mut Context<'_, FileBatchContext>) -> Vec<HandlerOutcome> {
-    if let Some(resume_at) = page.iter().find_map(|job| job.resume_at) {
+async fn digest(batch: &[Job], ctx: &mut Context<'_, FileBatchContext>) -> Vec<HandlerOutcome> {
+    if let Some(resume_at) = batch.iter().find_map(|job| job.resume_at) {
         let _ = ctx
             .context(SeekHandle)
             .seek(FilePosition::sequence(resume_at))
             .await;
     }
-    page.iter().map(|_| HandlerOutcome::ack()).collect()
+    batch.iter().map(|_| HandlerOutcome::ack()).collect()
 }
 
 /// Appends `jobs` to the broker's retained log before any subscription opens, the way a producer
@@ -172,7 +172,7 @@ async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
 // --8<-- [end:test]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_page_body_reaches_the_seek_handle_through_the_batch_context()
+async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
 -> Result<(), Box<dyn std::error::Error>> {
     let broker = FileTestBroker::new();
     record(&broker, "digest", poisoned_run()).await?;
@@ -183,9 +183,9 @@ async fn a_page_body_reaches_the_seek_handle_through_the_batch_context()
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
 
-    // Two pages: the whole recorded run, then the one the seek repositioned onto. A page is
+    // Two batches: the whole recorded run, then the one the seek repositioned onto. A batch is
     // settled before the reposition takes effect, so the skipped region is part of the first
-    // page and absent from the second - the seek governs what comes after it, not what it saw.
+    // batch and absent from the second - the seek governs what comes after it, not what it saw.
     tb.broker::<FileTestBroker>()
         .subscriber("digest")
         .assert_called(2)

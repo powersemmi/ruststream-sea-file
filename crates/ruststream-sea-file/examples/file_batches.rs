@@ -1,9 +1,9 @@
-//! Processing a recorded stream file a page at a time: the producer records a run in the
-//! scope's `after_startup` hook, the handler settles it in pages, and the demo file is removed
+//! Processing a recorded stream file a batch at a time: the producer records a run in the
+//! scope's `after_startup` hook, the handler settles it in batches, and the demo file is removed
 //! in `after_shutdown`, once the broker has closed it - no hand-written runtime setup anywhere.
 //!
 //! ```text
-//! cargo run --example file_pages -- run
+//! cargo run --example file_batches -- run
 //! ```
 
 use std::{fs, io};
@@ -11,7 +11,7 @@ use std::{fs, io};
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
-const DEMO_FILE: &str = "/tmp/ruststream-file-pages-example.ss";
+const DEMO_FILE: &str = "/tmp/ruststream-file-batches-example.ss";
 
 #[derive(Debug, Outgoing, Serialize, Deserialize)]
 struct Reading {
@@ -19,17 +19,17 @@ struct Reading {
     millivolts: u32,
 }
 
-// --8<-- [start:page]
-/// Takes a whole page at once and returns one outcome per element. The elements are decoded
-/// before the body runs, so a page that is short is simply a page the transport had no more
+// --8<-- [start:batch]
+/// Takes a whole batch at once and returns one outcome per element. The elements are decoded
+/// before the body runs, so a batch that is short is simply a batch the transport had no more
 /// deliveries for.
 #[subscriber(FileStream::new("readings"), start_at(FilePosition::beginning()))]
-async fn aggregate(page: &[Reading]) -> Vec<HandlerOutcome> {
-    let total: u32 = page.iter().map(|reading| reading.millivolts).sum();
-    println!("page of {} readings, {total} mV in total", page.len());
-    page.iter().map(|_| HandlerOutcome::ack()).collect()
+async fn aggregate(batch: &[Reading]) -> Vec<HandlerOutcome> {
+    let total: u32 = batch.iter().map(|reading| reading.millivolts).sum();
+    println!("batch of {} readings, {total} mV in total", batch.len());
+    batch.iter().map(|_| HandlerOutcome::ack()).collect()
 }
-// --8<-- [end:page]
+// --8<-- [end:batch]
 
 // --8<-- [start:mount]
 #[ruststream::app]
@@ -53,8 +53,8 @@ fn app() -> impl App {
                 }
                 Ok(())
             });
-            // The page size is the whole of what a mount site says about paging; how a page is
-            // filled is the transport's business.
+            // The batch size is the whole of what a mount site says about batching; how a batch
+            // is filled is the transport's business.
             b.include(aggregate.batch(nonzero!(4)));
         })
 }

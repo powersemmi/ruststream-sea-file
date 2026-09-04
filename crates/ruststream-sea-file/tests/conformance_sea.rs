@@ -49,9 +49,9 @@ fn file_broker_passes_lifecycle() {
     });
 }
 
-/// The page contract against real stream files: the suite opens its subscription at a size
-/// smaller than the run, so a page coming back longer than the mount site asked for fails here.
-/// Neither client pages on the wire, so what this pins is the client-side assembly.
+/// The batch contract against real stream files: the suite opens its subscription at a size
+/// smaller than the run, so a batch coming back longer than the mount site asked for fails here.
+/// Neither client batches on the wire, so what this pins is the client-side assembly.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
 fn file_broker_passes_batch_suite() {
@@ -67,7 +67,7 @@ fn file_broker_passes_batch_suite() {
     });
 }
 
-/// The same contract on the in-process transport, which pages the same way, so a page handler
+/// The same contract on the in-process transport, which batches the same way, so a batch handler
 /// under the harness sees what it would see against a file.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]

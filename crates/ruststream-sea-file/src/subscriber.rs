@@ -5,8 +5,8 @@
 //! a driver task owns the consumer: seeks arrive as commands and run to completion outside
 //! any `select!`, while `next()` (which is cancel-safe) feeds the delivery channel.
 //!
-//! Pages sit on top of that channel rather than in the client, which reads one message at a
-//! time; see [`crate::paging`] for why, and for the deadline that closes a partial one.
+//! Batches sit on top of that channel rather than in the client, which reads one message at a
+//! time; see [`crate::batching`] for why, and for the deadline that closes a partial one.
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -22,9 +22,9 @@ use sea_streamer_file::{FileConsumer, FileErr};
 use sea_streamer_types::{Consumer as _, SeqPos, StreamErr, Timestamp};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
 use crate::message::{FilePosition, SeaMessage};
-use crate::paging::PAGE_MAX_WAIT;
 
 /// How many undelivered messages may sit between the driver and the consumer.
 const CHANNEL_CAPACITY: usize = 64;
@@ -46,8 +46,8 @@ pub(crate) struct Stamped {
 pub struct FileSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
-    // The driver task's deliveries plus client-side paging: the file client reads one message
-    // at a time, so pages are assembled here - see the `paging` module.
+    // The driver task's deliveries plus client-side batching: the file client reads one message
+    // at a time, so batches are assembled here - see the `batching` module.
     inner: BufferedSubscriber<Deliveries>,
 }
 
@@ -87,7 +87,7 @@ impl FileSubscriber {
                 cmd: cmd_tx,
                 epoch,
             })
-            .max_wait(PAGE_MAX_WAIT),
+            .max_wait(BATCH_MAX_WAIT),
         }
     }
 }
@@ -116,13 +116,13 @@ impl Seekable for FileSubscriber {
     type Seeker = FileSeeker;
 
     fn seeker(&self) -> FileSeeker {
-        // Paging does not move the subscription: this is the driver's own handle, reached
+        // Batching does not move the subscription: this is the driver's own handle, reached
         // through the buffer.
         self.inner.seeker()
     }
 }
 
-/// The driver task's deliveries, before paging: one message per poll, in publish order.
+/// The driver task's deliveries, before batching: one message per poll, in publish order.
 struct Deliveries {
     stream: Arc<str>,
     rx: mpsc::Receiver<Stamped>,

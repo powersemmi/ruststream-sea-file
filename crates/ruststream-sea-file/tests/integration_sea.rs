@@ -17,9 +17,9 @@ use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The page size the stdio check opens its subscription at: smaller than the run, so a page
+/// The batch size the stdio check opens its subscription at: smaller than the run, so a batch
 /// carrying more than the mount site asked for is caught rather than missed.
-const STDIO_PAGE: NonZeroUsize = NonZeroUsize::new(2).unwrap();
+const STDIO_BATCH: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
 fn tmp_path(name: &str) -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -127,7 +127,7 @@ fn a_finished_file_replays_and_completes() {
 /// producer in the process, so a second stdio test running beside this one would be torn down by
 /// it.
 #[test]
-fn stdio_loopback_carries_binary_payloads_and_pages() {
+fn stdio_loopback_carries_binary_payloads_and_batches() {
     common::rt().block_on(async {
         let connected = StdioBroker::new()
             .loopback()
@@ -157,8 +157,8 @@ fn stdio_loopback_carries_binary_payloads_and_pages() {
             assert_eq!(message.payload(), raw.as_slice());
         }
 
-        // Standard input delivers one line at a time, so the pages are assembled on the client;
-        // what the mount site asks for is still the cap a page may never exceed.
+        // Standard input delivers one line at a time, so the batches are assembled on the client;
+        // what the mount site asks for is still the cap a batch may never exceed.
         for i in 0..3u8 {
             publisher
                 .publish(OutgoingMessage::new("pipe", [i].as_slice()))
@@ -166,19 +166,19 @@ fn stdio_loopback_carries_binary_payloads_and_pages() {
                 .expect("publish succeeds");
         }
         let mut received = Vec::new();
-        let mut pages = pin!(subscriber.batches(STDIO_PAGE));
+        let mut batches = pin!(subscriber.batches(STDIO_BATCH));
         while received.len() < 3 {
-            let page = tokio::time::timeout(RECV_TIMEOUT, pages.next())
+            let batch = tokio::time::timeout(RECV_TIMEOUT, batches.next())
                 .await
-                .expect("page arrives")
+                .expect("batch arrives")
                 .expect("stream is open")
-                .expect("page is ok");
-            assert!(!page.is_empty(), "a yielded page must not be empty");
+                .expect("batch is ok");
+            assert!(!batch.is_empty(), "a yielded batch must not be empty");
             assert!(
-                page.len() <= STDIO_PAGE.get(),
-                "a page must never carry more than the size it was opened with",
+                batch.len() <= STDIO_BATCH.get(),
+                "a batch must never carry more than the size it was opened with",
             );
-            received.extend(page.iter().map(|msg| msg.payload().to_vec()));
+            received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
         }
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
 

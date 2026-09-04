@@ -62,13 +62,13 @@ impl BuildContext<FileMessage> for FileContext {
     }
 }
 
-/// The file transport's subscription-scoped page context: the subscription's own seeker, shared
-/// by every delivery of the page.
+/// The file transport's subscription-scoped batch context: the subscription's own seeker, shared
+/// by every delivery of the batch.
 ///
-/// The runtime builds one per dispatched page from the page's first delivery, and a page body
-/// reads it by key - [`SeekHandle`]. Per-delivery data (a [`Position`]) has no place here: a page
-/// spans many deliveries, so the position a body reacts to rides the elements themselves, and
-/// keeping this a separate type from [`FileContext`] is what rejects a page body asking for
+/// The runtime builds one per dispatched batch from the batch's first delivery, and a batch body
+/// reads it by key - [`SeekHandle`]. Per-delivery data (a [`Position`]) has no place here: a
+/// batch spans many deliveries, so the position a body reacts to rides the elements themselves,
+/// and keeping this a separate type from [`FileContext`] is what rejects a batch body asking for
 /// per-delivery fields at compile time.
 ///
 /// # Examples
@@ -85,14 +85,14 @@ impl BuildContext<FileMessage> for FileContext {
 /// impl Handle<[Job], (), (), FileBatchContext> for Replayer {
 ///     async fn handle(
 ///         &self,
-///         page: &[Job],
+///         batch: &[Job],
 ///         _outs: &(),
 ///         ctx: &mut Context<'_, FileBatchContext>,
 ///     ) -> Result<(), Vec<HandlerOutcome>> {
-///         if page.iter().any(|job| job.id == 0)
+///         if batch.iter().any(|job| job.id == 0)
 ///             && ctx.context(SeekHandle).seek(FilePosition::end()).await.is_err()
 ///         {
-///             return Err(page.iter().map(|_| HandlerOutcome::retry()).collect());
+///             return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
 ///         }
 ///         Ok(())
 ///     }
