@@ -23,9 +23,9 @@ ruststream = { version = ">=0.6.0, <0.7.0", default-features = false }
 # The client's runtime features are mutually exclusive upstream; tokio is this project's
 # hardcoded runtime, so it is forwarded unconditionally - without it the build compiles and
 # then panics at runtime.
-sea-streamer-types = { version = "=1.0.0-rc.1", default-features = false }
-sea-streamer-file = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio"] }
-sea-streamer-stdio = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio"] }
+sea-streamer-types = { version = "=1.0.0-rc.2", default-features = false }
+sea-streamer-file = { version = "=1.0.0-rc.2", default-features = false, features = ["runtime-tokio"] }
+sea-streamer-stdio = { version = "=1.0.0-rc.2", default-features = false, features = ["runtime-tokio"] }
 base64 = "0.22"
 bytes = "1"
 futures = "0.3"
