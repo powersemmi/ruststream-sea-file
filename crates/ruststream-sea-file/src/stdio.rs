@@ -1,13 +1,17 @@
 //! The stdio transport: [`StdioBroker`], standard input and output as one stream - a service
 //! that composes with ordinary command-line tools.
+//!
+//! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
 
+use std::future::{Future, ready};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::Stream;
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
+    BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
 use sea_streamer_types::{
@@ -16,6 +20,7 @@ use sea_streamer_types::{
 };
 use tokio::sync::{OnceCell, mpsc};
 
+use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
 use crate::message::SeaMessage;
 use crate::wire;
@@ -207,7 +212,7 @@ impl Subscribe for ConnectedStdioBroker {
         });
         Ok(StdioSubscriber {
             stream: name.to_owned(),
-            rx,
+            inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(BATCH_MAX_WAIT),
         })
     }
 }
@@ -219,10 +224,12 @@ impl DefaultPublish for ConnectedStdioBroker {
 /// A subscription to one stream key on standard input; yields [`SeaMessage`]s.
 ///
 /// Standard input has no retained log: there is no acknowledgement and no repositioning, and
-/// both are reported as unsupported rather than pretended.
+/// both are reported as unsupported rather than pretended. Batches it does serve: the client
+/// reads one line at a time, so they are assembled here, capped at the size the mount site
+/// named.
 pub struct StdioSubscriber {
     stream: String,
-    rx: mpsc::Receiver<Result<SeaMessage, SeaFileError>>,
+    inner: BufferedSubscriber<StdioDeliveries>,
 }
 
 impl std::fmt::Debug for StdioSubscriber {
@@ -234,6 +241,31 @@ impl std::fmt::Debug for StdioSubscriber {
 }
 
 impl Subscriber for StdioSubscriber {
+    type Message = SeaMessage;
+    type Error = SeaFileError;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<SeaMessage, SeaFileError>> + Send + '_ {
+        self.inner.stream()
+    }
+}
+
+impl BatchSubscriber for StdioSubscriber {
+    type Batch = Vec<SeaMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+        self.inner.batches(size)
+    }
+}
+
+/// The reader task's deliveries, before batching: one line per poll, in arrival order.
+struct StdioDeliveries {
+    rx: mpsc::Receiver<Result<SeaMessage, SeaFileError>>,
+}
+
+impl Subscriber for StdioDeliveries {
     type Message = SeaMessage;
     type Error = SeaFileError;
 
@@ -321,7 +353,73 @@ pub struct StdioPublish;
 impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     type Live = StdioPublisher;
 
-    async fn pair(self, connected: &ConnectedStdioBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedStdioBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
+}
+
+/// The publish policy of this form, under the name every form uses.
+///
+/// A mount site names the concept, never the transport: moving a service from one form to
+/// another changes the prelude it globs and leaves the composition root alone. The prefixed
+/// [`StdioPublish`] stays at the crate root, for a service that mixes both forms.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream_sea_file::stdio::Publish;
+///
+/// let policy = Publish::default();
+/// # let _ = policy;
+/// ```
+pub use StdioPublish as Publish;
+
+pub mod prelude {
+    //! The imports a service on a shell pipeline writes every time, in one glob.
+    //!
+    //! The framework's prelude, this form's broker, and [`Publish`]. A subscription here is a
+    //! plain stream key, so this form has no descriptor type.
+    //!
+    //! This is the routes-side vocabulary: a mount site globs it and names policies by concept.
+    //! A handler body globs `ruststream::prelude` instead and bounds an injected publisher by
+    //! the framework's capability traits, so the two vocabularies never meet in one file.
+    //!
+    //! # Examples
+    //!
+    //! ```
+    //! use ruststream_sea_file::stdio::prelude::*;
+    //! use serde::{Deserialize, Serialize};
+    //!
+    //! #[derive(Debug, Deserialize)]
+    //! struct Job {
+    //!     id: u64,
+    //! }
+    //!
+    //! #[derive(Debug, Serialize)]
+    //! struct Done {
+    //!     id: u64,
+    //! }
+    //!
+    //! #[subscriber("jobs", publish("results"))]
+    //! async fn work(job: &Job) -> Done {
+    //!     Done { id: job.id }
+    //! }
+    //!
+    //! #[ruststream::app]
+    //! fn app() -> impl App {
+    //!     RustStream::new(AppInfo::new("pipeline", "0.1.0"))
+    //!         .with_broker(StdioBroker::new(), |b| {
+    //!             b.include(work);
+    //!         })
+    //! }
+    //! ```
+
+    pub use ruststream::prelude::*;
+
+    // No capability traits: `SeaMessage` implements `Positioned`, but a pipe cannot seek back to
+    // one - do not add it here.
+    pub use crate::stdio::{Publish, StdioBroker};
 }

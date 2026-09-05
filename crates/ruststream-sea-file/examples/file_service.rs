@@ -2,9 +2,7 @@
 //! external broker.
 
 // --8<-- [start:handler]
-use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream};
-use ruststream::subscriber;
-use ruststream_sea_file::{FileBroker, FilePosition, FileStream};
+use ruststream_sea_file::file::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -13,9 +11,9 @@ struct Order {
 }
 
 #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
-async fn handle(order: &Order) -> HandlerResult {
+async fn handle(order: &Order) -> HandlerOutcome {
     println!("got order {}", order.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
 

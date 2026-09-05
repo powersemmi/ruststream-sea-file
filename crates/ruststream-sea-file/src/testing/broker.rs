@@ -1,5 +1,6 @@
 //! [`FileTestBroker`]: the in-process transport and its connected form.
 
+use std::future::{Future, ready};
 use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
@@ -21,11 +22,11 @@ pub(crate) struct TestState {
 }
 
 impl TestState {
-    fn coordinator(&self) -> Option<&Coordinator> {
+    pub(crate) fn coordinator(&self) -> Option<&Coordinator> {
         self.coordinator.get()
     }
 
-    pub(crate) fn publish(&self, name: &str, payload: Bytes, headers: ruststream::Headers) {
+    pub(crate) fn publish(&self, name: &str, payload: Bytes, headers: ruststream::HeaderMap) {
         self.router
             .publish(name, payload, headers, self.coordinator());
     }
@@ -66,8 +67,8 @@ impl Broker for FileTestBroker {
     type Error = SeaFileError;
     type Connected = ConnectedFileTestBroker;
 
-    async fn connect(self) -> Result<Self::Connected, Self::Error> {
-        Ok(ConnectedFileTestBroker { state: self.state })
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        ready(Ok(ConnectedFileTestBroker { state: self.state }))
     }
 }
 
@@ -93,24 +94,33 @@ impl ConnectedBroker for ConnectedFileTestBroker {
     type Error = SeaFileError;
     type Closed = ();
 
-    async fn shutdown(self) -> Result<(), Self::Error> {
+    fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
         self.state.router.clear();
-        Ok(())
+        ready(Ok(()))
+    }
+}
+
+impl ConnectedFileTestBroker {
+    /// Opens an in-process subscription on `name`: what both the `Subscribe` capability and the
+    /// file transport's own [`FileStream`](crate::FileStream) descriptor resolve to.
+    pub(crate) fn open(&self, name: &str) -> FileTestSubscriber {
+        let (id, requeue, rx) = self.state.router.subscribe(name.to_owned());
+        FileTestSubscriber::new(
+            Arc::clone(&self.state),
+            id,
+            name.to_owned(),
+            rx,
+            requeue,
+            self.state.coordinator().cloned(),
+        )
     }
 }
 
 impl Subscribe for ConnectedFileTestBroker {
     type Subscriber = FileTestSubscriber;
 
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
-        let (id, requeue, rx) = self.state.router.subscribe(name.to_owned());
-        Ok(FileTestSubscriber::new(
-            Arc::clone(&self.state),
-            id,
-            rx,
-            requeue,
-            self.state.coordinator().cloned(),
-        ))
+    fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
+        ready(Ok(self.open(name)))
     }
 }
 
@@ -143,13 +153,13 @@ pub struct FileTestPublisher {
 impl Publisher for FileTestPublisher {
     type Error = SeaFileError;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
         self.state.publish(
             msg.name(),
             Bytes::copy_from_slice(msg.payload()),
             msg.headers().clone(),
         );
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -171,8 +181,11 @@ pub struct FileTestPublish;
 impl PublishPolicy<ConnectedFileTestBroker> for FileTestPublish {
     type Live = FileTestPublisher;
 
-    async fn pair(self, connected: &ConnectedFileTestBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedFileTestBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
 }
 

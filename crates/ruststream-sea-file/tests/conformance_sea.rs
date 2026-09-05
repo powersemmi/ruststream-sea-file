@@ -49,6 +49,39 @@ fn file_broker_passes_lifecycle() {
     });
 }
 
+/// The batch contract against real stream files: the suite opens its subscription at a size
+/// smaller than the run, so a batch coming back longer than the mount site asked for fails here.
+/// Neither client batches on the wire, so what this pins is the client-side assembly.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_batch_suite() {
+    common::rt().block_on(async {
+        let path = tmp_path("batches");
+        capabilities::batches(
+            || FileBroker::new(path.clone()),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The same contract on the in-process transport, which batches the same way, so a batch handler
+/// under the harness sees what it would see against a file.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn sea_test_broker_passes_batch_suite() {
+    common::rt().block_on(async {
+        capabilities::batches(
+            FileTestBroker::new,
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
 fn file_broker_passes_seeking_suite() {

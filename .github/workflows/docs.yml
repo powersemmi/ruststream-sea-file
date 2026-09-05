@@ -8,6 +8,8 @@ on:
       - properdocs.yml
       - overrides/**
       - crates/ruststream-sea-file/examples/**
+      # The testing page embeds the harness test, so it is a docs input too.
+      - crates/ruststream-sea-file/tests/**
       - scripts/lint_doc_fences.py
       - .github/workflows/docs.yml
   pull_request:

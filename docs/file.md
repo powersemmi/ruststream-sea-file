@@ -7,8 +7,8 @@ middleware) carry over unchanged - see the
 [RustStream documentation](https://powersemmi.github.io/ruststream/) for those.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "json"] }
-ruststream-sea-file = "0.6"
+ruststream = { version = "0.7", features = ["macros", "json"] }
+ruststream-sea-file = "0.7"
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -16,14 +16,14 @@ The file transport does not build on Windows, an upstream constraint of the file
 
 ## Capabilities
 
-Which of the framework's optional capability traits this crate implements natively:
+Which of the framework's optional capability traits this crate implements, and how:
 
-| Capability | Native | Notes |
+| Capability | Implemented | Notes |
 | --- | --- | --- |
 | `Subscribe` | Yes | Both connected brokers resolve a string-literal stream key, so `#[subscriber("key")]` works without a descriptor. See [Subscriptions](#subscriptions). |
-| `Seekable` + `Positioned` | Yes | `FileSubscriber` mints a `FileSeeker`, and `SeaMessage` reports a `FilePosition`. This crate is the framework's reference implementation of the capability. `StdioSubscriber` is not seekable: standard input has no retained log. See [Seeking](#seeking). |
+| `Seekable` + `Positioned` | Yes | `FileSubscriber` mints a `FileSeeker`, and a file delivery reports a `FilePosition`; both reach handlers through the `Position` and `SeekHandle` context keys. This crate is the framework's reference implementation of the capability. `StdioSubscriber` is not seekable: standard input has no retained log. See [Seeking](#seeking). |
 | `Partitioned` | No | The transport has no partition or key concept; a stream file is a single ordered log. |
-| `BatchSubscriber` | No | The client delivers one message at a time; the framework's own batching layer applies unchanged. |
+| `BatchSubscriber` | Yes, on the client | Neither client reads several entries at a time, nor offers a count to translate a batch size into, so both subscribers assemble their batches through the framework's own buffer. A mount site names `batch(n)` and gets batches of at most that size either way. See [Batches](#batches). |
 | `RequestReply` | No | Neither transport has a reply-address concept, and stdio is one-directional per stream. |
 | `TransactionalPublisher` | No | A stream file has no atomic multi-write unit; each publish appends and flushes on its own. |
 | `OwnedTransactions` | No | Same reason: there is no transaction to own. |
@@ -35,6 +35,12 @@ return `AckError::Unsupported` rather than claiming progress that nothing record
 explicit instead. See [Acknowledgement](#acknowledgement).
 
 ## The two brokers
+
+Each transport has a module of its own holding that transport's types, its `Publish` policy and
+its prelude. A service on stream files opens with `use ruststream_sea_file::file::prelude::*;`
+and one on a pipeline with `use ruststream_sea_file::stdio::prelude::*;`, and needs nothing else
+from either crate. A service that spans both globs `ruststream_sea_file::prelude` and writes
+`FilePublish` and `StdioPublish` where the two forms differ.
 
 `FileBroker::new(path)` records the path of a `.ss` stream file. `StdioBroker::new()` records
 nothing at all. Both are synchronous and do no I/O, so both compose with the `#[ruststream::app]`
@@ -76,6 +82,10 @@ Mount it on the broker; the `with_broker` / `include` part is identical to the i
 --8<-- "crates/ruststream-sea-file/examples/file_service.rs:app"
 ```
 
+The same descriptor is what the macro-free path passes to the mount constructor -
+`subscriber(FileStream::new("orders"), body)` - so both spellings name the subscription the same
+way.
+
 On the stdio broker a subscription is a string-literal stream key, resolved through the framework's
 `Subscribe` capability: `#[subscriber("jobs")]` consumes the `jobs` key off standard input.
 
@@ -89,6 +99,32 @@ Pair it with a writer that called `end_with_eos()`, so the reader sees the end-o
 Replay is the one reading mode the position API cannot express. Everything else about where a
 subscription begins is the framework's seek surface.
 
+### Batches
+
+A handler taking `&[T]` consumes a batch:
+
+```rust
+--8<-- "crates/ruststream-sea-file/examples/file_batches.rs:batch"
+```
+
+and the mount site names how large one may be - the whole of what it has to say about batching:
+
+```rust
+--8<-- "crates/ruststream-sea-file/examples/file_batches.rs:mount"
+```
+
+Neither client reads several entries at a time - a `sea-streamer` consumer yields one message per
+call, off a stream file and off standard input alike, and exposes no count to translate that size
+into. So both subscribers assemble their batches on the client, out of the framework's own buffer.
+Nothing at the mount site says which of the two it is, and the contract is the same either way: a
+batch never carries more than the size it was opened with, and carries fewer whenever that is all
+the transport had. The run above records ten readings and settles them in batches of at most four.
+
+A partial batch goes out 10 ms after its first delivery. That deadline belongs to this crate rather
+than to the mount site: every transport here is local, and the file client reads a burst greedily
+once one starts, so deliveries that already exist land far inside the window. What it bounds is how
+long a batch waits at an idle tail.
+
 ## Seeking
 
 `FileSubscriber` implements the framework's `Seekable` capability, and this crate is its reference
@@ -101,31 +137,58 @@ implementation. Positions are `FilePosition`:
 | `FilePosition::sequence(n)` | A message sequence, redelivered inclusively. |
 | `FilePosition::timestamp(millis)` | The earliest message strictly later than that instant, in milliseconds since the Unix epoch. |
 
-A captured position (`Positioned::position` on a delivered message) carries the framework's pinned
-semantics: seeking to it redelivers exactly that message, then the rest of the log in order. The
-sequence rewind is inclusive, which is what makes that hold.
+A captured position carries the framework's pinned semantics: seeking to it redelivers exactly that
+message, then the rest of the log in order. The sequence rewind is inclusive, which is what makes
+that hold.
 
 Where a subscription begins is the `start_at(..)` clause on the decorator, applied before the first
-delivery. A handler repositions its own live subscription through the injected `Seek` parameter:
+delivery. A handler repositions its own live subscription through the transport's context keys,
+which the runtime resolves at compile time:
+
+| Key | Reads | Available on |
+| --- | --- | --- |
+| `Position` | this delivery's `FilePosition` | `FileContext` |
+| `SeekHandle` | the subscription's `FileSeeker` | `FileContext`, `FileBatchContext` |
+
+`FileContext` is the per-delivery context: a handler names it as its context type, or takes the
+keys as parameters with the `Ctx` extractor and names nothing at all.
 
 ```rust
 --8<-- "crates/ruststream-sea-file/examples/file_replay.rs:seek"
 ```
+
+`FileBatchContext` is the counterpart for a [batch](#batches). A batch spans many deliveries, so it
+carries the seek handle and no position; a batch body names it (`ctx: &mut Context<'_,
+FileBatchContext>`) and reads the handle with `ctx.context(SeekHandle)`. Per-delivery positions ride
+the elements instead - every delivery carries its sequence in the `stream-sequence` header.
+
+Both context types belong to the file transport's own delivery type, so a handler that reads either
+key does not compile against `StdioBroker`: standard input has no retained log, and offers no
+repositioning at all.
 
 Deliveries queued from before a seek are discarded, so the next message the handler sees comes from
 the new position. See
 [Seeking](https://powersemmi.github.io/ruststream/latest/guides/subscribers/#seeking) in the
 framework docs for the capability itself.
 
-Standard input has no retained log, so `StdioSubscriber` offers no repositioning at all.
-
 ## Publishing
 
 A publisher is a policy plus the live connection. `FilePublish` pairs into `FilePublisher` and
 writes into the stream file; `StdioPublish` pairs into `StdioPublisher` and writes lines to
 standard output. Each is its broker's default publish policy, so a
-`#[subscriber(.., publish("dest"))]` handler mounted without an explicit publisher replies through
-it.
+`#[subscriber(.., publish("dest"))]` handler whose mount names no reply policy replies through it.
+
+A mount that does name one writes the `.out` verb, marker first and policy second:
+`b.include(handle).out(Reply, Publish);` binds the reply position, and an injected `Out` slot binds
+the same way under its own marker. Either spelling leaves the handler broker-agnostic - the
+transport is named at the mount site, never in the definition.
+
+A service writes two vocabularies, in two kinds of file. A mount site globs a transport prelude and
+names a policy by concept - `Publish`, whichever form it is on - so moving a service between forms
+changes the glob and leaves the composition root alone. A handler body globs `ruststream::prelude`
+instead and bounds an injected publisher by the framework's capability traits, never by a broker
+type. The prefixed `FilePublish` and `StdioPublish` are for the one place the concept name is
+ambiguous: a mount site that spans both forms.
 
 The file publisher flushes on every publish: the sink buffers, and live subscribers (and external
 tails of the same file) observe the file, not the buffer.
@@ -136,6 +199,15 @@ tails of the same file) observe the file, not the buffer.
 
 The stdio publisher rejects an empty message with `SeaFileError::Invalid`, because the client's
 line format silently drops empty lines.
+
+### Per-message arguments
+
+A handler publishes through the framework's builder: `publisher.message(&value).publish()`, with
+`.to(key)` where the value's own `#[derive(Outgoing)]` leaves the stream key to the call. This
+transport adds no per-message step of its own; the stream key and the payload are all it carries,
+and the builder supplies both. Opaque bytes go the same way, as a value whose type declares itself
+already serialized (`#[derive(Outgoing, Serialized)] struct Frame(Vec<u8>)`), so no codec runs on
+them.
 
 ## The header envelope
 
@@ -185,12 +257,29 @@ Everything in this crate runs locally: the framework's conformance, lifecycle, a
 plus the replay and stdio integration tests exercise temp files and in-process pipes, with no
 external broker to start.
 
-The `testing` feature ships `FileTestBroker`, an in-process transport that reproduces the crate's
-core routing with no file at all. It follows the same ladder as the real brokers, and its connected
-form implements `ruststream::testing::TestableBroker`, so it drives the `TestApp` harness: inject
-traffic with `broker.inject(OutgoingMessage::new(..))` and assert on published output with the free
-`ruststream::testing::expect_published`. See
-[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp).
+Your own handlers are tested with the framework's `TestApp` harness, against the `testing`
+feature's `FileTestBroker`. It follows the same ladder as the real brokers, its connected form
+implements `ruststream::testing::TestableBroker`, and it routes over a **retained, positioned log** -
+the one transport property a stream file's handlers are written against. So a seeking service
+mounts on it with no edit at all: `FileStream` resolves here, a delivery reports a `FilePosition`,
+the subscription hands out a `FileSeeker`, and `FileContext` and `FileBatchContext` build off its
+deliveries the way they build off a file's. It batches the same way too, so a batch handler sees
+batches of the size its mount site asked for here as well.
 
-`FileTestBroker` routes by exact address match and simulates none of the file semantics: replay,
-seeking, the end-of-stream mark, and the envelope are covered against real stream files instead.
+```rust
+--8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
+```
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/seek_context.rs:test"
+```
+
+The harness supplies the input, drives the reaction to a standstill, and records what happened, so
+a test needs no waiting and no collector of its own. See
+[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)
+for the assertion surface.
+
+What the in-process broker deliberately leaves alone is everything a file is for: files and
+beacons, the end-of-stream mark that completes a replay, the header envelope, timing, and the
+`AckError::Unsupported` the real transport reports. Those are covered against real stream files by
+this repo's own suite, which needs no server either.

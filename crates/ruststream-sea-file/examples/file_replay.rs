@@ -1,6 +1,6 @@
 //! Replay and repositioning on the default start path: the `start_at` clause opens the
 //! subscription at the beginning of the file (recorded history replays before anything
-//! live), the `Seek` handler parameter skips a poisoned region, the first publish rides the
+//! live), the `SeekHandle` context key skips a poisoned region, the first publish rides the
 //! scope's `after_startup` lifecycle hook, and the demo file is removed in `after_shutdown`,
 //! once the broker has closed it - no hand-written runtime setup anywhere.
 //!
@@ -10,32 +10,31 @@
 
 use std::{fs, io};
 
-use ruststream::runtime::{App, AppInfo, HandlerResult, RustStream, Seek};
-use ruststream::{OutgoingMessage, Publisher, Seeker, subscriber};
-use ruststream_sea_file::{FileBroker, FilePosition, FilePublish, FileSeeker, FileStream};
+use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
 const DEMO_FILE: &str = "/tmp/ruststream-file-replay-example.ss";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, Serialize, Deserialize)]
 struct Job {
     id: u64,
 }
 
 // --8<-- [start:seek]
 /// Replays the jobs from the beginning of the file; on the poison marker it jumps to the
-/// live tail, dropping everything still queued from the replay.
+/// live tail, dropping everything still queued from the replay. The seeker is a broker context
+/// field - the `SeekHandle` key reads it off the delivery's context.
 #[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
-async fn replay(job: &Job, Seek(seeker): Seek<FileSeeker>) -> HandlerResult {
+async fn replay(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     if job.id == 999 {
         println!("poison marker: skipping the rest of the recorded region");
         if seeker.seek(FilePosition::end()).await.is_err() {
-            return HandlerResult::retry();
+            return HandlerOutcome::retry();
         }
-        return HandlerResult::Ack;
+        return HandlerOutcome::ack();
     }
     println!("replayed job {}", job.id);
-    HandlerResult::Ack
+    HandlerOutcome::ack()
 }
 // --8<-- [end:seek]
 
@@ -49,11 +48,12 @@ fn app() -> impl App {
         .with_broker(FileBroker::new(DEMO_FILE), |b| {
             // The recording side, as a lifecycle hook: it runs once the broker is connected
             // and the subscriptions are open, so the paired publisher arrives live.
-            b.after_startup(FilePublish, async move |publisher| -> io::Result<()> {
+            b.after_startup(Publish, async move |publisher| -> io::Result<()> {
                 for id in [1u64, 999, 3, 4] {
-                    let payload = serde_json::to_vec(&Job { id }).map_err(io::Error::other)?;
                     publisher
-                        .publish(OutgoingMessage::new("jobs", payload.as_slice()))
+                        .message(&Job { id })
+                        .to("jobs")
+                        .publish()
                         .await
                         .map_err(io::Error::other)?;
                 }

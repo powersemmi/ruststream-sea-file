@@ -1,7 +1,10 @@
 //! The file transport: [`FileBroker`] -> [`ConnectedFileBroker`], a persistent, replayable
 //! stream on disk.
+//!
+//! A service on stream files globs this form's [`prelude`] and names its policy [`Publish`].
 
 use std::fs;
+use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -346,11 +349,79 @@ pub struct FilePublish;
 impl PublishPolicy<ConnectedFileBroker> for FilePublish {
     type Live = FilePublisher;
 
-    async fn pair(self, connected: &ConnectedFileBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+    fn pair(
+        self,
+        connected: &ConnectedFileBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
     }
 }
 
 impl DefaultPublish for ConnectedFileBroker {
     type Policy = FilePublish;
+}
+
+/// The publish policy of this form, under the name every form uses.
+///
+/// A mount site names the concept, never the transport: moving a service from one form to
+/// another changes the prelude it globs and leaves the composition root alone. The prefixed
+/// [`FilePublish`] stays at the crate root, for a service that mixes both forms.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream_sea_file::file::Publish;
+///
+/// let policy = Publish::default();
+/// # let _ = policy;
+/// ```
+pub use FilePublish as Publish;
+
+pub mod prelude {
+    //! The imports a service on a stream file writes every time, in one glob.
+    //!
+    //! The framework's prelude, this form's broker, subscription descriptor, position and seeker
+    //! types, the seeking capability traits and context keys, and [`Publish`].
+    //!
+    //! This is the routes-side vocabulary: a mount site globs it and names policies by concept.
+    //! A handler body globs `ruststream::prelude` instead and bounds an injected publisher by
+    //! the framework's capability traits, so the two vocabularies never meet in one file.
+    //!
+    //! # Examples
+    //!
+    //! ```
+    //! use ruststream_sea_file::file::prelude::*;
+    //! use serde::Deserialize;
+    //!
+    //! #[derive(Debug, Deserialize)]
+    //! struct Order {
+    //!     id: u64,
+    //! }
+    //!
+    //! #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
+    //! async fn handle(order: &Order, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
+    //!     if order.id == 0 {
+    //!         let _ = seeker.seek(FilePosition::end()).await;
+    //!     }
+    //!     HandlerOutcome::ack()
+    //! }
+    //!
+    //! #[ruststream::app]
+    //! fn app() -> impl App {
+    //!     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
+    //!             b.include(handle);
+    //!         })
+    //! }
+    //! ```
+
+    pub use ruststream::prelude::*;
+    // `Seekable` is implemented here too, but on the subscriber the runtime consumes, never named
+    // by a service - do not add it.
+    pub use ruststream::{Positioned, Seeker};
+
+    pub use crate::file::{FileBroker, Publish};
+    pub use crate::{
+        FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream, Position, SeekHandle,
+    };
 }
