@@ -30,7 +30,7 @@ ruststream = { version = ">=0.7.0-rc.1, <0.8.0", default-features = false }
 sea-streamer-types = { version = "=1.0.0-rc.1", default-features = false }
 sea-streamer-file = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio"] }
 sea-streamer-stdio = { version = "=1.0.0-rc.1", default-features = false, features = ["runtime-tokio"] }
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 futures = "0.3"
 thiserror = "2"
