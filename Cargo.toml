@@ -16,7 +16,10 @@ authors = ["RustStream contributors"]
 [workspace.dependencies]
 ruststream-sea-file = { path = "crates/ruststream-sea-file" }
 
-ruststream = { version = ">=0.7.0, <0.8.0", default-features = false }
+# The lower bound names the release candidate: cargo excludes pre-releases from a range whose
+# bounds are all final, so `>=0.7.0` would refuse `0.7.0-rc.1`. Naming it admits the candidate
+# now and the final 0.7.0 later, without a second edit here.
+ruststream = { version = ">=0.7.0-rc.1, <0.8.0", default-features = false }
 
 # The 1.0 release-candidate line: edition 2024 and a 1.85 floor, comfortably under this
 # workspace's own (the 0.5 stable line is over a year older). Pre-releases must be pinned
