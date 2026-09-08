@@ -129,7 +129,7 @@ struct Deliveries {
     requeue: DeliverySender,
     seek: Arc<SeekControl>,
     /// A clone of the broker's harness coordinator, threaded into each yielded message so a
-    /// consumed delivery decrements. `None` outside a harness run.
+    /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
     coordinator: Option<Coordinator>,
 }
 
@@ -198,6 +198,7 @@ impl Subscriber for Deliveries {
     type Error = SeaFileError;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        let requeue = self.requeue.clone();
         let coordinator = self.coordinator.clone();
         // Minted once per opened stream, before the closure takes the receiver: every delivery
         // then carries a reference-counted clone, so building a per-delivery context allocates
@@ -223,6 +224,7 @@ impl Subscriber for Deliveries {
                     Poll::Ready(Some(delivery)) => {
                         return Poll::Ready(Some(Ok(FileTestMessage::new(
                             delivery,
+                            requeue.clone(),
                             Arc::clone(&seeker),
                             coordinator.clone(),
                         ))));
@@ -241,15 +243,14 @@ impl Subscriber for Deliveries {
 /// exactly as a stream file's delivery does, so the file form's contexts and keys build off it
 /// unchanged and a seeking service needs no edit to run under the harness.
 ///
-/// Settlement is unsupported here because it is unsupported on both transports: neither client
-/// keeps consumer positions, so `ack` and `nack` report [`AckError::Unsupported`] rather than a
-/// success a stream file would not deliver. A redelivery is therefore not representable either -
-/// what a service resumes from is the descriptor's start position or a captured
-/// [`FilePosition`], and a test must see the same.
+/// `ack` consumes the handle; `nack(requeue = true)` re-queues the delivery on the owning
+/// subscription's channel so the next handler invocation sees it again; `nack(requeue = false)`
+/// drops it, matching the real subscriber's reject path in effect.
 pub struct FileTestMessage {
     delivery: Option<Delivery>,
     headers: HeaderMap,
     sequence: u64,
+    requeue: DeliverySender,
     seeker: Arc<FileSeeker>,
     /// A clone of the broker's harness coordinator. When set, this delivery is counted in
     /// flight and is decremented exactly once when the message is consumed or dropped.
@@ -257,8 +258,8 @@ pub struct FileTestMessage {
 }
 
 impl Drop for FileTestMessage {
-    /// Counts this delivery consumed exactly once: on ack, nack, or an unsettled drop. Nothing
-    /// re-enqueues, so there is no second decrement to balance.
+    /// Counts this delivery consumed exactly once: on ack, nack, or an unsettled drop. A
+    /// requeue re-enqueues a fresh delivery first, so the in-flight count stays balanced.
     fn drop(&mut self) {
         if let Some(coordinator) = &self.coordinator {
             coordinator.consumed();
@@ -275,7 +276,12 @@ impl std::fmt::Debug for FileTestMessage {
 }
 
 impl FileTestMessage {
-    fn new(delivery: Delivery, seeker: Arc<FileSeeker>, coordinator: Option<Coordinator>) -> Self {
+    fn new(
+        delivery: Delivery,
+        requeue: DeliverySender,
+        seeker: Arc<FileSeeker>,
+        coordinator: Option<Coordinator>,
+    ) -> Self {
         let sequence = delivery.sequence;
         // The same well-known header the file transport writes, so a batch body that reads
         // positions off its elements works identically here.
@@ -285,6 +291,7 @@ impl FileTestMessage {
             delivery: Some(delivery),
             headers,
             sequence,
+            requeue,
             seeker,
             coordinator,
         }
@@ -323,13 +330,24 @@ impl IncomingMessage for FileTestMessage {
 
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.delivery.take();
-        ready(Err(AckError::Unsupported))
+        ready(Ok(()))
     }
 
-    fn nack(mut self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-        // The requeue flag is ignored rather than honoured: neither client can redeliver, so a
-        // stand-in that re-queued would let a test rely on a retry the transport cannot perform.
-        self.delivery.take();
-        ready(Err(AckError::Unsupported))
+    fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        let delivery = self
+            .delivery
+            .take()
+            .expect("FileTestMessage ack/nack invoked twice");
+        if requeue {
+            let sent = self.requeue.send(delivery);
+            // The requeue bypasses fanout, so count the re-enqueue here to balance this
+            // message's `Drop` decrement. The redelivered copy is consumed in turn.
+            if sent.is_ok()
+                && let Some(coordinator) = &self.coordinator
+            {
+                coordinator.enqueued();
+            }
+        }
+        ready(Ok(()))
     }
 }

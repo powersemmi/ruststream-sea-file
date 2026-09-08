@@ -294,8 +294,10 @@ beacons, the end-of-stream mark that completes a replay, the header envelope, ti
 durability a restart depends on. Those are covered against real stream files by this repo's own
 suite, which needs no server either.
 
-Settlement is reproduced rather than excepted: `ack` and `nack` report `AckError::Unsupported` here
-because that is what both transports report. `nack(requeue = true)` does not re-queue either - no
-stream file and no pipe can redeliver, so a test that relied on a retry in process would rely on
-something production cannot do. Resume is explicit in both places: `start_at(..)`, or a captured
-position.
+One difference is left, and it is temporary. `ack` succeeds in process and `nack(requeue = true)`
+re-queues, where both real transports report `AckError::Unsupported` and neither can redeliver at
+all. The honest version is written and waiting on the framework's routing suite, which settles every
+delivery with an ack it requires to succeed; nothing else in the framework depends on it. Until it
+lands, do not read a successful ack here as evidence that the transport records progress, and do not
+build a test on a redelivery - `start_at(..)` and captured positions are what resume a subscription
+in both places.
