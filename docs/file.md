@@ -294,8 +294,8 @@ beacons, the end-of-stream mark that completes a replay, the header envelope, ti
 durability a restart depends on. Those are covered against real stream files by this repo's own
 suite, which needs no server either.
 
-One difference cannot be closed: `ack` succeeds in process, where the real transport reports
-`AckError::Unsupported`. The routing suite and the harness's settlement assertions both need an ack
-to succeed, so a stand-in that reported the transport's answer could not serve as one. Do not read
-a successful ack here as evidence that the transport records progress - it does not, which is what
-`start_at(..)` and captured positions are for.
+Settlement is reproduced rather than excepted: `ack` and `nack` report `AckError::Unsupported` here
+because that is what both transports report. `nack(requeue = true)` does not re-queue either - no
+stream file and no pipe can redeliver, so a test that relied on a retry in process would rely on
+something production cannot do. Resume is explicit in both places: `start_at(..)`, or a captured
+position.

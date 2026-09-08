@@ -26,12 +26,12 @@
 //! the header envelope and the durability a restart depends on. Those are verified end to end
 //! against real stream files instead.
 //!
-//! One difference is deliberate and cannot be closed. Acknowledgement succeeds here, where the
-//! real transports report `AckError::Unsupported`, because the routing suite and the harness's
-//! settlement assertions both require an ack to succeed; a stand-in that reported the transport's
-//! answer could not serve as one. So a test must not read an ack's success here as evidence that
-//! the transport records progress - it does not, which is what the descriptor's start position and
-//! captured positions are for.
+//! Settlement is one of the properties reproduced, not one of the exceptions. `ack` and `nack`
+//! report `AckError::Unsupported` here because that is what both transports report: neither client
+//! keeps consumer positions. A redelivery is not representable either, so `nack(requeue = true)`
+//! does not re-queue - a test that relied on a retry here would rely on something no stream file
+//! and no pipe can perform. What a service resumes from is the descriptor's start position or a
+//! captured [`FilePosition`](crate::FilePosition), and that is what a test exercises.
 
 mod broker;
 mod router;
