@@ -17,9 +17,21 @@
 //! [`StdioPublish`](crate::StdioPublish) - and both pair against this broker, so the wiring a test
 //! covers is the wiring that runs. There is deliberately no harness-only policy to swap in.
 //!
+//! How far the resemblance goes is measured rather than asserted: the framework's own contract
+//! suites - the lifecycle ladder, seeking and batching - run against this broker as well as
+//! against a real stream file, so a contract the file keeps and this broker quietly broke would
+//! fail here rather than in a service's test.
+//!
 //! Everything beyond that is left to the real transport: files and beacons, end-of-stream marks,
-//! the header envelope, `AckError::Unsupported`, and the durability a restart depends on. Those are
-//! verified end to end against real stream files instead.
+//! the header envelope and the durability a restart depends on. Those are verified end to end
+//! against real stream files instead.
+//!
+//! One difference is deliberate and cannot be closed. Acknowledgement succeeds here, where the
+//! real transports report `AckError::Unsupported`, because the routing suite and the harness's
+//! settlement assertions both require an ack to succeed; a stand-in that reported the transport's
+//! answer could not serve as one. So a test must not read an ack's success here as evidence that
+//! the transport records progress - it does not, which is what the descriptor's start position and
+//! captured positions are for.
 
 mod broker;
 mod router;

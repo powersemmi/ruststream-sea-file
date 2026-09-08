@@ -284,7 +284,18 @@ a test needs no waiting and no collector of its own. See
 [Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)
 for the assertion surface.
 
+How far the resemblance goes is measured, not claimed. The framework's contract suites - the
+lifecycle ladder, seeking, batching - run against the in-process broker as well as against a real
+stream file, so a contract the file keeps and the stand-in quietly broke fails in this repo rather
+than in your service's tests.
+
 What the in-process broker deliberately leaves alone is everything a file is for: files and
 beacons, the end-of-stream mark that completes a replay, the header envelope, timing, and the
-`AckError::Unsupported` the real transport reports. Those are covered against real stream files by
-this repo's own suite, which needs no server either.
+durability a restart depends on. Those are covered against real stream files by this repo's own
+suite, which needs no server either.
+
+One difference cannot be closed: `ack` succeeds in process, where the real transport reports
+`AckError::Unsupported`. The routing suite and the harness's settlement assertions both need an ack
+to succeed, so a stand-in that reported the transport's answer could not serve as one. Do not read
+a successful ack here as evidence that the transport records progress - it does not, which is what
+`start_at(..)` and captured positions are for.
