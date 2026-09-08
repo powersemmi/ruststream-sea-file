@@ -13,8 +13,8 @@ in it, so it is the zero-infrastructure entry point to RustStream, and the refer
 of the `Seekable` capability.
 
 ```toml
-ruststream = { version = "0.6", features = ["macros", "json"] }
-ruststream-sea-file = "0.6"
+ruststream = { version = "0.7", features = ["macros", "json"] }
+ruststream-sea-file = "0.7"
 serde = { version = "1", features = ["derive"] }
 ```
 

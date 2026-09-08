@@ -8,14 +8,14 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use bytes::Bytes;
-use ruststream::Headers;
+use ruststream::HeaderMap;
 
 const PREFIX: &str = "rs1:";
 
 /// Encodes a payload with its headers. Headerless payloads pass through untouched;
 /// `force_text` additionally envelopes a non-UTF-8 payload (the stdio transport rejects
 /// binary lines).
-pub(crate) fn encode(headers: &Headers, payload: &[u8], force_text: bool) -> Vec<u8> {
+pub(crate) fn encode(headers: &HeaderMap, payload: &[u8], force_text: bool) -> Vec<u8> {
     let needs_envelope =
         !headers.is_empty() || (force_text && std::str::from_utf8(payload).is_err());
     if !needs_envelope {
@@ -41,22 +41,22 @@ pub(crate) fn encode(headers: &Headers, payload: &[u8], force_text: bool) -> Vec
 
 /// Splits a payload back into headers and raw bytes; anything without the envelope prefix
 /// reads as headerless.
-pub(crate) fn decode(data: &[u8]) -> (Headers, Bytes) {
+pub(crate) fn decode(data: &[u8]) -> (HeaderMap, Bytes) {
     let enveloped = std::str::from_utf8(data)
         .ok()
         .and_then(|text| text.strip_prefix(PREFIX))
         .and_then(|encoded| BASE64.decode(encoded).ok());
     let Some(framed) = enveloped else {
-        return (Headers::new(), Bytes::copy_from_slice(data));
+        return (HeaderMap::new(), Bytes::copy_from_slice(data));
     };
     if framed.len() < 4 {
-        return (Headers::new(), Bytes::copy_from_slice(data));
+        return (HeaderMap::new(), Bytes::copy_from_slice(data));
     }
     let len = u32::from_be_bytes([framed[0], framed[1], framed[2], framed[3]]) as usize;
     if framed.len() < 4 + len {
-        return (Headers::new(), Bytes::copy_from_slice(data));
+        return (HeaderMap::new(), Bytes::copy_from_slice(data));
     }
-    let mut headers = Headers::new();
+    let mut headers = HeaderMap::new();
     let text = String::from_utf8_lossy(&framed[4..4 + len]);
     for line in text.lines() {
         if let Some((name, value)) = line.split_once(':') {
@@ -72,15 +72,15 @@ mod tests {
 
     #[test]
     fn headerless_payloads_pass_through() {
-        let (headers, payload) = decode(&encode(&Headers::new(), b"raw bytes", false));
+        let (headers, payload) = decode(&encode(&HeaderMap::new(), b"raw bytes", false));
         assert!(headers.is_empty());
         assert_eq!(payload.as_ref(), b"raw bytes");
-        assert_eq!(encode(&Headers::new(), b"raw bytes", false), b"raw bytes");
+        assert_eq!(encode(&HeaderMap::new(), b"raw bytes", false), b"raw bytes");
     }
 
     #[test]
     fn headers_round_trip_through_the_text_envelope() {
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json");
         headers.insert("x-tenant", "acme");
         let encoded = encode(&headers, b"{\"id\":1}", false);
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn force_text_envelopes_binary_payloads() {
         let raw = [0u8, 159, 146, 150, 255];
-        let encoded = encode(&Headers::new(), &raw, true);
+        let encoded = encode(&HeaderMap::new(), &raw, true);
         assert!(std::str::from_utf8(&encoded).is_ok());
         let (headers, payload) = decode(&encoded);
         assert!(headers.is_empty());

@@ -3,11 +3,11 @@ resolver = "3"
 members = ["crates/ruststream-sea-file"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
-# 1.88 rather than the core's 1.85 floor: the RustSec fix for the time crate (a
-# sea-streamer dependency) resolves only from 1.88 (a dependent may exceed its
-# dependency's floor).
+# 1.88 holds here independently of the core's own floor: the RustSec fix for the time
+# crate (a sea-streamer dependency) resolves only from 1.88, and a dependent may exceed
+# its dependency's floor.
 rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream-sea-file"
@@ -16,10 +16,14 @@ authors = ["RustStream contributors"]
 [workspace.dependencies]
 ruststream-sea-file = { path = "crates/ruststream-sea-file" }
 
-ruststream = { version = ">=0.6.0, <0.7.0", default-features = false }
+# The lower bound names the release candidate: cargo excludes pre-releases from a range whose
+# bounds are all final, so `>=0.7.0` would refuse `0.7.0-rc.1`. Naming it admits the candidate
+# now and the final 0.7.0 later, without a second edit here.
+ruststream = { version = ">=0.7.0-rc.1, <0.8.0", default-features = false }
 
-# The 1.0 release-candidate line: edition 2024 and the 1.85 floor, matching the core exactly
-# (the 0.5 stable line is over a year older). Pre-releases must be pinned explicitly.
+# The 1.0 release-candidate line: edition 2024 and a 1.85 floor, comfortably under this
+# workspace's own (the 0.5 stable line is over a year older). Pre-releases must be pinned
+# explicitly.
 # The client's runtime features are mutually exclusive upstream; tokio is this project's
 # hardcoded runtime, so it is forwarded unconditionally - without it the build compiles and
 # then panics at runtime.
@@ -31,7 +35,8 @@ bytes = "1"
 futures = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-tracing = "0.1"
+# The `Value` impls for `Duration` and `Option<&str>` land in 0.1.40; do not loosen to "0.1".
+tracing = "0.1.40"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -11,9 +11,7 @@
 //! ```
 
 // --8<-- [start:pipeline]
-use ruststream::runtime::{App, AppInfo, RustStream};
-use ruststream::subscriber;
-use ruststream_sea_file::StdioBroker;
+use ruststream_sea_file::stdio::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]

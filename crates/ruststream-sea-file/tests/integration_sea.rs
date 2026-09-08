@@ -3,18 +3,23 @@
 
 mod common;
 
+use std::num::NonZeroUsize;
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
 use ruststream::{
-    AckError, Broker, ConnectedBroker, Headers, IncomingMessage, OutgoingMessage, Publisher,
-    Subscribe, Subscriber,
+    AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
+    OutgoingMessage, Publisher, Subscribe, Subscriber,
 };
 use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The batch size the stdio check opens its subscription at: smaller than the run, so a batch
+/// carrying more than the mount site asked for is caught rather than missed.
+const STDIO_BATCH: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
 fn tmp_path(name: &str) -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -38,7 +43,7 @@ fn file_roundtrip_preserves_payload_and_headers() {
             .await
             .expect("subscription opens");
 
-        let mut headers = Headers::new();
+        let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json");
         headers.insert("x-tenant", "acme");
         let publisher = connected.publisher();
@@ -118,8 +123,11 @@ fn a_finished_file_replays_and_completes() {
     });
 }
 
+/// Both stdio checks share one test: shutting the transport down ends every stdio consumer and
+/// producer in the process, so a second stdio test running beside this one would be torn down by
+/// it.
 #[test]
-fn stdio_loopback_round_trips_binary_payloads() {
+fn stdio_loopback_carries_binary_payloads_and_batches() {
     common::rt().block_on(async {
         let connected = StdioBroker::new()
             .loopback()
@@ -138,14 +146,41 @@ fn stdio_loopback_round_trips_binary_payloads() {
             .await
             .expect("publish succeeds");
 
-        let mut stream = pin!(subscriber.stream());
-        let message = tokio::time::timeout(RECV_TIMEOUT, stream.next())
-            .await
-            .expect("delivery arrives")
-            .expect("stream is open")
-            .expect("delivery is ok");
-        // The stdio line format is text; the envelope carried the binary payload through it.
-        assert_eq!(message.payload(), raw.as_slice());
+        {
+            let mut stream = pin!(subscriber.stream());
+            let message = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok");
+            // The stdio line format is text; the envelope carried the binary payload through it.
+            assert_eq!(message.payload(), raw.as_slice());
+        }
+
+        // Standard input delivers one line at a time, so the batches are assembled on the client;
+        // what the mount site asks for is still the cap a batch may never exceed.
+        for i in 0..3u8 {
+            publisher
+                .publish(OutgoingMessage::new("pipe", [i].as_slice()))
+                .await
+                .expect("publish succeeds");
+        }
+        let mut received = Vec::new();
+        let mut batches = pin!(subscriber.batches(STDIO_BATCH));
+        while received.len() < 3 {
+            let batch = tokio::time::timeout(RECV_TIMEOUT, batches.next())
+                .await
+                .expect("batch arrives")
+                .expect("stream is open")
+                .expect("batch is ok");
+            assert!(!batch.is_empty(), "a yielded batch must not be empty");
+            assert!(
+                batch.len() <= STDIO_BATCH.get(),
+                "a batch must never carry more than the size it was opened with",
+            );
+            received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
+        }
+        assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
 
         connected.shutdown().await.expect("shutdown succeeds");
     });

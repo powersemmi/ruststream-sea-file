@@ -1,7 +1,9 @@
 //! [`SeaMessage`]: a delivered message, shared by the file and stdio transports.
 
+use std::future::{Future, ready};
+
 use bytes::Bytes;
-use ruststream::{AckError, Headers, IncomingMessage, Positioned};
+use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned};
 use sea_streamer_types::{Buffer as _, Message as _, SharedMessage};
 
 use crate::wire;
@@ -60,12 +62,15 @@ impl FilePosition {
 
 /// A message delivered by one of this crate's subscribers.
 ///
+/// This is the whole delivery on standard input; a stream file wraps it in a
+/// [`FileMessage`](crate::FileMessage), which adds the subscription's reposition handle.
+///
 /// The transport keeps no consumer positions (its resumable mode is unimplemented upstream),
 /// so acknowledgement reports [`AckError::Unsupported`] rather than pretending; resume
 /// explicitly via the descriptor's start position or a captured [`FilePosition`].
 pub struct SeaMessage {
     payload: Bytes,
-    headers: Headers,
+    headers: HeaderMap,
     stream: String,
     sequence: u64,
 }
@@ -113,15 +118,15 @@ impl IncomingMessage for SeaMessage {
         &self.payload
     }
 
-    fn headers(&self) -> &Headers {
+    fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
-    async fn ack(self) -> Result<(), AckError> {
-        Err(AckError::Unsupported)
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 
-    async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-        Err(AckError::Unsupported)
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 }
