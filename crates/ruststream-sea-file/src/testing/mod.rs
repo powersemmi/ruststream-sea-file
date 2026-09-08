@@ -12,6 +12,11 @@
 //! its deliveries unchanged - so a service that seeks mounts on this broker with no edit at all,
 //! and [`FileStream`](crate::FileStream) resolves here the way it resolves against a file.
 //!
+//! Nothing here is named at a mount site. A service's routes file keeps the descriptor and the
+//! policy it ships with - [`FilePublish`](crate::FilePublish),
+//! [`StdioPublish`](crate::StdioPublish) - and both pair against this broker, so the wiring a test
+//! covers is the wiring that runs. There is deliberately no harness-only policy to swap in.
+//!
 //! Everything beyond that is left to the real transport: files and beacons, end-of-stream marks,
 //! the header envelope, `AckError::Unsupported`, and the durability a restart depends on. Those are
 //! verified end to end against real stream files instead.
@@ -20,7 +25,7 @@ mod broker;
 mod router;
 mod subscriber;
 
-pub use broker::{ConnectedFileTestBroker, FileTestBroker, FileTestPublish, FileTestPublisher};
+pub use broker::{ConnectedFileTestBroker, FileTestBroker, FileTestPublisher};
 pub use subscriber::{FileTestMessage, FileTestSubscriber};
 
 // The in-process half of `FileSeeker`, which lives at the crate root: one seeker type serves both

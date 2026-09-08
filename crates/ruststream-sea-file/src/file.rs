@@ -361,6 +361,27 @@ impl DefaultPublish for ConnectedFileBroker {
     type Policy = FilePublish;
 }
 
+/// The policy pairs against the in-process transport too, so a routes file that names it -
+/// `.out(Reply, Publish)`, the way production writes it - mounts on
+/// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
+///
+/// A policy is pure declaration and this one carries no settings, so nothing is dropped in the
+/// translation; what differs is the live publisher it pairs into, which appends to the stand-in's
+/// retained log instead of writing a file. The file's own machinery - the header envelope, the
+/// per-publish flush - belongs to [`FilePublisher`] and is covered against real stream files, so a
+/// test here must not assert on the bytes a `.ss` file ends up holding.
+#[cfg(feature = "testing")]
+impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for FilePublish {
+    type Live = crate::testing::FileTestPublisher;
+
+    fn pair(
+        self,
+        connected: &crate::testing::ConnectedFileTestBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
+    }
+}
+
 /// The publish policy of this form, under the name every form uses.
 ///
 /// A mount site names the concept, never the transport: moving a service from one form to

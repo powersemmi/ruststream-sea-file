@@ -266,6 +266,11 @@ the subscription hands out a `FileSeeker`, and `FileContext` and `FileBatchConte
 deliveries the way they build off a file's. It batches the same way too, so a batch handler sees
 batches of the size its mount site asked for here as well.
 
+The mount site needs no edit either. `Publish` - both forms of it, `FilePublish` and
+`StdioPublish` - pairs against this broker, so a routes file keeps the policy it ships with and
+`.out(Reply, Publish)` reads the same under the harness as it does in production. There is no
+harness-only policy to swap in.
+
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
 ```

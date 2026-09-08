@@ -6,11 +6,11 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    RawMessage, Subscribe,
+    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher, RawMessage, Subscribe,
 };
 
 use crate::error::SeaFileError;
+use crate::file::FilePublish;
 use crate::testing::router::AddressRouter;
 use crate::testing::subscriber::FileTestSubscriber;
 
@@ -163,32 +163,8 @@ impl Publisher for FileTestPublisher {
     }
 }
 
-/// The publish policy for [`FileTestPublisher`], mirroring
-/// [`FilePublish`](crate::FilePublish) on the real broker.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream_sea_file::testing::FileTestPublish;
-///
-/// let policy = FileTestPublish::default();
-/// # let _ = policy;
-/// ```
-#[derive(Debug, Clone, Copy, Default)]
-#[must_use]
-pub struct FileTestPublish;
-
-impl PublishPolicy<ConnectedFileTestBroker> for FileTestPublish {
-    type Live = FileTestPublisher;
-
-    fn pair(
-        self,
-        connected: &ConnectedFileTestBroker,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.publisher()))
-    }
-}
-
+/// The default reply policy is the file transport's own: a `publish("dest")` handler included
+/// without an explicit policy is wired here exactly as it is wired against a stream file.
 impl DefaultPublish for ConnectedFileTestBroker {
-    type Policy = FileTestPublish;
+    type Policy = FilePublish;
 }
