@@ -73,17 +73,19 @@ async fn work(job: &Job, Ctx(at): Ctx<Position>, Ctx(seeker): Ctx<SeekHandle>) -
 // --8<-- [end:handler]
 
 /// A receipt belongs on the `receipts` stream key wherever it is produced, so the type carries
-/// the destination and every mounting of a handler returning one publishes it there.
+/// the destination and every mounting of a handler returning one publishes it there. Its field
+/// names the job it confirms, which also keeps a receipt from decoding out of a `Job` payload:
+/// a destination assertion that read the request by mistake would then pass on the wrong key.
 #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
 #[outgoing(name = "receipts")]
 struct Receipt {
-    id: u64,
+    job: u64,
 }
 
 /// The declared form: the clause says only that the return value is published.
 #[subscriber("checkout", publish)]
 async fn checkout(job: &Job) -> Receipt {
-    Receipt { id: job.id }
+    Receipt { job: job.id }
 }
 
 /// The mount-site form: `Seen` declares no destination, so this subscriber names one, and the
@@ -256,7 +258,7 @@ async fn a_reply_type_that_declares_a_key_is_published_there()
     tb.broker::<FileTestBroker>()
         .published::<Receipt>("receipts")
         .assert_called_once()
-        .with(&Receipt { id: 7 });
+        .with(&Receipt { job: 7 });
     Ok(())
 }
 
