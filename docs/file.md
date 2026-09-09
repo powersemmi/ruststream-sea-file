@@ -21,7 +21,7 @@ Which of the framework's optional capability traits this crate implements, and w
 | Capability | Implemented | Notes |
 | --- | --- | --- |
 | `Subscribe` | Yes | You name a stream key as a string literal on either transport, and `#[subscriber("key")]` needs no descriptor. See [Subscriptions](#subscriptions). |
-| `Seekable` + `Positioned` | Yes | A handler on a stream file reads where its delivery sits and moves its own subscription, through the `Position` and `SeekHandle` context keys. This crate is the framework's reference implementation of the capability. A stdio subscription does not reposition: standard input keeps no log. See [Seeking](#seeking). |
+| `Seekable` + `Positioned` | `Positioned` on both, `Seekable` on the file | Every delivery reports the sequence it sits at. A handler on a stream file also moves its own subscription, through the `Position` and `SeekHandle` context keys, and this crate is the framework's reference implementation of that capability. A stdio subscription does not move: standard input keeps no log to move within. See [Seeking](#seeking). |
 | `Partitioned` | No | A stream file is one ordered log with no shards. |
 | `BatchSubscriber` | Yes, on the client | You name `batch(n)` at the mount site and get batches of at most `n` on either transport. See [Batches](#batches). |
 | `RequestReply` | No | Neither transport has a reply address. |
