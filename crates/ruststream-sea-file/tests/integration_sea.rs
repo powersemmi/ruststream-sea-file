@@ -123,6 +123,56 @@ fn a_finished_file_replays_and_completes() {
     });
 }
 
+/// A replay reads its first delivery while the subscription is being opened, so this pins the
+/// case where there is nothing to read: opening must return, and the stream must end, rather
+/// than wait for a message that is never coming.
+#[test]
+fn a_replay_of_a_key_with_no_messages_finishes_instead_of_waiting() {
+    common::rt().block_on(async {
+        let path = tmp_path("replay-empty-key");
+
+        {
+            let connected = FileBroker::new(&path)
+                .end_with_eos()
+                .connect()
+                .await
+                .expect("file opens");
+            connected
+                .publisher()
+                .publish(OutgoingMessage::new("orders", b"one".as_slice()))
+                .await
+                .expect("publish succeeds");
+            connected.shutdown().await.expect("shutdown succeeds");
+        }
+
+        let connected = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("file reopens");
+        // The file holds messages, but none under this key.
+        let mut subscriber = tokio::time::timeout(
+            RECV_TIMEOUT,
+            connected.subscribe_stream(FileStream::new("audit").replay()),
+        )
+        .await
+        .expect("opening the replay returns rather than waiting")
+        .expect("replay opens");
+
+        let mut stream = pin!(subscriber.stream());
+        let end = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+            .await
+            .expect("the end arrives rather than hanging");
+        assert!(
+            end.is_none(),
+            "a replay with nothing to read must end, got {end:?}",
+        );
+
+        connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
 /// Both stdio checks share one test: shutting the transport down ends every stdio consumer and
 /// producer in the process, so a second stdio test running beside this one would be torn down by
 /// it.

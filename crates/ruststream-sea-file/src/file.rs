@@ -255,7 +255,8 @@ impl ConnectedFileBroker {
             descriptor.stream().to_owned(),
             consumer,
             descriptor.replay_value(),
-        ))
+        )
+        .await)
     }
 }
 
