@@ -63,7 +63,7 @@ struct Order {
     id: u64,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, PartialEq, Serialize, Deserialize)]
 struct Confirmation {
     id: u64,
 }
