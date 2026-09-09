@@ -12,9 +12,13 @@
 //! its deliveries unchanged - so a service that seeks mounts on this broker with no edit at all,
 //! and [`FileStream`](crate::FileStream) resolves here the way it resolves against a file.
 //!
+//! Settlement answers what a stream file answers: `ack` and `nack` report
+//! [`AckError::Unsupported`](ruststream::AckError::Unsupported), so a handler that reads the
+//! answer behaves under the harness the way it behaves in production.
+//!
 //! Everything beyond that is left to the real transport: files and beacons, end-of-stream marks,
-//! the header envelope, `AckError::Unsupported`, and the durability a restart depends on. Those are
-//! verified end to end against real stream files instead.
+//! the header envelope, and the durability a restart depends on. Those are verified end to end
+//! against real stream files instead.
 
 mod broker;
 mod router;

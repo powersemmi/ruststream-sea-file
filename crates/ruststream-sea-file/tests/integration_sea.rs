@@ -9,10 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
+#[cfg(feature = "testing")]
+use ruststream::testing::TestableBroker;
 use ruststream::{
     AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
     OutgoingMessage, Publisher, Subscribe, Subscriber,
 };
+#[cfg(feature = "testing")]
+use ruststream_sea_file::testing::FileTestBroker;
 use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
@@ -119,6 +123,87 @@ fn a_finished_file_replays_and_completes() {
         assert!(end.is_none(), "a finished replay must complete the stream");
 
         connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The in-process transport answers settlement the way a stream file answers it. Both are read
+/// here in one test, because the value of the answer is that the two agree: a stand-in that
+/// claimed a settlement would make a handler's retry look effective under test and lose the
+/// message against a file.
+#[cfg(feature = "testing")]
+#[test]
+fn the_in_process_transport_settles_the_way_a_stream_file_does() {
+    common::rt().block_on(async {
+        let path = tmp_path("settlement");
+        let file = FileBroker::new(&path).connect().await.expect("file opens");
+        let mut from_file = file.subscribe("orders").await.expect("subscription opens");
+        file.publisher()
+            .publish(OutgoingMessage::new("orders", b"one".as_slice()))
+            .await
+            .expect("publish succeeds");
+
+        let in_process = FileTestBroker::new()
+            .connect()
+            .await
+            .expect("transport connects");
+        let mut from_transport = in_process
+            .subscribe("orders")
+            .await
+            .expect("subscription opens");
+        in_process.inject(OutgoingMessage::new("orders", b"one".as_slice()));
+
+        let filed = {
+            let mut stream = pin!(from_file.stream());
+            tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok")
+        };
+        let stubbed = {
+            let mut stream = pin!(from_transport.stream());
+            tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok")
+        };
+        assert_eq!(filed.payload(), stubbed.payload());
+        assert!(matches!(filed.ack().await, Err(AckError::Unsupported)));
+        assert!(matches!(stubbed.ack().await, Err(AckError::Unsupported)));
+
+        // The requeue too: neither transport takes a message back, so a handler asking for one
+        // is refused on both rather than served by the stand-in alone.
+        file.publisher()
+            .publish(OutgoingMessage::new("orders", b"two".as_slice()))
+            .await
+            .expect("publish succeeds");
+        in_process.inject(OutgoingMessage::new("orders", b"two".as_slice()));
+        let filed = {
+            let mut stream = pin!(from_file.stream());
+            tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok")
+        };
+        let stubbed = {
+            let mut stream = pin!(from_transport.stream());
+            tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok")
+        };
+        assert!(matches!(filed.nack(true).await, Err(AckError::Unsupported)));
+        assert!(matches!(
+            stubbed.nack(true).await,
+            Err(AckError::Unsupported)
+        ));
+
+        file.shutdown().await.expect("shutdown succeeds");
+        in_process.shutdown().await.expect("shutdown succeeds");
         let _ = std::fs::remove_file(&path);
     });
 }

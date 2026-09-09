@@ -2,7 +2,7 @@
 
 use std::future::{Future, ready};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::task::Poll;
 
 use futures::Stream;
@@ -198,7 +198,6 @@ impl Subscriber for Deliveries {
     type Error = SeaFileError;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        let requeue = self.requeue.clone();
         let coordinator = self.coordinator.clone();
         // Minted once per opened stream, before the closure takes the receiver: every delivery
         // then carries a reference-counted clone, so building a per-delivery context allocates
@@ -224,7 +223,6 @@ impl Subscriber for Deliveries {
                     Poll::Ready(Some(delivery)) => {
                         return Poll::Ready(Some(Ok(FileTestMessage::new(
                             delivery,
-                            requeue.clone(),
                             Arc::clone(&seeker),
                             coordinator.clone(),
                         ))));
@@ -243,14 +241,13 @@ impl Subscriber for Deliveries {
 /// exactly as a stream file's delivery does, so the file form's contexts and keys build off it
 /// unchanged and a seeking service needs no edit to run under the harness.
 ///
-/// `ack` consumes the handle; `nack(requeue = true)` re-queues the delivery on the owning
-/// subscription's channel so the next handler invocation sees it again; `nack(requeue = false)`
-/// drops it, matching the real subscriber's reject path in effect.
+/// `ack` and `nack` answer what a stream file answers: [`AckError::Unsupported`], because
+/// neither transport keeps consumer positions. A stand-in that claimed a settlement would make a
+/// handler's retry look effective under test and lose the message against a file.
 pub struct FileTestMessage {
-    delivery: Option<Delivery>,
+    delivery: Delivery,
     headers: HeaderMap,
     sequence: u64,
-    requeue: DeliverySender,
     seeker: Arc<FileSeeker>,
     /// A clone of the broker's harness coordinator. When set, this delivery is counted in
     /// flight and is decremented exactly once when the message is consumed or dropped.
@@ -258,8 +255,8 @@ pub struct FileTestMessage {
 }
 
 impl Drop for FileTestMessage {
-    /// Counts this delivery consumed exactly once: on ack, nack, or an unsettled drop. A
-    /// requeue re-enqueues a fresh delivery first, so the in-flight count stays balanced.
+    /// Counts this delivery consumed exactly once. Nothing can settle a delivery here, so the
+    /// drop is the only place that reports it: a refused `ack` reaches it like any other end.
     fn drop(&mut self) {
         if let Some(coordinator) = &self.coordinator {
             coordinator.consumed();
@@ -276,22 +273,16 @@ impl std::fmt::Debug for FileTestMessage {
 }
 
 impl FileTestMessage {
-    fn new(
-        delivery: Delivery,
-        requeue: DeliverySender,
-        seeker: Arc<FileSeeker>,
-        coordinator: Option<Coordinator>,
-    ) -> Self {
+    fn new(delivery: Delivery, seeker: Arc<FileSeeker>, coordinator: Option<Coordinator>) -> Self {
         let sequence = delivery.sequence;
         // The same well-known header the file transport writes, so a batch body that reads
         // positions off its elements works identically here.
         let mut headers = delivery.headers.clone();
         headers.insert(SEQUENCE_HEADER, sequence.to_string());
         Self {
-            delivery: Some(delivery),
+            delivery,
             headers,
             sequence,
-            requeue,
             seeker,
             coordinator,
         }
@@ -313,41 +304,21 @@ impl Positioned for FileTestMessage {
 
 impl IncomingMessage for FileTestMessage {
     fn payload(&self) -> &[u8] {
-        self.delivery
-            .as_ref()
-            .map(|d| d.payload.as_ref())
-            .unwrap_or_default()
+        self.delivery.payload.as_ref()
     }
 
     fn headers(&self) -> &HeaderMap {
-        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
-        if self.delivery.is_some() {
-            &self.headers
-        } else {
-            EMPTY.get_or_init(HeaderMap::new)
-        }
+        &self.headers
     }
 
-    fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
-        self.delivery.take();
-        ready(Ok(()))
+    // Both answers are the stream file's own. The transport keeps no consumer positions, so
+    // there is nothing here to settle and nothing to take a message back from; the delivery is
+    // released to the coordinator once, from `Drop`.
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 
-    fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-        let delivery = self
-            .delivery
-            .take()
-            .expect("FileTestMessage ack/nack invoked twice");
-        if requeue {
-            let sent = self.requeue.send(delivery);
-            // The requeue bypasses fanout, so count the re-enqueue here to balance this
-            // message's `Drop` decrement. The redelivered copy is consumed in turn.
-            if sent.is_ok()
-                && let Some(coordinator) = &self.coordinator
-            {
-                coordinator.enqueued();
-            }
-        }
-        ready(Ok(()))
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        ready(Err(AckError::Unsupported))
     }
 }
