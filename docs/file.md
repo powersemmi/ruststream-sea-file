@@ -268,6 +268,7 @@ happened, so a test needs no waiting and no collector of its own. See
 [Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)
 for the assertion surface.
 
-The in-process broker leaves alone everything a file is for: files and beacons, the end-of-stream
-mark that completes a replay, the header envelope, timing, and the `AckError::Unsupported` the real
-transport returns. Those are verified against real stream files by this repo's own suite.
+The in-process broker settles the way a file does: `ack` and `nack` return
+`AckError::Unsupported` on both, so a handler that reads the answer behaves the same either way.
+What it leaves alone is everything a file is for: files and beacons, the end-of-stream mark, the
+header envelope, and timing. Those are verified against real stream files by this repo's own suite.
