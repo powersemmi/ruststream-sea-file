@@ -3,7 +3,7 @@
 //!
 //! The broker needs no server and no file. Lines arrive on stdin in the client's
 //! `[timestamp | stream_key | seq] payload` format, and the handler's return value is
-//! published back to stdout under the `publish(..)` stream key.
+//! published back to stdout under the stream key its own type declares.
 //!
 //! ```text
 //! echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' \
@@ -19,12 +19,13 @@ struct Job {
     id: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Outgoing, Serialize)]
+#[outgoing(name = "results")]
 struct Done {
     id: u64,
 }
 
-#[subscriber("jobs", publish("results"))]
+#[subscriber("jobs", publish)]
 async fn work(job: &Job) -> Done {
     Done { id: job.id }
 }

@@ -398,12 +398,13 @@ pub mod prelude {
     //!     id: u64,
     //! }
     //!
-    //! #[derive(Debug, Serialize)]
+    //! #[derive(Debug, Outgoing, Serialize)]
+    //! #[outgoing(name = "results")]
     //! struct Done {
     //!     id: u64,
     //! }
     //!
-    //! #[subscriber("jobs", publish("results"))]
+    //! #[subscriber("jobs", publish)]
     //! async fn work(job: &Job) -> Done {
     //!     Done { id: job.id }
     //! }

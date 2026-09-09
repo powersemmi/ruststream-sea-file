@@ -175,13 +175,19 @@ framework docs for the capability itself.
 
 A publisher is a policy plus the live connection. `FilePublish` pairs into `FilePublisher` and
 writes into the stream file; `StdioPublish` pairs into `StdioPublisher` and writes lines to
-standard output. Each is its broker's default publish policy, so a
-`#[subscriber(.., publish("dest"))]` handler whose mount names no reply policy replies through it.
+standard output. Each is its broker's default publish policy, so a handler that replies publishes
+through it when the mount names no other.
 
 A mount that does name one writes the `.out` verb, marker first and policy second:
 `b.include(handle).out(Reply, Publish);` binds the reply position, and an injected `Out` slot binds
 the same way under its own marker. Either spelling leaves the handler broker-agnostic - the
 transport is named at the mount site, never in the definition.
+
+A destination on this transport is a stream key inside the broker. The file itself is named once,
+in `FileBroker::new(path)`, and the stdio form writes to standard output. You can therefore declare
+the key on the reply type with `#[outgoing(name = "results")]` and write the bare `publish` clause
+on the subscriber. A reply whose type declares no key is published where the subscriber says:
+`publish("results")`.
 
 A service writes two vocabularies, in two kinds of file. A mount site globs a transport prelude and
 names a policy by concept - `Publish`, whichever form it is on - so moving a service between forms
