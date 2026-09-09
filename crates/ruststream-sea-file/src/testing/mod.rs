@@ -25,21 +25,6 @@
 //! Everything beyond that is left to the real transport: files and beacons, end-of-stream marks,
 //! the header envelope and the durability a restart depends on. Those are verified end to end
 //! against real stream files instead.
-//!
-//! One difference is left, and it is temporary rather than intended. Acknowledgement succeeds
-//! here, where both real transports report `AckError::Unsupported`, and `nack(requeue = true)`
-//! re-queues, where neither transport can redeliver at all. The honest version is written and
-//! measured (see the reverted commit on this history); what holds it back is
-//! `conformance::harness::run_suite`, whose scenarios settle every delivery with
-//! `expect("ack failed")`, so a broker answering `Unsupported` fails the routing suite it must
-//! pass. The framework's other suites and the `TestApp` harness are indifferent - a handler's
-//! settlement is recorded from the handler's own decision, before the broker is asked - so
-//! `run_suite` adapting to a transport that cannot settle is the whole of what is needed.
-//!
-//! Until then: do not read an ack's success here as evidence that the transport records progress,
-//! and do not build a test on a redelivery. Neither survives contact with a stream file or a pipe;
-//! what resumes a subscription is the descriptor's start position or a captured
-//! [`FilePosition`](crate::FilePosition).
 
 mod broker;
 mod router;

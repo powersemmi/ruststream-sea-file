@@ -20,7 +20,7 @@ struct Order {
 }
 
 /// The reply, which the declaration's `publish` clause carries to a destination the test reads.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
 struct Receipt {
     id: u64,
 }

@@ -27,7 +27,7 @@ struct Order {
 
 /// The confirming handler's reply, which the declaration's `publish` clause carries to
 /// `receipts` - how a run of that handler becomes observable to a test.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
 struct Receipt {
     id: u64,
 }
