@@ -99,8 +99,13 @@ impl FileBroker {
         self
     }
 
-    /// Writes an end-of-stream mark when the broker shuts down, so replay consumers of the
-    /// finished file complete instead of waiting for more data.
+    /// Writes an end-of-stream mark when the broker shuts down, marking the file finished.
+    ///
+    /// A subscription that tails the file reads the mark and ends there, which is the only
+    /// thing that ends a live subscription; a replay reads a marked file to its end and
+    /// completes. Finish a file a reader will replay: without the mark the reader has to find
+    /// the end of the file for itself, and it may report the end before it has delivered
+    /// everything the file holds.
     pub fn end_with_eos(mut self) -> Self {
         self.end_with_eos = true;
         self
