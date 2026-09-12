@@ -31,6 +31,10 @@ const CHANNEL_CAPACITY: usize = 64;
 
 pub(crate) struct SeekCmd {
     position: FilePosition,
+    /// The generation this reposition opens. The driver starts stamping deliveries with it only
+    /// once the reposition has run, so everything read at the previous position keeps the
+    /// previous generation and is discarded on the way out.
+    epoch: u64,
     done: oneshot::Sender<Result<(), SeaFileError>>,
 }
 
@@ -72,13 +76,7 @@ impl FileSubscriber {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
-        tokio::spawn(drive(
-            consumer,
-            out_tx,
-            cmd_rx,
-            stream.clone(),
-            Arc::clone(&epoch),
-        ));
+        tokio::spawn(drive(consumer, out_tx, cmd_rx, stream.clone()));
         let stream: Arc<str> = Arc::from(stream);
         Self {
             stream: Arc::clone(&stream),
@@ -308,12 +306,17 @@ impl Seeker for FileSeeker {
     async fn seek(&self, to: FilePosition) -> Result<(), SeaFileError> {
         match &self.backend {
             SeekBackend::Driver { cmd, epoch } => {
-                // Bump the generation first: deliveries already queued (or an in-flight forward)
-                // belong to the pre-seek position and are discarded on the way out.
-                epoch.fetch_add(1, Ordering::Release);
+                // Opening the new generation here is what makes the reader discard everything
+                // from the old position: deliveries already queued, and any the driver reads
+                // between this bump and the reposition it is about to run.
+                let opened = epoch.fetch_add(1, Ordering::Release) + 1;
                 let (done, wait) = oneshot::channel();
-                cmd.send(SeekCmd { position: to, done })
-                    .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
+                cmd.send(SeekCmd {
+                    position: to,
+                    epoch: opened,
+                    done,
+                })
+                .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
                 wait.await
                     .map_err(|_| self.dead("the subscription's driver task has shut down"))?
             }
@@ -340,17 +343,16 @@ async fn drive(
     out: mpsc::Sender<Stamped>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     stream: String,
-    epoch: Arc<AtomicU64>,
 ) {
+    // The generation the consumer is actually positioned in. It advances when a reposition has
+    // run, never when one is merely requested, so a delivery read at the old position cannot be
+    // stamped with the generation the request opened and pass the reader's filter.
+    let mut applied = 0;
     loop {
-        // Captured before awaiting: a delivery resolved out of `next()` was positioned before
-        // any seek that lands mid-await, so it must carry the pre-await generation - stamping
-        // after the await would let a concurrent seek's bump leak onto a stale delivery.
-        let current = epoch.load(Ordering::Acquire);
         tokio::select! {
             biased;
             cmd = cmd_rx.recv() => {
-                let Some(SeekCmd { position, done }) = cmd else { break };
+                let Some(SeekCmd { position, epoch: opened, done }) = cmd else { break };
                 // The client's seek is not cancel-safe: it runs here to completion, never
                 // inside a racing select arm.
                 let result = match position {
@@ -364,6 +366,7 @@ async fn drive(
                         match Timestamp::from_unix_timestamp_nanos(nanos) {
                             Ok(timestamp) => consumer.seek(timestamp).await,
                             Err(err) => {
+                                applied = opened;
                                 let _ = done.send(Err(SeaFileError::Invalid(format!(
                                     "'{millis}' is not a valid timestamp: {err}"
                                 ))));
@@ -372,6 +375,10 @@ async fn drive(
                         }
                     }
                 };
+                // The generation the request opened starts here, whether or not the reposition
+                // succeeded: a failed one leaves the subscription where it was, and what it
+                // reads next is current again rather than discarded for ever.
+                applied = opened;
                 let _ = done.send(result.map_err(|e| SeaFileError::Seek {
                     stream: stream.clone(),
                     source: box_err(e),
@@ -382,7 +389,7 @@ async fn drive(
                 match next {
                     Ok(message) => {
                         let item = Stamped {
-                            epoch: current,
+                            epoch: applied,
                             item: Some(Ok(SeaMessage::new(&message))),
                         };
                         if out.send(item).await.is_err() {
@@ -393,13 +400,13 @@ async fn drive(
                         // A stream that ended is not a failure. Both endings arrive here: the
                         // writer's end-of-stream mark, which is the only thing that ends a live
                         // subscription, and the end of the retained file, which ends a replay.
-                        let _ = out.send(Stamped { epoch: current, item: None }).await;
+                        let _ = out.send(Stamped { epoch: applied, item: None }).await;
                         break;
                     }
                     Err(err) => {
                         let _ = out
                             .send(Stamped {
-                                epoch: current,
+                                epoch: applied,
                                 item: Some(Err(SeaFileError::Receive {
                                     stream: stream.clone(),
                                     source: box_err(err),
