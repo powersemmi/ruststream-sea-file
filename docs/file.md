@@ -272,6 +272,11 @@ the subscription hands out a `FileSeeker`, and `FileContext` and `FileBatchConte
 deliveries the way they build off a file's. It batches the same way too, so a batch handler sees
 batches of the size its mount site asked for here as well.
 
+The mount site needs no edit either. `Publish` - both forms of it, `FilePublish` and
+`StdioPublish` - pairs against this broker, so a routes file keeps the policy it ships with and
+`.out(Reply, Publish)` reads the same under the harness as it does in production. There is no
+harness-only policy to swap in.
+
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
 ```
@@ -285,7 +290,20 @@ a test needs no waiting and no collector of its own. See
 [Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)
 for the assertion surface.
 
+How far the resemblance goes is measured, not claimed. The framework's contract suites - the
+lifecycle ladder, seeking, batching - run against the in-process broker as well as against a real
+stream file, so a contract the file keeps and the stand-in quietly broke fails in this repo rather
+than in your service's tests.
+
 What the in-process broker deliberately leaves alone is everything a file is for: files and
 beacons, the end-of-stream mark that completes a replay, the header envelope, timing, and the
-`AckError::Unsupported` the real transport reports. Those are covered against real stream files by
-this repo's own suite, which needs no server either.
+durability a restart depends on. Those are covered against real stream files by this repo's own
+suite, which needs no server either.
+
+One difference is left, and it is temporary. `ack` succeeds in process and `nack(requeue = true)`
+re-queues, where both real transports report `AckError::Unsupported` and neither can redeliver at
+all. The honest version is written and waiting on the framework's routing suite, which settles every
+delivery with an ack it requires to succeed; nothing else in the framework depends on it. Until it
+lands, do not read a successful ack here as evidence that the transport records progress, and do not
+build a test on a redelivery - `start_at(..)` and captured positions are what resume a subscription
+in both places.

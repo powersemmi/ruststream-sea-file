@@ -15,7 +15,7 @@
 
 use ruststream::testing::TestApp;
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::{FileTestBroker, FileTestPublish};
+use ruststream_sea_file::testing::FileTestBroker;
 use serde::{Deserialize, Serialize};
 
 /// The producer's cursor contract: an entry carrying `resume_at` asks the consumer to skip
@@ -147,7 +147,7 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
         |b| {
             // The audit reply through the policy the mount site names, rather than through the
             // broker's default: the same route the other tests take by omission.
-            b.include(work).out(Reply, FileTestPublish);
+            b.include(work).out(Reply, Publish);
         },
     );
     let tb = TestApp::start(app).await?;
@@ -268,7 +268,7 @@ async fn a_reply_type_declaring_no_key_takes_the_one_the_subscriber_names()
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
         FileTestBroker::new(),
         |b| {
-            b.include(review).out(Reply, FileTestPublish);
+            b.include(review).out(Reply, Publish);
         },
     );
     let tb = TestApp::start(app).await?;

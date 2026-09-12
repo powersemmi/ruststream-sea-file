@@ -361,6 +361,30 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     }
 }
 
+/// The policy pairs against the in-process transport too, so a stdio routes file that names it -
+/// `.out(Reply, Publish)`, the way production writes it - mounts on
+/// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
+///
+/// The stand-in is this crate's only in-process broker and only its name is file-specific, so a
+/// stdio service runs under the harness as written rather than swapping its policy for a
+/// harness-only one.
+///
+/// What the stand-in does not reproduce is the line format [`StdioPublisher`] writes: payloads
+/// travel as bytes, the text-safe envelope is not applied, and the empty payload a pipe would
+/// reject goes through. Those are the real transport's, and are covered against a real pipe - so a
+/// test here must not conclude that a payload survives a shell pipeline.
+#[cfg(feature = "testing")]
+impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for StdioPublish {
+    type Live = crate::testing::FileTestPublisher;
+
+    fn pair(
+        self,
+        connected: &crate::testing::ConnectedFileTestBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
+    }
+}
+
 /// The publish policy of this form, under the name every form uses.
 ///
 /// A mount site names the concept, never the transport: moving a service from one form to

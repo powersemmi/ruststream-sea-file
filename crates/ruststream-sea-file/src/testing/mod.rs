@@ -16,15 +16,25 @@
 //! [`AckError::Unsupported`](ruststream::AckError::Unsupported), so a handler that reads the
 //! answer behaves under the harness the way it behaves in production.
 //!
+//! Nothing here is named at a mount site. A service's routes file keeps the descriptor and the
+//! policy it ships with - [`FilePublish`](crate::FilePublish),
+//! [`StdioPublish`](crate::StdioPublish) - and both pair against this broker, so the wiring a test
+//! covers is the wiring that runs. There is deliberately no harness-only policy to swap in.
+//!
+//! How far the resemblance goes is measured rather than asserted: the framework's own contract
+//! suites - the lifecycle ladder, seeking and batching - run against this broker as well as
+//! against a real stream file, so a contract the file keeps and this broker quietly broke would
+//! fail here rather than in a service's test.
+//!
 //! Everything beyond that is left to the real transport: files and beacons, end-of-stream marks,
-//! the header envelope, and the durability a restart depends on. Those are verified end to end
+//! the header envelope and the durability a restart depends on. Those are verified end to end
 //! against real stream files instead.
 
 mod broker;
 mod router;
 mod subscriber;
 
-pub use broker::{ConnectedFileTestBroker, FileTestBroker, FileTestPublish, FileTestPublisher};
+pub use broker::{ConnectedFileTestBroker, FileTestBroker, FileTestPublisher};
 pub use subscriber::{FileTestMessage, FileTestSubscriber};
 
 // The in-process half of `FileSeeker`, which lives at the crate root: one seeker type serves both

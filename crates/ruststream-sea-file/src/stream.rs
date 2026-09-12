@@ -114,7 +114,7 @@ impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream 
         connected: &crate::testing::ConnectedFileTestBroker,
     ) -> Result<Self::Subscriber, SeaFileError> {
         self.validate()?;
-        let subscriber = connected.open(self.stream());
+        let subscriber = connected.open(self.stream())?;
         if self.replay {
             let seeker = Seekable::seeker(&subscriber);
             Seeker::seek(&seeker, FilePosition::Beginning).await?;
