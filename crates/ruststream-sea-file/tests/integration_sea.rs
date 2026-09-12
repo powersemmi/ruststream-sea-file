@@ -208,6 +208,59 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
     });
 }
 
+/// The end-of-stream mark is what ends a live subscription, and it ends it cleanly: a writer
+/// that finished the file is not a receive failure for the reader that was tailing it.
+#[test]
+fn a_live_subscription_completes_at_the_end_of_stream_mark() {
+    common::rt().block_on(async {
+        let path = tmp_path("live-eos");
+
+        let writer = FileBroker::new(&path)
+            .end_with_eos()
+            .connect()
+            .await
+            .expect("file opens");
+        let reader = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("file reopens");
+
+        // A plain descriptor tails the file, so this subscription is the live one.
+        let mut subscriber = reader
+            .subscribe_stream(FileStream::new("orders"))
+            .await
+            .expect("subscription opens");
+        let mut stream = pin!(subscriber.stream());
+
+        writer
+            .publisher()
+            .publish(OutgoingMessage::new("orders", b"only".as_slice()))
+            .await
+            .expect("publish succeeds");
+        let delivered = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+            .await
+            .expect("delivery arrives")
+            .expect("stream is open")
+            .expect("delivery is ok");
+        assert_eq!(delivered.payload(), b"only".as_slice());
+
+        // The writer finishes the file under a reader that is still tailing it.
+        writer.shutdown().await.expect("shutdown succeeds");
+
+        let end = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+            .await
+            .expect("the end arrives rather than hanging");
+        assert!(
+            end.is_none(),
+            "a live subscription must complete at the end-of-stream mark, got {end:?}",
+        );
+
+        reader.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
 /// Both stdio checks share one test: shutting the transport down ends every stdio consumer and
 /// producer in the process, so a second stdio test running beside this one would be torn down by
 /// it.

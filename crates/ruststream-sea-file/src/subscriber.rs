@@ -41,8 +41,10 @@ pub(crate) struct Stamped {
 
 /// A subscription to one stream key in the file; yields [`FileMessage`]s.
 ///
-/// Dropping the subscriber stops the driver task. A replay subscription completes (the
-/// stream ends) at the end of the file.
+/// Dropping the subscriber stops the driver task. The stream also ends on its own when the file
+/// does: a replay reaches the end of what was retained, and a live subscription reaches the
+/// end-of-stream mark a writer left with
+/// [`end_with_eos`](crate::FileBroker::end_with_eos).
 pub struct FileSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
@@ -66,7 +68,7 @@ impl FileSubscriber {
         &self.stream
     }
 
-    pub(crate) fn spawn(stream: String, consumer: FileConsumer, replay: bool) -> Self {
+    pub(crate) fn spawn(stream: String, consumer: FileConsumer) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
@@ -75,7 +77,6 @@ impl FileSubscriber {
             out_tx,
             cmd_rx,
             stream.clone(),
-            replay,
             Arc::clone(&epoch),
         ));
         let stream: Arc<str> = Arc::from(stream);
@@ -142,7 +143,7 @@ impl Subscriber for Deliveries {
         // Poll the channel in place rather than wrapping it in an owning stream, so `stream`
         // can be called again after the returned stream is dropped (the runtime and the
         // conformance helpers re-enter it per call). Items queued under an older generation
-        // (before a seek) are discarded here; `item: None` marks a clean end of a replay.
+        // (before a seek) are discarded here; `item: None` marks the clean end of the stream.
         futures::stream::poll_fn(move |cx| {
             loop {
                 match self.rx.poll_recv(cx) {
@@ -339,7 +340,6 @@ async fn drive(
     out: mpsc::Sender<Stamped>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     stream: String,
-    replay: bool,
     epoch: Arc<AtomicU64>,
 ) {
     loop {
@@ -390,20 +390,10 @@ async fn drive(
                         }
                     }
                     Err(err) if is_clean_end(&err) => {
-                        if replay {
-                            // A finished replay completes the subscription.
-                            let _ = out.send(Stamped { epoch: current, item: None }).await;
-                        } else {
-                            let _ = out
-                                .send(Stamped {
-                                    epoch: current,
-                                    item: Some(Err(SeaFileError::Receive {
-                                        stream: stream.clone(),
-                                        source: box_err(err),
-                                    })),
-                                })
-                                .await;
-                        }
+                        // A stream that ended is not a failure. Both endings arrive here: the
+                        // writer's end-of-stream mark, which is the only thing that ends a live
+                        // subscription, and the end of the retained file, which ends a replay.
+                        let _ = out.send(Stamped { epoch: current, item: None }).await;
                         break;
                     }
                     Err(err) => {
