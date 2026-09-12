@@ -56,8 +56,8 @@ FileBroker::new(path)      只有配置，同步，没有 I/O
 - `existing_only()` 要求文件必须已经存在，而不是去创建它。
 - `end_with_eos()` 在关闭时写入流结束标记，因此重放这个已完成文件的消费者会结束，而不是继续等
   新数据。
-- `beacon_interval(bytes)` 设定文件内置索引的表项相隔多少字节；这个值必须是 1024 的正整数倍。
-  信标越密，定位越精细，文件也越大。
+- `beacon_interval(bytes)` 设定文件里的信标相隔多少字节；这个值必须是 1024 的正整数倍。信标汇总
+  它之前写入的各个流，文件正是靠它才能定位，因此信标越密，定位越精细，文件也越大。
 
 关闭 stdio Broker 会结束进程内的每一个 stdio 消费者和生产者，不只是这个 Broker 打开的那些。
 
@@ -76,7 +76,7 @@ FileBroker::new(path)      只有配置，同步，没有 I/O
 --8<-- "crates/ruststream-sea-file/examples/file_service.rs:app"
 ```
 
-手写写法接受同一个描述符：`subscriber(FileStream::new("orders"), body)`。
+手写路径接受同一个描述符：`subscriber(FileStream::new("orders"), body)`。
 
 在 stdio Broker 上，订阅就是流键本身：`#[subscriber("jobs")]` 从标准输入消费 `jobs` 这个键。
 
@@ -245,18 +245,18 @@ echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
 
 ## 测试 { #testing }
 
-这个 crate 里的每一个测试套件都在本地运行，用的是临时文件和进程内管道，不需要启动任何 Broker。
+这个 crate 里的每一个测试集都在本地运行，用的是临时文件和进程内管道，不需要启动任何 Broker。
 
-你自己的处理器，用框架的 `TestApp` 套件、对着 `testing` feature 里的 `FileTestBroker` 来测。它在
-内存里保留一份带位置的日志，而这正是流文件的处理器所依赖的那一条传输性质。
+你自己的处理器，用框架的 `TestApp` 测试套件、对着 `testing` feature 里的 `FileTestBroker` 来测。
+它在内存里保留一份带位置的日志，而这正是流文件的处理器所依赖的那一条传输性质。
 
 因此做定位的服务挂到它上面完全不用改动：`FileStream` 在这里可以解析，投递会报出 `FilePosition`，
 `FileContext` 和 `FileBatchContext` 在它的投递之上构建，和在文件的投递之上构建是一样的。批也一样，
 因此批量处理器看到的批，大小就是它的挂载点要的那个。
 
 挂载点也不用改。`Publish` 的两种形态，`FilePublish` 和 `StdioPublish`，都能在这个 Broker 上构造出
-发布者，因此路由文件保留它自带的策略，`.out(Reply, Publish)` 在套件下和在生产环境里读起来一模
-一样。没有什么只在套件下用的策略需要替换进来。
+发布者，因此路由文件保留它自带的策略，`.out(Reply, Publish)` 在测试套件下和在生产环境里读起来
+一模一样。没有什么只在测试套件下用的策略需要替换进来。
 
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
@@ -266,14 +266,14 @@ echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:test"
 ```
 
-套件负责送入输入，把反应一直跑到没有任何消息还在处理中，并记录下发生了什么，因此测试既不用等待，
-也不用自备收集器。断言的写法参见
+测试套件负责送入输入，把反应一直跑到没有任何消息还在处理中，并记录下发生了什么，因此测试既不用
+等待，也不用自备收集器。断言的写法参见
 [用 TestApp 对服务做单元测试](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)。
 
-相似到什么程度，是量出来的，不是说出来的。框架的契约套件，也就是生命周期的状态转移、定位和批量，
-既跑在进程内 Broker 上，也跑在真实的流文件上。因此文件遵守、而进程内替身悄悄破坏了的契约，在这个
+相似到什么程度，是量出来的，不是说出来的。框架的契约套件，也就是生命周期阶梯、定位和批量，既跑在
+进程内 Broker 上，也跑在真实的流文件上。因此文件遵守、而进程内 Broker 悄悄破坏了的契约，在这个
 仓库里就不通过，而不是等到你服务的测试里才暴露。
 
 进程内 Broker 的结算方式和文件一致：两边的 `ack` 和 `nack` 都返回 `AckError::Unsupported`，因此
 读取这个答复的处理器，在哪一边的表现都相同。它没有去复现的，恰恰是文件存在的全部理由：文件和
-信标、流结束标记、消息头信封，以及时间特性。这些由本仓库自己的套件对着真实的流文件来验证。
+信标、流结束标记、消息头信封，以及时间特性。这些由本仓库自己的测试集对着真实的流文件来验证。

@@ -5,7 +5,8 @@
 [`sea-streamer-stdio`](https://docs.rs/sea-streamer-stdio) 之上。这里的 Broker 是磁盘上单个 `.ss`
 流文件里的一份日志，或者进程自己的标准输入和标准输出。两者都不需要服务器。
 
-流文件上的订阅者可以把日志倒回去重读。这就是框架的 `Seekable` 能力，而这个 crate 是它的参考实现。
+流文件上的订阅者可以重新定位到更早的地方，把日志重读一遍。这就是框架的 `Seekable` 能力，而这个
+crate 是它的参考实现。
 标准输入输出上的服务，则是 shell 管道里的一环。
 
 ```toml

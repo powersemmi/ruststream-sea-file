@@ -60,9 +60,9 @@ closed it returns `SeaFileError::NotConnected`, never a silent success.
 - `existing_only()` requires the file to exist instead of creating it.
 - `end_with_eos()` writes an end-of-stream mark on shutdown, so a replay consumer of the finished
   file completes instead of waiting for more data.
-- `beacon_interval(bytes)` sets how far apart the entries of the file's in-place index sit, in
-  bytes; the value must be a positive multiple of 1024. Denser beacons make seeking finer-grained
-  and the file larger.
+- `beacon_interval(bytes)` sets how far apart the file's beacons sit, in bytes; the value must be a
+  positive multiple of 1024. A beacon summarises the streams written before it and is what makes
+  the file seekable, so denser beacons make seeking finer-grained and the file larger.
 
 Shutting down the stdio broker ends every stdio consumer and producer in the process, not only the
 ones this broker opened.
@@ -301,8 +301,8 @@ for the assertion surface.
 
 How far the resemblance goes is measured, not claimed. The framework's contract suites - the
 lifecycle ladder, seeking, batching - run against the in-process broker as well as against a real
-stream file, so a contract the file keeps and the stand-in quietly broke fails in this repo rather
-than in your service's tests.
+stream file, so a contract the file keeps and the in-process broker quietly broke fails in this
+repo rather than in your service's tests.
 
 The in-process broker settles the way a file does: `ack` and `nack` return
 `AckError::Unsupported` on both, so a handler that reads the answer behaves the same either way.
