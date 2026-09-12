@@ -199,6 +199,11 @@ here has a stream key and a payload, and those are the builder's own arguments.
 Opaque bytes go the same way, as a value whose type declares itself already serialized
 (`#[derive(Outgoing, Serialized)] struct Frame(Vec<u8>)`), so no codec runs on them.
 
+Brokers with a protocol field per message - a priority, a QoS, an ordering key - add a step to that
+builder for it. These two transports have none: an append to a stream file and a line on standard
+output carry a key and a payload and nothing else. So this crate adds no step, and a handler body
+that publishes keeps the framework prelude alone and the plain bound `Out<impl Publisher, Marker>`.
+
 ## The header envelope
 
 The client's payloads are plain bytes with no header space, so headers are written into the payload
@@ -220,6 +225,27 @@ Every delivery has its sequence number in the `stream-sequence` header (`SEQUENC
 You resume explicitly on this transport: store a `FilePosition` read off a delivery and open the
 next run with `start_at(..)`, or replay the file from the beginning. `ack` and `nack` return
 `AckError::Unsupported`, so nothing else records how far you read.
+
+### Retrying after a delay
+
+`HandlerOutcome::retry_after(delay)` has no transport to lean on here, so the framework's own
+fallback is the whole mechanism: it drops the delivery and, once the delay is over, publishes a
+copy of the message with an incremented retry-count header. You wire the publisher it uses in the
+composition root:
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:retry_via"
+```
+
+The copy goes to the stream key the subscription reads, so a live subscription on a stream file
+gets its message back. A replay does not: it reads the region the file already held and completes,
+and a copy written afterwards would never reach it. So a scope that wires `retry_via` over a
+`FileStream::replay()` subscription refuses to start, naming the subscription, rather than dropping
+every delayed message at runtime. Stdio refuses for the same reason: what you publish goes to the
+next process in the pipeline, not back into your own standard input.
+
+Without `retry_via`, `retry_after` degrades to an immediate requeue, which on these transports
+means the delay is lost.
 
 ## Stdio pipelines
 
