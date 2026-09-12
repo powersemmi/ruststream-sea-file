@@ -22,7 +22,7 @@ Which of the framework's optional capability traits this crate implements, and w
 | --- | --- | --- |
 | `Subscribe` | Yes | You name a stream key as a string literal on either transport, and `#[subscriber("key")]` needs no descriptor. See [Subscriptions](#subscriptions). |
 | `Seekable` + `Positioned` | `Positioned` on both, `Seekable` on the file | Every delivery reports the sequence it sits at. A handler on a stream file also moves its own subscription, through the `Position` and `SeekHandle` context keys, and this crate is the framework's reference implementation of that capability. A stdio subscription does not move: standard input keeps no log to move within. See [Seeking](#seeking). |
-| `Partitioned` | No | A stream file is one ordered log with no shards. |
+| `Partitioned` | No | A stream file is one ordered log: the client writes every message to shard zero. |
 | `BatchSubscriber` | Yes, on the client | You name `batch(n)` at the mount site and get batches of at most `n` on either transport. See [Batches](#batches). |
 | `RequestReply` | No | Neither transport has a reply address. |
 | `TransactionalPublisher` | No | A stream file has no atomic multi-write unit: each publish appends and flushes on its own. |
@@ -58,8 +58,9 @@ closed it returns `SeaFileError::NotConnected`, never a silent success.
 `FileBroker` takes three optional settings, all applied when it connects:
 
 - `existing_only()` requires the file to exist instead of creating it.
-- `end_with_eos()` writes an end-of-stream mark on shutdown, so a replay consumer of the finished
-  file completes instead of waiting for more data.
+- `end_with_eos()` writes an end-of-stream mark on shutdown, marking the file finished. A live
+  subscription ends on that mark, and nothing else ends one. A replay of an unmarked file has to
+  find the end for itself, and may report it before it has delivered everything the file holds.
 - `beacon_interval(bytes)` sets how far apart the file's beacons sit, in bytes; the value must be a
   positive multiple of 1024. A beacon summarises the streams written before it and is what makes
   the file seekable, so denser beacons make seeking finer-grained and the file larger.
@@ -257,8 +258,9 @@ command-line tools.
 --8<-- "crates/ruststream-sea-file/examples/stdio_pipeline.rs:pipeline"
 ```
 
-Lines follow the client's `[timestamp | stream_key | seq] payload` format, so the stream key is
-part of the line and one process serves several keys:
+Lines follow the client's `[timestamp | stream_key | sequence | shard_id] payload` format, with
+every meta field optional, so the stream key is part of the line and one process serves several
+keys:
 
 ```text
 echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run

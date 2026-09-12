@@ -20,7 +20,7 @@ serde = { version = "1", features = ["derive"] }
 | --- | --- | --- |
 | `Subscribe` | 是 | 两种传输上，流键都可以直接写成字符串字面量，`#[subscriber("key")]` 不需要描述符。参见[订阅](#subscriptions)。 |
 | `Seekable` + `Positioned` | 两种传输都实现 `Positioned`，文件上还实现 `Seekable` | 每次投递都会报出自己所在的序号。流文件上的处理器还能通过 `Position` 和 `SeekHandle` 两个上下文键给自己的订阅重新定位，这个 crate 就是框架里该能力的参考实现。stdio 上的订阅不能定位：标准输入没有可供移动的日志。参见[定位](#seeking)。 |
-| `Partitioned` | 否 | 流文件是一份有序日志，没有分片。 |
+| `Partitioned` | 否 | 流文件是一份有序日志：客户端把每条消息都写到 0 号分片。 |
 | `BatchSubscriber` | 是，在客户端一侧 | 在挂载点写上 `batch(n)`，两种传输都会给出最多 `n` 条的批。参见[批](#batches)。 |
 | `RequestReply` | 否 | 两种传输都没有响应地址。 |
 | `TransactionalPublisher` | 否 | 流文件没有原子的多次写入单元：每次发布各自追加并刷盘。 |
@@ -54,8 +54,9 @@ FileBroker::new(path)      只有配置，同步，没有 I/O
 `FileBroker` 接受三项可选设置，它们都在连接时生效：
 
 - `existing_only()` 要求文件必须已经存在，而不是去创建它。
-- `end_with_eos()` 在关闭时写入流结束标记，因此重放这个已完成文件的消费者会结束，而不是继续等
-  新数据。
+- `end_with_eos()` 在关闭时写入流结束标记，把文件标记为已完成。实时订阅在这个标记上结束，除此
+  之外没有别的东西能结束它。重放一个没有标记的文件，得自己去找末尾，可能在文件里的内容还没投递
+  完时就报出结束。
 - `beacon_interval(bytes)` 设定文件里的信标相隔多少字节；这个值必须是 1024 的正整数倍。信标汇总
   它之前写入的各个流，文件正是靠它才能定位，因此信标越密，定位越精细，文件也越大。
 
@@ -233,8 +234,8 @@ stdio 那种形态则写向标准输出。因此你可以用 `#[outgoing(name = 
 --8<-- "crates/ruststream-sea-file/examples/stdio_pipeline.rs:pipeline"
 ```
 
-每行都遵循客户端的 `[timestamp | stream_key | seq] payload` 格式，因此流键是这一行的一部分，一个
-进程可以服务多个键：
+每行都遵循客户端的 `[timestamp | stream_key | sequence | shard_id] payload` 格式，其中每一个元
+数据字段都可以省略，因此流键是这一行的一部分，一个进程可以服务多个键：
 
 ```text
 echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
