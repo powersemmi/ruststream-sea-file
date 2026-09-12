@@ -254,7 +254,9 @@ impl ConnectedFileBroker {
         Ok(FileSubscriber::spawn(
             descriptor.stream().to_owned(),
             consumer,
-        ))
+            descriptor.replay_value(),
+        )
+        .await)
     }
 }
 

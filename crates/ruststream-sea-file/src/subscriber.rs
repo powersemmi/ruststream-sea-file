@@ -7,6 +7,9 @@
 //!
 //! Batches sit on top of that channel rather than in the client, which reads one message at a
 //! time; see [`crate::batching`] for why, and for the deadline that closes a partial one.
+//!
+//! A replay reads its first delivery before the driver task starts, and the driver sends that one
+//! on before anything else; see [`FileSubscriber::spawn`] for what that avoids.
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -19,7 +22,7 @@ use ruststream::{
     Seekable, Seeker, Subscriber,
 };
 use sea_streamer_file::{FileConsumer, FileErr};
-use sea_streamer_types::{Consumer as _, SeqPos, StreamErr, Timestamp};
+use sea_streamer_types::{Consumer as _, SeqPos, SharedMessage, StreamErr, Timestamp};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::batching::BATCH_MAX_WAIT;
@@ -72,11 +75,24 @@ impl FileSubscriber {
         &self.stream
     }
 
-    pub(crate) fn spawn(stream: String, consumer: FileConsumer) -> Self {
+    pub(crate) async fn spawn(stream: String, consumer: FileConsumer, replay: bool) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
-        tokio::spawn(drive(consumer, out_tx, cmd_rx, stream.clone()));
+        // A replay reads a file that already holds everything it will ever hold, and the client
+        // starts reading it the moment the consumer exists. If the first read happens on the
+        // driver task instead, the client can reach the end of the file and drop what it had
+        // buffered before that task is ever scheduled, and the replay yields nothing at all. So
+        // the first delivery is read here, in the task that created the consumer, and handed to
+        // the driver to send on before anything else. A live subscription reads nothing here: it
+        // has no retained region to lose, and waiting for its first message would turn
+        // subscribing into a wait for traffic.
+        let first = if replay {
+            Some(consumer.next().await)
+        } else {
+            None
+        };
+        tokio::spawn(drive(consumer, out_tx, cmd_rx, stream.clone(), first));
         let stream: Arc<str> = Arc::from(stream);
         Self {
             stream: Arc::clone(&stream),
@@ -343,11 +359,19 @@ async fn drive(
     out: mpsc::Sender<Stamped>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     stream: String,
+    first: Option<Result<SharedMessage, StreamErr<FileErr>>>,
 ) {
     // The generation the consumer is actually positioned in. It advances when a reposition has
     // run, never when one is merely requested, so a delivery read at the old position cannot be
     // stamped with the generation the request opened and pass the reader's filter.
     let mut applied = 0;
+    // The delivery already read for this subscription goes out before anything else, so holding
+    // it changes the order of nothing.
+    if let Some(next) = first
+        && !forward(next, &out, &stream, applied).await
+    {
+        return;
+    }
     loop {
         tokio::select! {
             biased;
@@ -386,37 +410,50 @@ async fn drive(
             }
             () = out.closed() => break,
             next = consumer.next() => {
-                match next {
-                    Ok(message) => {
-                        let item = Stamped {
-                            epoch: applied,
-                            item: Some(Ok(SeaMessage::new(&message))),
-                        };
-                        if out.send(item).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(err) if is_clean_end(&err) => {
-                        // A stream that ended is not a failure. Both endings arrive here: the
-                        // writer's end-of-stream mark, which is the only thing that ends a live
-                        // subscription, and the end of the retained file, which ends a replay.
-                        let _ = out.send(Stamped { epoch: applied, item: None }).await;
-                        break;
-                    }
-                    Err(err) => {
-                        let _ = out
-                            .send(Stamped {
-                                epoch: applied,
-                                item: Some(Err(SeaFileError::Receive {
-                                    stream: stream.clone(),
-                                    source: box_err(err),
-                                })),
-                            })
-                            .await;
-                        break;
-                    }
+                if !forward(next, &out, &stream, applied).await {
+                    break;
                 }
             }
+        }
+    }
+}
+
+/// Forwards one outcome of the client's `next` into the delivery channel, stamped with the
+/// generation it was read under.
+///
+/// Returns `false` when the driver has nothing left to do: the stream ended, the read failed, or
+/// nothing is listening any more.
+async fn forward(
+    next: Result<SharedMessage, StreamErr<FileErr>>,
+    out: &mpsc::Sender<Stamped>,
+    stream: &str,
+    epoch: u64,
+) -> bool {
+    let receive_error = |err| Stamped {
+        epoch,
+        item: Some(Err(SeaFileError::Receive {
+            stream: stream.to_owned(),
+            source: box_err(err),
+        })),
+    };
+    match next {
+        Ok(message) => {
+            let item = Stamped {
+                epoch,
+                item: Some(Ok(SeaMessage::new(&message))),
+            };
+            out.send(item).await.is_ok()
+        }
+        Err(err) if is_clean_end(&err) => {
+            // A stream that ended is not a failure. Both endings arrive here: the writer's
+            // end-of-stream mark, which is the only thing that ends a live subscription, and the
+            // end of the retained file, which ends a replay.
+            let _ = out.send(Stamped { epoch, item: None }).await;
+            false
+        }
+        Err(err) => {
+            let _ = out.send(receive_error(err)).await;
+            false
         }
     }
 }
