@@ -52,7 +52,10 @@ fn file_roundtrip_preserves_payload_and_headers() {
         headers.insert("x-tenant", "acme");
         let publisher = connected.publisher();
         publisher
-            .publish(OutgoingMessage::new("orders", b"{\"id\":1}".as_slice()).with_headers(headers))
+            .publish(
+                OutgoingMessage::new("orders", b"{\"id\":1}".as_slice()).with_headers(headers),
+                None,
+            )
             .await
             .expect("publish succeeds");
 
@@ -91,7 +94,7 @@ fn a_finished_file_replays_and_completes() {
             let publisher = connected.publisher();
             for i in 0..3u8 {
                 publisher
-                    .publish(OutgoingMessage::new("orders", [i].as_slice()))
+                    .publish(OutgoingMessage::new("orders", [i].as_slice()), None)
                     .await
                     .expect("publish succeeds");
             }
@@ -139,7 +142,7 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
         let file = FileBroker::new(&path).connect().await.expect("file opens");
         let mut from_file = file.subscribe("orders").await.expect("subscription opens");
         file.publisher()
-            .publish(OutgoingMessage::new("orders", b"one".as_slice()))
+            .publish(OutgoingMessage::new("orders", b"one".as_slice()), None)
             .await
             .expect("publish succeeds");
 
@@ -176,7 +179,7 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
         // The requeue too: neither transport takes a message back, so a handler asking for one
         // is refused on both rather than served by the stand-in alone.
         file.publisher()
-            .publish(OutgoingMessage::new("orders", b"two".as_slice()))
+            .publish(OutgoingMessage::new("orders", b"two".as_slice()), None)
             .await
             .expect("publish succeeds");
         in_process.inject(OutgoingMessage::new("orders", b"two".as_slice()));
@@ -235,7 +238,7 @@ fn a_live_subscription_completes_at_the_end_of_stream_mark() {
 
         writer
             .publisher()
-            .publish(OutgoingMessage::new("orders", b"only".as_slice()))
+            .publish(OutgoingMessage::new("orders", b"only".as_slice()), None)
             .await
             .expect("publish succeeds");
         let delivered = tokio::time::timeout(RECV_TIMEOUT, stream.next())
@@ -277,7 +280,7 @@ fn a_replay_of_a_key_with_no_messages_finishes_instead_of_waiting() {
                 .expect("file opens");
             connected
                 .publisher()
-                .publish(OutgoingMessage::new("orders", b"one".as_slice()))
+                .publish(OutgoingMessage::new("orders", b"one".as_slice()), None)
                 .await
                 .expect("publish succeeds");
             connected.shutdown().await.expect("shutdown succeeds");
@@ -330,7 +333,7 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         let raw = [0u8, 159, 146, 150, 255];
         let publisher = connected.publisher();
         publisher
-            .publish(OutgoingMessage::new("pipe", raw.as_slice()))
+            .publish(OutgoingMessage::new("pipe", raw.as_slice()), None)
             .await
             .expect("publish succeeds");
 
@@ -349,7 +352,7 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         // what the mount site asks for is still the cap a batch may never exceed.
         for i in 0..3u8 {
             publisher
-                .publish(OutgoingMessage::new("pipe", [i].as_slice()))
+                .publish(OutgoingMessage::new("pipe", [i].as_slice()), None)
                 .await
                 .expect("publish succeeds");
         }
@@ -369,6 +372,13 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
             received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
         }
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
+
+        // Nothing on this transport addresses the subscription: a publish goes to standard
+        // output and the subscription reads standard input. Saying so is what makes a scope
+        // wiring `retry_via` over stdio refuse to start, instead of writing every delayed
+        // message into the next stage of the pipeline. The loopback above is a test aid, and an
+        // address that only held under it would break in the shape a service ships.
+        assert_eq!(connected.redelivery_address("pipe"), None);
 
         connected.shutdown().await.expect("shutdown succeeds");
     });

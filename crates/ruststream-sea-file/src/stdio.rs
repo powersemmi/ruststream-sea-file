@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures::Stream;
 use ruststream::{
     BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, ServerSpec, Subscribe,
+    Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
 use sea_streamer_types::{
@@ -215,6 +216,19 @@ impl Subscribe for ConnectedStdioBroker {
             inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(BATCH_MAX_WAIT),
         })
     }
+
+    /// Nothing: a publish writes to standard output and a subscription reads standard input, so
+    /// no address on this transport reaches the subscription again.
+    ///
+    /// A scope wired with `retry_via` over stdio therefore refuses to start, which is the right
+    /// answer for a pipeline stage: the next process downstream is not the one that sent the
+    /// message. Hold a delayed message inside the handler, or put the delay in the tool that
+    /// feeds the pipe. ([`loopback`](StdioBroker::loopback) does route a publish back to this
+    /// process, but it is a test aid, and an address that only holds under it would break in the
+    /// shape a service ships.)
+    fn redelivery_address(&self, _name: &str) -> Option<RedeliveryAddress> {
+        None
+    }
 }
 
 impl DefaultPublish for ConnectedStdioBroker {
@@ -282,6 +296,10 @@ impl Subscriber for StdioDeliveries {
 /// The line format is the client's own; payloads must be text, so a non-UTF-8 payload (and
 /// any message with headers) travels in the text-safe envelope. The client silently drops
 /// empty lines, so an empty payload is rejected here instead.
+///
+/// A publish carries no per-message settings: a line on standard output takes a key and a
+/// payload and nothing else, so [`Publisher::Options`] is the unit type and the publish builder
+/// gains no step from this crate.
 #[derive(Clone)]
 pub struct StdioPublisher {
     cell: StdioCell,
@@ -296,8 +314,13 @@ impl std::fmt::Debug for StdioPublisher {
 
 impl Publisher for StdioPublisher {
     type Error = SeaFileError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&()>,
+    ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
         if msg.payload().is_empty() && msg.headers().is_empty() {

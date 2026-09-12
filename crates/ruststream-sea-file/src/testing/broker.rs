@@ -7,7 +7,8 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher, RawMessage, Subscribe,
+    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher, RawMessage,
+    RedeliveryAddress, Subscribe,
 };
 
 use crate::error::SeaFileError;
@@ -142,6 +143,12 @@ impl Subscribe for ConnectedFileTestBroker {
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         ready(self.open(name))
     }
+
+    /// The stream key, the answer a stream file gives: a service that wires `retry_via` against a
+    /// file must be able to start under the harness too.
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
+        Some(RedeliveryAddress::new(name.to_owned()))
+    }
 }
 
 impl TestableBroker for ConnectedFileTestBroker {
@@ -176,8 +183,15 @@ pub struct FileTestPublisher {
 
 impl Publisher for FileTestPublisher {
     type Error = SeaFileError;
+    // The same unit type both real publishers declare: a test must not be able to set something
+    // in process that a stream file would have nowhere to put.
+    type Options = ();
 
-    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(self.state.ensure_open().map(|()| {
             self.state.publish(
                 msg.name(),

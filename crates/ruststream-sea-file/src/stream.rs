@@ -1,7 +1,9 @@
 //! [`FileStream`]: the subscription descriptor for the file transport.
 
-use ruststream::SubscriptionSource;
+use std::future::{Future, ready};
+
 use ruststream::runtime::IntoSource;
+use ruststream::{RedeliveryAddress, SubscriptionSource};
 #[cfg(feature = "testing")]
 use ruststream::{Seekable, Seeker};
 
@@ -67,6 +69,16 @@ impl FileStream {
         self.replay
     }
 
+    /// Where a deferred copy of a delayed message reaches this subscription again.
+    ///
+    /// A live subscription tails the file, so the stream key is the answer: the publisher appends
+    /// under that key and the subscription reads the append. A replay is not tailing anything -
+    /// it reads the region the file already held and completes - so a copy written afterwards
+    /// would never be read, and the descriptor says so rather than promising a delivery.
+    fn redelivery_address_value(&self) -> Option<RedeliveryAddress> {
+        (!self.replay).then(|| RedeliveryAddress::new(self.stream.clone()))
+    }
+
     /// Rejects descriptors that cannot form a subscription, before any I/O.
     pub(crate) fn validate(&self) -> Result<(), SeaFileError> {
         if self.stream.is_empty() {
@@ -97,6 +109,14 @@ impl SubscriptionSource<ConnectedFileBroker> for FileStream {
     ) -> Result<FileSubscriber, SeaFileError> {
         connected.subscribe_stream(self).await
     }
+
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedFileBroker,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, SeaFileError>> {
+        // The descriptor already knows the answer; nothing is asked of the connection.
+        ready(Ok(self.redelivery_address_value()))
+    }
 }
 
 /// The descriptor resolves against the in-process transport too, so a service written on
@@ -124,6 +144,13 @@ impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream 
             Seeker::seek(&seeker, FilePosition::Beginning).await?;
         }
         Ok(subscriber)
+    }
+
+    fn redelivery_address(
+        &self,
+        _connected: &crate::testing::ConnectedFileTestBroker,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, SeaFileError>> {
+        ready(Ok(self.redelivery_address_value()))
     }
 }
 
