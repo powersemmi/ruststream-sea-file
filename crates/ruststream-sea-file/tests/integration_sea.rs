@@ -374,10 +374,10 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
 
         // Nothing on this transport addresses the subscription: a publish goes to standard
-        // output and the subscription reads standard input. Saying so is what makes a scope
-        // wiring `retry_via` over stdio refuse to start, instead of writing every delayed
-        // message into the next stage of the pipeline. The loopback above is a test aid, and an
-        // address that only held under it would break in the shape a service ships.
+        // output and the subscription reads standard input. Saying so is what makes a
+        // registration binding `out_retry` over stdio refuse to start, instead of writing every
+        // delayed message into the next stage of the pipeline. The loopback above is a test aid,
+        // and an address that only held under it would break in the shape a service ships.
         assert_eq!(connected.redelivery_address("pipe"), None);
 
         connected.shutdown().await.expect("shutdown succeeds");

@@ -144,8 +144,8 @@ impl Subscribe for ConnectedFileTestBroker {
         ready(self.open(name))
     }
 
-    /// The stream key, the answer a stream file gives: a service that wires `retry_via` against a
-    /// file must be able to start under the harness too.
+    /// The stream key, the answer a stream file gives: a service whose mount site binds the
+    /// deferred-retry position against a file must be able to start under the harness too.
     fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
         Some(RedeliveryAddress::new(name.to_owned()))
     }

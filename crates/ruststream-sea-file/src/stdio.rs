@@ -220,8 +220,8 @@ impl Subscribe for ConnectedStdioBroker {
     /// Nothing: a publish writes to standard output and a subscription reads standard input, so
     /// no address on this transport reaches the subscription again.
     ///
-    /// A scope wired with `retry_via` over stdio therefore refuses to start, which is the right
-    /// answer for a pipeline stage: the next process downstream is not the one that sent the
+    /// A registration bound with `out_retry` over stdio therefore refuses to start, which is the
+    /// right answer for a pipeline stage: the next process downstream is not the one that sent the
     /// message. Hold a delayed message inside the handler, or put the delay in the tool that
     /// feeds the pipe. ([`loopback`](StdioBroker::loopback) does route a publish back to this
     /// process, but it is a test aid, and an address that only holds under it would break in the

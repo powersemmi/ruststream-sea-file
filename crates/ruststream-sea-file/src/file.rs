@@ -296,7 +296,7 @@ impl Subscribe for ConnectedFileBroker {
     ///
     /// This is what makes `retry_after` work on a stream file, and nothing else does: the
     /// transport keeps no consumer positions, so a `nack` cannot hand the message back. Answer
-    /// nothing here and a scope wired with `retry_via` refuses to start.
+    /// nothing here and a registration bound with `out_retry` refuses to start.
     fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
         Some(RedeliveryAddress::new(name.to_owned()))
     }

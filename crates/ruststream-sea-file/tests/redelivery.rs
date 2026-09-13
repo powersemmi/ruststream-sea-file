@@ -57,13 +57,11 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 #[tokio::test(start_paused = true)]
 async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
     let broker = FileTestBroker::new();
-    // --8<-- [start:retry_via]
-    let retry_publisher = broker.publisher();
+    // --8<-- [start:out_retry]
     let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(reconcile);
+        b.include(reconcile).out_retry(Publish);
     });
-    // --8<-- [end:retry_via]
+    // --8<-- [end:out_retry]
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.broker::<FileTestBroker>()
@@ -96,8 +94,8 @@ async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
 }
 
 /// A replay reads the region the file already held and completes, so a copy written afterwards
-/// would never be read. The descriptor says so, and a scope wiring a deferred retry over it
-/// refuses to start instead of dropping every delayed message.
+/// would never be read. The descriptor says so, and a registration binding the deferred-retry
+/// position over it refuses to start instead of dropping every delayed message.
 #[subscriber(FileStream::new("orders").replay())]
 async fn audit_the_finished_file(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
@@ -105,20 +103,19 @@ async fn audit_the_finished_file(_order: &Order) -> HandlerOutcome {
 
 #[tokio::test]
 async fn a_retry_over_a_replay_refuses_to_start() {
-    let broker = FileTestBroker::new();
-    let retry_publisher = broker.publisher();
-    let app =
-        RustStream::new(AppInfo::new("redelivery-replay", "0.1.0")).with_broker(broker, |b| {
-            b.retry_via(retry_publisher);
-            b.include(audit_the_finished_file);
-        });
+    let app = RustStream::new(AppInfo::new("redelivery-replay", "0.1.0")).with_broker(
+        FileTestBroker::new(),
+        |b| {
+            b.include(audit_the_finished_file).out_retry(Publish);
+        },
+    );
 
     let failed = TestApp::start(app)
         .await
         .expect_err("a replay cannot address its retries and must not start");
     let message = failed.to_string();
     assert!(message.contains("orders"), "{message}");
-    assert!(message.contains("retry_via"), "{message}");
+    assert!(message.contains("out_retry"), "{message}");
 }
 
 /// A publish written by the file broker reaches a subscription opened under the same stream key.
