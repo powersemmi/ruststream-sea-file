@@ -7,6 +7,9 @@
 //!
 //! Batches sit on top of that channel rather than in the client, which reads one message at a
 //! time; see [`crate::batching`] for why, and for the deadline that closes a partial one.
+//!
+//! A replay reads its first delivery before the driver task starts, and the driver sends that one
+//! on before anything else; see [`FileSubscriber::spawn`] for what that avoids.
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -19,7 +22,7 @@ use ruststream::{
     Seekable, Seeker, Subscriber,
 };
 use sea_streamer_file::{FileConsumer, FileErr};
-use sea_streamer_types::{Consumer as _, SeqPos, StreamErr, Timestamp};
+use sea_streamer_types::{Consumer as _, SeqPos, SharedMessage, StreamErr, Timestamp};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::batching::BATCH_MAX_WAIT;
@@ -31,6 +34,10 @@ const CHANNEL_CAPACITY: usize = 64;
 
 pub(crate) struct SeekCmd {
     position: FilePosition,
+    /// The generation this reposition opens. The driver starts stamping deliveries with it only
+    /// once the reposition has run, so everything read at the previous position keeps the
+    /// previous generation and is discarded on the way out.
+    epoch: u64,
     done: oneshot::Sender<Result<(), SeaFileError>>,
 }
 
@@ -41,8 +48,10 @@ pub(crate) struct Stamped {
 
 /// A subscription to one stream key in the file; yields [`FileMessage`]s.
 ///
-/// Dropping the subscriber stops the driver task. A replay subscription completes (the
-/// stream ends) at the end of the file.
+/// Dropping the subscriber stops the driver task. The stream also ends on its own when the file
+/// does: a replay reaches the end of what was retained, and a live subscription reaches the
+/// end-of-stream mark a writer left with
+/// [`end_with_eos`](crate::FileBroker::end_with_eos).
 pub struct FileSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
@@ -66,18 +75,24 @@ impl FileSubscriber {
         &self.stream
     }
 
-    pub(crate) fn spawn(stream: String, consumer: FileConsumer, replay: bool) -> Self {
+    pub(crate) async fn spawn(stream: String, consumer: FileConsumer, replay: bool) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
-        tokio::spawn(drive(
-            consumer,
-            out_tx,
-            cmd_rx,
-            stream.clone(),
-            replay,
-            Arc::clone(&epoch),
-        ));
+        // A replay reads a file that already holds everything it will ever hold, and the client
+        // starts reading it the moment the consumer exists. If the first read happens on the
+        // driver task instead, the client can reach the end of the file and drop what it had
+        // buffered before that task is ever scheduled, and the replay yields nothing at all. So
+        // the first delivery is read here, in the task that created the consumer, and handed to
+        // the driver to send on before anything else. A live subscription reads nothing here: it
+        // has no retained region to lose, and waiting for its first message would turn
+        // subscribing into a wait for traffic.
+        let first = if replay {
+            Some(consumer.next().await)
+        } else {
+            None
+        };
+        tokio::spawn(drive(consumer, out_tx, cmd_rx, stream.clone(), first));
         let stream: Arc<str> = Arc::from(stream);
         Self {
             stream: Arc::clone(&stream),
@@ -142,7 +157,7 @@ impl Subscriber for Deliveries {
         // Poll the channel in place rather than wrapping it in an owning stream, so `stream`
         // can be called again after the returned stream is dropped (the runtime and the
         // conformance helpers re-enter it per call). Items queued under an older generation
-        // (before a seek) are discarded here; `item: None` marks a clean end of a replay.
+        // (before a seek) are discarded here; `item: None` marks the clean end of the stream.
         futures::stream::poll_fn(move |cx| {
             loop {
                 match self.rx.poll_recv(cx) {
@@ -307,12 +322,17 @@ impl Seeker for FileSeeker {
     async fn seek(&self, to: FilePosition) -> Result<(), SeaFileError> {
         match &self.backend {
             SeekBackend::Driver { cmd, epoch } => {
-                // Bump the generation first: deliveries already queued (or an in-flight forward)
-                // belong to the pre-seek position and are discarded on the way out.
-                epoch.fetch_add(1, Ordering::Release);
+                // Opening the new generation here is what makes the reader discard everything
+                // from the old position: deliveries already queued, and any the driver reads
+                // between this bump and the reposition it is about to run.
+                let opened = epoch.fetch_add(1, Ordering::Release) + 1;
                 let (done, wait) = oneshot::channel();
-                cmd.send(SeekCmd { position: to, done })
-                    .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
+                cmd.send(SeekCmd {
+                    position: to,
+                    epoch: opened,
+                    done,
+                })
+                .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
                 wait.await
                     .map_err(|_| self.dead("the subscription's driver task has shut down"))?
             }
@@ -339,18 +359,24 @@ async fn drive(
     out: mpsc::Sender<Stamped>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     stream: String,
-    replay: bool,
-    epoch: Arc<AtomicU64>,
+    first: Option<Result<SharedMessage, StreamErr<FileErr>>>,
 ) {
+    // The generation the consumer is actually positioned in. It advances when a reposition has
+    // run, never when one is merely requested, so a delivery read at the old position cannot be
+    // stamped with the generation the request opened and pass the reader's filter.
+    let mut applied = 0;
+    // The delivery already read for this subscription goes out before anything else, so holding
+    // it changes the order of nothing.
+    if let Some(next) = first
+        && !forward(next, &out, &stream, applied).await
+    {
+        return;
+    }
     loop {
-        // Captured before awaiting: a delivery resolved out of `next()` was positioned before
-        // any seek that lands mid-await, so it must carry the pre-await generation - stamping
-        // after the await would let a concurrent seek's bump leak onto a stale delivery.
-        let current = epoch.load(Ordering::Acquire);
         tokio::select! {
             biased;
             cmd = cmd_rx.recv() => {
-                let Some(SeekCmd { position, done }) = cmd else { break };
+                let Some(SeekCmd { position, epoch: opened, done }) = cmd else { break };
                 // The client's seek is not cancel-safe: it runs here to completion, never
                 // inside a racing select arm.
                 let result = match position {
@@ -364,6 +390,7 @@ async fn drive(
                         match Timestamp::from_unix_timestamp_nanos(nanos) {
                             Ok(timestamp) => consumer.seek(timestamp).await,
                             Err(err) => {
+                                applied = opened;
                                 let _ = done.send(Err(SeaFileError::Invalid(format!(
                                     "'{millis}' is not a valid timestamp: {err}"
                                 ))));
@@ -372,6 +399,10 @@ async fn drive(
                         }
                     }
                 };
+                // The generation the request opened starts here, whether or not the reposition
+                // succeeded: a failed one leaves the subscription where it was, and what it
+                // reads next is current again rather than discarded for ever.
+                applied = opened;
                 let _ = done.send(result.map_err(|e| SeaFileError::Seek {
                     stream: stream.clone(),
                     source: box_err(e),
@@ -379,47 +410,50 @@ async fn drive(
             }
             () = out.closed() => break,
             next = consumer.next() => {
-                match next {
-                    Ok(message) => {
-                        let item = Stamped {
-                            epoch: current,
-                            item: Some(Ok(SeaMessage::new(&message))),
-                        };
-                        if out.send(item).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(err) if is_clean_end(&err) => {
-                        if replay {
-                            // A finished replay completes the subscription.
-                            let _ = out.send(Stamped { epoch: current, item: None }).await;
-                        } else {
-                            let _ = out
-                                .send(Stamped {
-                                    epoch: current,
-                                    item: Some(Err(SeaFileError::Receive {
-                                        stream: stream.clone(),
-                                        source: box_err(err),
-                                    })),
-                                })
-                                .await;
-                        }
-                        break;
-                    }
-                    Err(err) => {
-                        let _ = out
-                            .send(Stamped {
-                                epoch: current,
-                                item: Some(Err(SeaFileError::Receive {
-                                    stream: stream.clone(),
-                                    source: box_err(err),
-                                })),
-                            })
-                            .await;
-                        break;
-                    }
+                if !forward(next, &out, &stream, applied).await {
+                    break;
                 }
             }
+        }
+    }
+}
+
+/// Forwards one outcome of the client's `next` into the delivery channel, stamped with the
+/// generation it was read under.
+///
+/// Returns `false` when the driver has nothing left to do: the stream ended, the read failed, or
+/// nothing is listening any more.
+async fn forward(
+    next: Result<SharedMessage, StreamErr<FileErr>>,
+    out: &mpsc::Sender<Stamped>,
+    stream: &str,
+    epoch: u64,
+) -> bool {
+    let receive_error = |err| Stamped {
+        epoch,
+        item: Some(Err(SeaFileError::Receive {
+            stream: stream.to_owned(),
+            source: box_err(err),
+        })),
+    };
+    match next {
+        Ok(message) => {
+            let item = Stamped {
+                epoch,
+                item: Some(Ok(SeaMessage::new(&message))),
+            };
+            out.send(item).await.is_ok()
+        }
+        Err(err) if is_clean_end(&err) => {
+            // A stream that ended is not a failure. Both endings arrive here: the writer's
+            // end-of-stream mark, which is the only thing that ends a live subscription, and the
+            // end of the retained file, which ends a replay.
+            let _ = out.send(Stamped { epoch, item: None }).await;
+            false
+        }
+        Err(err) => {
+            let _ = out.send(receive_error(err)).await;
+            false
         }
     }
 }

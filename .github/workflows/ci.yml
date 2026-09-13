@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # No base filter: a pull request stacked on another one has a branch for its base, and a filter
+  # naming `main` leaves it with no checks at all - which reads as a conflicting branch rather
+  # than as a workflow that declined to run.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -95,7 +97,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-hack
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.6
         with:
           tool: cargo-hack
 
@@ -163,7 +165,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.6
         with:
           tool: cargo-deny
 

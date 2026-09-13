@@ -1,16 +1,18 @@
 //! [`FileTestBroker`]: the in-process transport and its connected form.
 
 use std::future::{Future, ready};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    RawMessage, Subscribe,
+    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher, RawMessage,
+    RedeliveryAddress, Subscribe,
 };
 
 use crate::error::SeaFileError;
+use crate::file::FilePublish;
 use crate::testing::router::AddressRouter;
 use crate::testing::subscriber::FileTestSubscriber;
 
@@ -19,11 +21,24 @@ use crate::testing::subscriber::FileTestSubscriber;
 pub(crate) struct TestState {
     pub(crate) router: AddressRouter,
     coordinator: OnceLock<Coordinator>,
+    /// Set once by `shutdown`. The ladder makes owner-side misuse a compile error, but the
+    /// connected form is shareable and hands out publishers, so a handle can outlive the
+    /// connection here exactly as it can on the real transports; without this flag such a
+    /// handle would keep succeeding against a broker that is gone.
+    closed: AtomicBool,
 }
 
 impl TestState {
     pub(crate) fn coordinator(&self) -> Option<&Coordinator> {
         self.coordinator.get()
+    }
+
+    /// Rejects use of a handle that outlived the connection, the way the real transports do.
+    fn ensure_open(&self) -> Result<(), SeaFileError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SeaFileError::NotConnected);
+        }
+        Ok(())
     }
 
     pub(crate) fn publish(&self, name: &str, payload: Bytes, headers: ruststream::HeaderMap) {
@@ -95,6 +110,7 @@ impl ConnectedBroker for ConnectedFileTestBroker {
     type Closed = ();
 
     fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.state.closed.store(true, Ordering::Release);
         self.state.router.clear();
         ready(Ok(()))
     }
@@ -103,16 +119,21 @@ impl ConnectedBroker for ConnectedFileTestBroker {
 impl ConnectedFileTestBroker {
     /// Opens an in-process subscription on `name`: what both the `Subscribe` capability and the
     /// file transport's own [`FileStream`](crate::FileStream) descriptor resolve to.
-    pub(crate) fn open(&self, name: &str) -> FileTestSubscriber {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SeaFileError::NotConnected`] once the broker has been shut down.
+    pub(crate) fn open(&self, name: &str) -> Result<FileTestSubscriber, SeaFileError> {
+        self.state.ensure_open()?;
         let (id, requeue, rx) = self.state.router.subscribe(name.to_owned());
-        FileTestSubscriber::new(
+        Ok(FileTestSubscriber::new(
             Arc::clone(&self.state),
             id,
             name.to_owned(),
             rx,
             requeue,
             self.state.coordinator().cloned(),
-        )
+        ))
     }
 }
 
@@ -120,7 +141,13 @@ impl Subscribe for ConnectedFileTestBroker {
     type Subscriber = FileTestSubscriber;
 
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
-        ready(Ok(self.open(name)))
+        ready(self.open(name))
+    }
+
+    /// The stream key, the answer a stream file gives: a service whose mount site binds the
+    /// deferred-retry position against a file must be able to start under the harness too.
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
+        Some(RedeliveryAddress::new(name.to_owned()))
     }
 }
 
@@ -145,6 +172,10 @@ impl TestableBroker for ConnectedFileTestBroker {
 ruststream::register_testable_broker!(ConnectedFileTestBroker);
 
 /// Publisher for the in-process broker.
+///
+/// A publisher handed out before the shutdown outlives the connection, so publishing through it
+/// afterwards reports [`SeaFileError::NotConnected`] rather than routing into a broker that is
+/// gone - the same answer the file and stdio publishers give.
 #[derive(Debug, Clone)]
 pub struct FileTestPublisher {
     state: Arc<TestState>,
@@ -152,43 +183,27 @@ pub struct FileTestPublisher {
 
 impl Publisher for FileTestPublisher {
     type Error = SeaFileError;
+    // The same unit type both real publishers declare: a test must not be able to set something
+    // in process that a stream file would have nowhere to put.
+    type Options = ();
 
-    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
-        self.state.publish(
-            msg.name(),
-            Bytes::copy_from_slice(msg.payload()),
-            msg.headers().clone(),
-        );
-        ready(Ok(()))
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        ready(self.state.ensure_open().map(|()| {
+            self.state.publish(
+                msg.name(),
+                Bytes::copy_from_slice(msg.payload()),
+                msg.headers().clone(),
+            );
+        }))
     }
 }
 
-/// The publish policy for [`FileTestPublisher`], mirroring
-/// [`FilePublish`](crate::FilePublish) on the real broker.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream_sea_file::testing::FileTestPublish;
-///
-/// let policy = FileTestPublish::default();
-/// # let _ = policy;
-/// ```
-#[derive(Debug, Clone, Copy, Default)]
-#[must_use]
-pub struct FileTestPublish;
-
-impl PublishPolicy<ConnectedFileTestBroker> for FileTestPublish {
-    type Live = FileTestPublisher;
-
-    fn pair(
-        self,
-        connected: &ConnectedFileTestBroker,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.publisher()))
-    }
-}
-
+/// The default reply policy is the file transport's own: a `publish("dest")` handler included
+/// without an explicit policy is wired here exactly as it is wired against a stream file.
 impl DefaultPublish for ConnectedFileTestBroker {
-    type Policy = FileTestPublish;
+    type Policy = FilePublish;
 }

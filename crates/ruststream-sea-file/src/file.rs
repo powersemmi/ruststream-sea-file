@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use ruststream::{
     Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, ServerSpec, Subscribe,
+    PublishPolicy, Publisher, RedeliveryAddress, ServerSpec, Subscribe,
 };
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
@@ -99,8 +99,13 @@ impl FileBroker {
         self
     }
 
-    /// Writes an end-of-stream mark when the broker shuts down, so replay consumers of the
-    /// finished file complete instead of waiting for more data.
+    /// Writes an end-of-stream mark when the broker shuts down, marking the file finished.
+    ///
+    /// A subscription that tails the file reads the mark and ends there, which is the only
+    /// thing that ends a live subscription; a replay reads a marked file to its end and
+    /// completes. Finish a file a reader will replay: without the mark the reader has to find
+    /// the end of the file for itself, and it may report the end before it has delivered
+    /// everything the file holds.
     pub fn end_with_eos(mut self) -> Self {
         self.end_with_eos = true;
         self
@@ -255,7 +260,8 @@ impl ConnectedFileBroker {
             descriptor.stream().to_owned(),
             consumer,
             descriptor.replay_value(),
-        ))
+        )
+        .await)
     }
 }
 
@@ -284,12 +290,26 @@ impl Subscribe for ConnectedFileBroker {
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         self.subscribe_stream(FileStream::new(name)).await
     }
+
+    /// The stream key itself: a publisher on this broker appends to the file the subscription
+    /// tails, so a deferred copy under the same key is read by it.
+    ///
+    /// This is what makes `retry_after` work on a stream file, and nothing else does: the
+    /// transport keeps no consumer positions, so a `nack` cannot hand the message back. Answer
+    /// nothing here and a registration bound with `out_retry` refuses to start.
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
+        Some(RedeliveryAddress::new(name.to_owned()))
+    }
 }
 
 /// Publishes messages into the stream file.
 ///
 /// User headers travel in a text-safe envelope applied only when headers are present, so a
 /// file written without headers stays readable as a plain payload stream by other tools.
+///
+/// A publish carries no per-message settings: an append to a stream file takes a key and a
+/// payload and nothing else, so [`Publisher::Options`] is the unit type and the publish builder
+/// gains no step from this crate.
 #[derive(Clone)]
 pub struct FilePublisher {
     cell: CoreCell,
@@ -303,8 +323,13 @@ impl std::fmt::Debug for FilePublisher {
 
 impl Publisher for FilePublisher {
     type Error = SeaFileError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&()>,
+    ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
         let producer = &core.producer;
@@ -359,6 +384,27 @@ impl PublishPolicy<ConnectedFileBroker> for FilePublish {
 
 impl DefaultPublish for ConnectedFileBroker {
     type Policy = FilePublish;
+}
+
+/// The policy pairs against the in-process transport too, so a routes file that names it -
+/// `.out_reply(Publish)`, the way production writes it - mounts on
+/// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
+///
+/// A policy is pure declaration and this one carries no settings, so nothing is dropped in the
+/// translation; what differs is the live publisher it pairs into, which appends to the stand-in's
+/// retained log instead of writing a file. The file's own machinery - the header envelope, the
+/// per-publish flush - belongs to [`FilePublisher`] and is covered against real stream files, so a
+/// test here must not assert on the bytes a `.ss` file ends up holding.
+#[cfg(feature = "testing")]
+impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for FilePublish {
+    type Live = crate::testing::FileTestPublisher;
+
+    fn pair(
+        self,
+        connected: &crate::testing::ConnectedFileTestBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
+    }
 }
 
 /// The publish policy of this form, under the name every form uses.
