@@ -336,19 +336,26 @@ operation, and the dead-letter stream key becomes a channel the service publishe
 Every suite in this crate runs locally, on temp files and in-process pipes, with no broker to
 start.
 
-You test your own handlers with the framework's `TestApp` harness, against `FileTestBroker` from
-the `testing` feature. It keeps a retained, positioned log in memory: the one transport property a
-stream file's handlers are written against.
+You test your own handlers with the framework's `TestApp` harness, against the stand for the
+transport you run on. The `testing` feature ships one per transport: `FileTestBroker` for stream
+files and `StdioTestBroker` for pipelines.
 
-A seeking service therefore mounts on it with no edit at all: `FileStream` resolves here, a
-delivery reports a `FilePosition`, and `FileContext` and `FileBatchContext` build off its
-deliveries the way they build off a file's. Batches work the same way, so a batch handler sees
-batches of the size its mount site asked for.
+`FileTestBroker` keeps a retained, positioned log in memory: the one transport property a stream
+file's handlers are written against. A seeking service therefore mounts on it with no edit at all:
+`FileStream` resolves here, a delivery reports a `FilePosition`, and `FileContext` and
+`FileBatchContext` build off its deliveries the way they build off a file's. Batches work the same
+way, so a batch handler sees batches of the size its mount site asked for.
 
-The mount site needs no edit either. `Publish` - both forms of it, `FilePublish` and
-`StdioPublish` - pairs against this broker, so a routes file keeps the policy it ships with and
-`.out_reply(Publish)` reads the same under the harness as it does in production. There is no
-harness-only policy to swap in.
+`StdioTestBroker` answers what a pipe answers. It addresses no retry copy, so a registration that
+names no destination refuses to start here exactly as it refuses against a real pipeline, and it
+offers no seeking. Its publish side records what the service wrote to standard output, under the
+stream key the line would carry, so a test reads the copies back with
+`published::<T>("jobs.retry")`.
+
+The mount site needs no edit either. `Publish` - `FilePublish` on the file stand, `StdioPublish`
+on the stdio one - pairs against the stand for its own transport, so a routes file keeps the
+policy it ships with and `.out_reply(Publish)` reads the same under the harness as it does in
+production. There is no harness-only policy to swap in.
 
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"

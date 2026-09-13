@@ -34,11 +34,21 @@ impl TestState {
     }
 
     /// Rejects use of a handle that outlived the connection, the way the real transports do.
-    fn ensure_open(&self) -> Result<(), SeaFileError> {
+    pub(crate) fn ensure_open(&self) -> Result<(), SeaFileError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SeaFileError::NotConnected);
         }
         Ok(())
+    }
+
+    /// Marks the connection gone, the way a shutdown does on either transport.
+    pub(crate) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+
+    /// Records the coordinator the harness installs, once.
+    pub(crate) fn install(&self, coordinator: Coordinator) {
+        let _ = self.coordinator.set(coordinator);
     }
 
     pub(crate) fn publish(&self, name: &str, payload: Bytes, headers: ruststream::HeaderMap) {
@@ -47,7 +57,11 @@ impl TestState {
     }
 }
 
-/// An in-process stand-in for [`FileBroker`](crate::FileBroker): same core routing, no server.
+/// An in-process stand-in for [`FileBroker`](crate::FileBroker): same core routing, no file.
+///
+/// It stands in for that transport alone. The stdio transport has
+/// [`StdioTestBroker`](crate::testing::StdioTestBroker), because a pipe answers differently about
+/// retry copies and about seeking.
 ///
 /// # Examples
 ///
@@ -110,7 +124,7 @@ impl ConnectedBroker for ConnectedFileTestBroker {
     type Closed = ();
 
     fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
-        self.state.closed.store(true, Ordering::Release);
+        self.state.close();
         self.state.router.clear();
         ready(Ok(()))
     }
@@ -143,10 +157,10 @@ impl Subscribe for ConnectedFileTestBroker {
     /// that starts against a file starts under the harness, with the same copies going to the
     /// same stream key.
     ///
-    /// A stdio service runs here too, and stdio names [`NamedCopies`](ruststream::NamedCopies):
-    /// a mount site that leaves the retry destination unnamed is refused against a pipe and
-    /// accepted here. That half of a stdio registration is checked against the real transport in
-    /// this repository's own suite rather than under the harness.
+    /// A stdio service does not run here: it runs on
+    /// [`StdioTestBroker`](crate::testing::StdioTestBroker), which answers `NamedCopies` the way
+    /// a pipe does, so a mount site that leaves the retry destination unnamed is refused under
+    /// the harness exactly as it is refused in production.
     type Copies = AddressedCopies;
 
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
@@ -156,7 +170,7 @@ impl Subscribe for ConnectedFileTestBroker {
 
 impl TestableBroker for ConnectedFileTestBroker {
     fn install_coordinator(&self, coordinator: Coordinator) {
-        let _ = self.state.coordinator.set(coordinator);
+        self.state.install(coordinator);
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {

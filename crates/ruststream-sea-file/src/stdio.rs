@@ -383,25 +383,24 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     }
 }
 
-/// The policy pairs against the in-process transport too, so a stdio routes file that names it -
-/// `.out_reply(Publish)`, the way production writes it - mounts on
-/// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
+/// The policy pairs against this transport's in-process stand too, so a stdio routes file that
+/// names it - `.out_reply(Publish)`, the way production writes it - mounts on
+/// [`StdioTestBroker`](crate::testing::StdioTestBroker) unchanged.
 ///
-/// The stand-in is this crate's only in-process broker and only its name is file-specific, so a
-/// stdio service runs under the harness as written rather than swapping its policy for a
-/// harness-only one.
+/// It pairs against that stand and no other: a stdio service belongs on the stdio stand, which
+/// answers about retry copies and about seeking the way a pipe answers.
 ///
-/// What the stand-in does not reproduce is the line format [`StdioPublisher`] writes: payloads
+/// What the stand does not reproduce is the line format [`StdioPublisher`] writes: payloads
 /// travel as bytes, the text-safe envelope is not applied, and the empty payload a pipe would
 /// reject goes through. Those are the real transport's, and are covered against a real pipe - so a
 /// test here must not conclude that a payload survives a shell pipeline.
 #[cfg(feature = "testing")]
-impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for StdioPublish {
-    type Live = crate::testing::FileTestPublisher;
+impl PublishPolicy<crate::testing::ConnectedStdioTestBroker> for StdioPublish {
+    type Live = crate::testing::StdioTestPublisher;
 
     fn pair(
         self,
-        connected: &crate::testing::ConnectedFileTestBroker,
+        connected: &crate::testing::ConnectedStdioTestBroker,
     ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.publisher()))
     }

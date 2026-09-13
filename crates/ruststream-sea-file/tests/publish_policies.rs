@@ -65,11 +65,11 @@ mod file_form {
     }
 }
 
-/// A service on a shell pipeline: a bare stream key, its own policy, mounted on the same stand-in.
+/// A service on a shell pipeline: a bare stream key, its own policy, mounted on its own stand.
 mod stdio_form {
     use ruststream::testing::TestApp;
     use ruststream_sea_file::stdio::prelude::*;
-    use ruststream_sea_file::testing::FileTestBroker;
+    use ruststream_sea_file::testing::StdioTestBroker;
 
     use super::{Order, Receipt};
 
@@ -82,23 +82,28 @@ mod stdio_form {
     async fn the_stdio_policy_pairs_against_the_in_process_broker()
     -> Result<(), Box<dyn std::error::Error>> {
         let app = RustStream::new(AppInfo::new("policies", "0.1.0")).with_broker(
-            FileTestBroker::new(),
+            StdioTestBroker::new(),
             |b| {
-                b.include(work).out(Reply, Publish);
+                // A pipe addresses none of its retry copies, so the destination is named here,
+                // the way a service on a real pipeline names it.
+                b.include(work)
+                    .out(Reply, Publish)
+                    .out_retry(Publish)
+                    .to("jobs.retry");
             },
         );
         let tb = TestApp::start(app).await?;
 
         tb.message(&Order { id: 1 }).to("jobs").publish().await?;
 
-        tb.broker::<FileTestBroker>()
+        tb.broker::<StdioTestBroker>()
             .subscriber("jobs")
             .assert_called_once()
             .settled(HandlerOutcome::ack());
-        // The reply is asserted as a decoded value, not as a line: the stand-in routes bytes and
+        // The reply is asserted as a decoded value, not as a line: the stand routes bytes and
         // does not apply the line format a real pipe would.
         assert_eq!(
-            tb.broker::<FileTestBroker>()
+            tb.broker::<StdioTestBroker>()
                 .published::<Receipt>("results")
                 .decoded(),
             vec![Receipt { id: 1 }],

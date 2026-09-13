@@ -21,9 +21,10 @@ mod common;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ruststream::Name;
 use ruststream::conformance::{capabilities, harness};
-use ruststream_sea_file::testing::FileTestBroker;
-use ruststream_sea_file::{FileBroker, FileStream};
+use ruststream_sea_file::testing::{FileTestBroker, StdioTestBroker};
+use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
 
 fn tmp_path(name: &str) -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -51,12 +52,41 @@ fn the_document_carries_no_credential() {
         &FileStream::new("orders"),
         "hunter2",
     );
+    // The stdio side is scanned on the real broker, which is what builds the description: the
+    // stand describes no server, as the file stand describes none.
+    harness::describes_without_credentials(&StdioBroker::new(), &Name::new("lines"), "hunter2");
 }
 
 #[test]
 fn sea_test_broker_passes_conformance_suite() {
     common::rt().block_on(async {
         harness::run_suite(FileTestBroker::new).await;
+    });
+}
+
+/// The stdio stand answers the routing contract the same way, because a service's own tests run
+/// on it: ordering, settlement, headers and the publish log are the transport's, not the stand's
+/// invention.
+#[test]
+fn stdio_test_broker_passes_conformance_suite() {
+    common::rt().block_on(async {
+        harness::run_suite(StdioTestBroker::new).await;
+    });
+}
+
+/// The ladder on the stdio stand, opened through the bare stream key a pipeline stage writes.
+/// `redelivery_address` is not run here and cannot be: a pipe addresses none of its copies, which
+/// is what the stand exists to reproduce.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn stdio_test_broker_passes_lifecycle() {
+    common::rt().block_on(async {
+        harness::lifecycle(
+            StdioTestBroker::new,
+            |name| Name::new(name.to_owned()),
+            |connected| connected.publisher(),
+        )
+        .await;
     });
 }
 

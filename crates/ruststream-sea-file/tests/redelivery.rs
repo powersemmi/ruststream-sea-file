@@ -6,7 +6,8 @@
 //! runtime's own fallback is the whole retry story here, and it rests on where a copy reaches the
 //! subscription again. A stream file says its stream key and needs nothing from the mount site.
 //! Standard output says nothing, because the process downstream of the pipe is not the one that
-//! sent the message, so a stdio registration names a destination itself.
+//! sent the message, so a stdio registration names a destination itself. Each transport is driven
+//! on its own in-process stand, which is what makes that difference visible in a test.
 
 #![cfg(feature = "testing")]
 
@@ -273,6 +274,84 @@ async fn the_reported_address_is_the_stream_key_in_both_reading_modes() {
     connected.shutdown().await.expect("shutdown succeeds");
 }
 
+/// The stdio stand, which answers about retry copies the way a pipe answers: the mount site names
+/// the destination, and a registration that names none does not start.
+mod stdio_stand {
+    use std::time::Duration;
+
+    use ruststream::testing::TestApp;
+    use ruststream_sea_file::stdio::prelude::*;
+    use ruststream_sea_file::testing::StdioTestBroker;
+    use serde::{Deserialize, Serialize};
+
+    use super::RETRY_DELAY;
+
+    #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
+    struct Job {
+        id: u64,
+    }
+
+    /// Asks for a pause before another attempt, which on a pipe means a copy sent downstream.
+    #[subscriber("jobs")]
+    async fn work(_job: &Job) -> HandlerOutcome {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    }
+
+    /// The refusal a real pipeline stage gets, under the harness: the stand declares the copy path
+    /// a pipe has, so the runtime raises the same error here, naming the subscription and the step
+    /// that fixes it.
+    #[tokio::test]
+    async fn a_mount_without_a_destination_refuses_to_start() {
+        let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
+            StdioTestBroker::new(),
+            |b| {
+                b.include(work);
+            },
+        );
+
+        let failed = TestApp::start(app)
+            .await
+            .expect_err("a registration whose copies go nowhere must not start");
+        let message = failed.to_string();
+        assert!(message.contains("jobs"), "{message}");
+        assert!(message.contains("NamedCopies"), "{message}");
+        assert!(message.contains(".to("), "{message}");
+    }
+
+    /// With the destination named, the copy leaves through the publisher and the stand records it
+    /// under that stream key - what a service writes to its standard output, read back. It does
+    /// not come back to the subscription: the next process in the pipeline is the one that reads
+    /// it.
+    #[tokio::test(start_paused = true)]
+    async fn a_named_destination_records_the_copy_the_service_wrote() {
+        let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
+            StdioTestBroker::new(),
+            |b| {
+                b.include(work).out_retry(Publish).to("jobs.retry");
+            },
+        );
+        let tb = TestApp::start(app).await.expect("startup failed");
+
+        tb.broker::<StdioTestBroker>()
+            .message(&Job { id: 3 })
+            .to("jobs")
+            .publish()
+            .await
+            .expect("publish");
+        tb.advance(RETRY_DELAY + Duration::from_millis(1))
+            .await
+            .expect("settle");
+
+        tb.broker::<StdioTestBroker>()
+            .subscriber("jobs")
+            .assert_called_once();
+        tb.broker::<StdioTestBroker>()
+            .published::<Job>("jobs.retry")
+            .assert_called_once()
+            .with(&Job { id: 3 });
+    }
+}
+
 /// The copy path each transport declares, held to by the compiler rather than by a comment.
 ///
 /// A stream key is both ends of the file, so a registration on one needs nothing from its mount
@@ -280,7 +359,8 @@ async fn the_reported_address_is_the_stream_key_in_both_reading_modes() {
 /// input, so a stdio registration names the destination itself, and the runtime refuses to start
 /// one that names none. Naming the types here attaches no transport: stdio's own round trip is
 /// covered over a real pipe in `integration_sea.rs`, which owns the one stdio transport a test
-/// binary may attach.
+/// binary may attach. The stand answers the same, so the refusal is reproducible under the
+/// harness.
 #[test]
 fn each_transport_declares_who_addresses_its_retry_copies() {
     const fn addresses_its_copies<C: Subscribe<Copies = AddressedCopies>>() {}
@@ -289,6 +369,9 @@ fn each_transport_declares_who_addresses_its_retry_copies() {
     addresses_its_copies::<ConnectedFileBroker>();
     addresses_its_copies::<ConnectedFileTestBroker>();
     names_its_destination::<ConnectedStdioBroker>();
+    // The stand answers what the pipe answers, so a registration refused in production is refused
+    // under the harness rather than passing a test it has no right to pass.
+    names_its_destination::<ruststream_sea_file::testing::ConnectedStdioTestBroker>();
 }
 
 #[derive(OutSlot)]

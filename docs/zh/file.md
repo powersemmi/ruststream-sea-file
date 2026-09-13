@@ -306,16 +306,21 @@ ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
 
 这个 crate 里的每一个测试集都在本地运行，用的是临时文件和进程内管道，不需要启动任何 Broker。
 
-你自己的处理器，用框架的 `TestApp` 测试套件、对着 `testing` feature 里的 `FileTestBroker` 来测。
-它在内存里保留一份带位置的日志，而这正是流文件的处理器所依赖的那一条传输性质。
+你自己的处理器，用框架的 `TestApp` 测试套件、对着你所运行传输的那个替身来测。`testing` feature
+为每种传输各提供一个：流文件用 `FileTestBroker`，管道用 `StdioTestBroker`。
 
+`FileTestBroker` 在内存里保留一份带位置的日志，而这正是流文件的处理器所依赖的那一条传输性质。
 因此做定位的服务挂到它上面完全不用改动：`FileStream` 在这里可以解析，投递会报出 `FilePosition`，
 `FileContext` 和 `FileBatchContext` 在它的投递之上构建，和在文件的投递之上构建是一样的。批也一样，
 因此批量处理器看到的批，大小就是它的挂载点要的那个。
 
-挂载点也不用改。`Publish` 的两种形态，`FilePublish` 和 `StdioPublish`，都能在这个 Broker 上构造出
-发布者，因此路由文件保留它自带的策略，`.out_reply(Publish)` 在测试套件下和在生产环境里读起来
-一模一样。没有什么只在测试套件下用的策略需要替换进来。
+`StdioTestBroker` 给出的答案就是管道给出的答案。它不为任何一份重试副本提供地址，因此没有点名
+目的地的注册在这里起不来，和对着真实管道时一模一样；它也不提供定位。它的发布侧记录服务写到标准
+输出的东西，键就是那一行会带的流键，因此测试用 `published::<T>("jobs.retry")` 把副本读回来。
+
+挂载点也不用改。`Publish` - 文件替身上是 `FilePublish`，stdio 替身上是 `StdioPublish` - 在自己
+那种传输的替身上构造出发布者，因此路由文件保留它自带的策略，`.out_reply(Publish)` 在测试套件下和
+在生产环境里读起来一模一样。没有什么只在测试套件下用的策略需要替换进来。
 
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/seek_context.rs:handler"
