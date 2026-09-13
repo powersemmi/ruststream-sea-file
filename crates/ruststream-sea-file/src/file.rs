@@ -387,7 +387,7 @@ impl DefaultPublish for ConnectedFileBroker {
 }
 
 /// The policy pairs against the in-process transport too, so a routes file that names it -
-/// `.out(Reply, Publish)`, the way production writes it - mounts on
+/// `.out_reply(Publish)`, the way production writes it - mounts on
 /// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
 ///
 /// A policy is pure declaration and this one carries no settings, so nothing is dropped in the

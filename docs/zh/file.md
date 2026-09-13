@@ -151,8 +151,8 @@ FileBroker::new(path)      只有配置，同步，没有 I/O
 Broker 上实例化出发布者。
 
 每个策略都是自己 Broker 的默认值，因此挂载点没有指定别的策略时，响应就走它。要在挂载点指定另一个
-策略，用 `.out`，先写标记再写策略：`b.include(handle).out(Reply, Publish);` 为响应指定策略，注入的
-`Out` 槽位也用同样的方式、在自己的标记下接受一个策略。
+策略：`b.include(handle).out_reply(Publish);` 为响应指定策略，注入的 `Out` 槽位也用同样的方式、在
+自己的标记下接受一个策略：`.out(Ledger, Publish)`。
 
 这个传输上的目的地，是 Broker 内部的一个流键。文件本身只在 `FileBroker::new(path)` 里写一次，
 stdio 那种形态则写向标准输出。因此你可以用 `#[outgoing(name = "results")]` 把键声明在响应类型上，
@@ -211,19 +211,22 @@ stdio 那种形态则写向标准输出。因此你可以用 `#[outgoing(name = 
 ### 延迟之后重试 { #retrying-after-a-delay }
 
 `HandlerOutcome::retry_after(delay)` 在这里没有传输可以依靠，因此框架自己的兜底就是全部机制：它
-丢弃这次投递，等延迟走完，再发布一份消息副本，重试计数消息头加一。它用哪个发布者，由你在组合根里
-接线：
+丢弃这次投递，等延迟走完，再发布一份消息副本，重试计数消息头加一。副本从哪个发布者出去，由这条
+注册点名：
 
 ```rust
---8<-- "crates/ruststream-sea-file/tests/redelivery.rs:retry_via"
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:out_retry"
 ```
 
 副本发往该订阅读取的那个流键，因此流文件上的实时订阅能把消息拿回来。重放拿不回来：它读的是文件
 当时已有的那一段，读完就结束，之后写入的副本永远到不了它那里。因此在 `FileStream::replay()` 订阅
-之上接了 `retry_via` 的作用域起不来，并报出是哪条订阅，而不是在运行期把每条延迟消息都丢掉。stdio
+之上占住 `out_retry` 的注册起不来，并报出是哪条订阅，而不是在运行期把每条延迟消息都丢掉。stdio
 因为同样的原因也起不来：你发布出去的东西流向管道里的下一个进程，而不是回到你自己的标准输入。
 
-没有 `retry_via` 时，`retry_after` 退化成立即重新入队，而在这两种传输上这意味着延迟丢失。
+这个位置就是一个槽位，所以 `out_retry` 后面接的是槽位的那几步。`.transform(..)` 作用在副本上，
+可以给它盖个戳；`.codec(..)` 点名这个位置的编解码器，并不编码任何东西：副本带的是投递本身的字节。
+
+没有 `out_retry` 时，`retry_after` 退化成立即重新入队，而在这两种传输上这意味着延迟丢失。
 
 ## stdio 管道 { #stdio-pipelines }
 
@@ -256,7 +259,7 @@ echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
 因此批量处理器看到的批，大小就是它的挂载点要的那个。
 
 挂载点也不用改。`Publish` 的两种形态，`FilePublish` 和 `StdioPublish`，都能在这个 Broker 上构造出
-发布者，因此路由文件保留它自带的策略，`.out(Reply, Publish)` 在测试套件下和在生产环境里读起来
+发布者，因此路由文件保留它自带的策略，`.out_reply(Publish)` 在测试套件下和在生产环境里读起来
 一模一样。没有什么只在测试套件下用的策略需要替换进来。
 
 ```rust

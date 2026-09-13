@@ -166,9 +166,9 @@ specify the policy when you register the handler, and at startup it instantiates
 the connected broker.
 
 Each policy is its broker's default, so a reply goes through it when the mount site names no other.
-You name another policy at the mount site with `.out`, marker first and policy second:
-`b.include(handle).out(Reply, Publish);` names the policy for the reply, and an injected `Out` slot
-takes one the same way under its own marker.
+You name another policy at the mount site: `b.include(handle).out_reply(Publish);` names the policy
+for the reply, and an injected `Out` slot takes one the same way under its own marker,
+`.out(Ledger, Publish)`.
 
 A destination on this transport is a stream key inside the broker. The file itself is named once,
 in `FileBroker::new(path)`, and the stdio form writes to standard output. You can therefore declare
@@ -231,21 +231,25 @@ next run with `start_at(..)`, or replay the file from the beginning. `ack` and `
 
 `HandlerOutcome::retry_after(delay)` has no transport to lean on here, so the framework's own
 fallback is the whole mechanism: it drops the delivery and, once the delay is over, publishes a
-copy of the message with an incremented retry-count header. You wire the publisher it uses in the
-composition root:
+copy of the message with an incremented retry-count header. The registration names the publisher
+that copy leaves through:
 
 ```rust
---8<-- "crates/ruststream-sea-file/tests/redelivery.rs:retry_via"
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:out_retry"
 ```
 
 The copy goes to the stream key the subscription reads, so a live subscription on a stream file
 gets its message back. A replay does not: it reads the region the file already held and completes,
-and a copy written afterwards would never reach it. So a scope that wires `retry_via` over a
+and a copy written afterwards would never reach it. So a registration that binds `out_retry` over a
 `FileStream::replay()` subscription refuses to start, naming the subscription, rather than dropping
 every delayed message at runtime. Stdio refuses for the same reason: what you publish goes to the
 next process in the pipeline, not back into your own standard input.
 
-Without `retry_via`, `retry_after` degrades to an immediate requeue, which on these transports
+The position is a slot, so the steps after `out_retry` are the slot steps. `.transform(..)` runs on
+the copy and can stamp it, `.codec(..)` names the position's codec and encodes nothing: the copy
+carries the delivery's own bytes.
+
+Without `out_retry`, `retry_after` degrades to an immediate requeue, which on these transports
 means the delay is lost.
 
 ## Stdio pipelines
@@ -285,7 +289,7 @@ batches of the size its mount site asked for.
 
 The mount site needs no edit either. `Publish` - both forms of it, `FilePublish` and
 `StdioPublish` - pairs against this broker, so a routes file keeps the policy it ships with and
-`.out(Reply, Publish)` reads the same under the harness as it does in production. There is no
+`.out_reply(Publish)` reads the same under the harness as it does in production. There is no
 harness-only policy to swap in.
 
 ```rust

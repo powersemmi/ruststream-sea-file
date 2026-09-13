@@ -385,7 +385,7 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
 }
 
 /// The policy pairs against the in-process transport too, so a stdio routes file that names it -
-/// `.out(Reply, Publish)`, the way production writes it - mounts on
+/// `.out_reply(Publish)`, the way production writes it - mounts on
 /// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
 ///
 /// The stand-in is this crate's only in-process broker and only its name is file-specific, so a
