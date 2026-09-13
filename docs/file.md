@@ -27,7 +27,7 @@ Which of the framework's optional capability traits this crate implements, and w
 | `RequestReply` | No | Neither transport has a reply address. |
 | `TransactionalPublisher` | No | A stream file has no atomic multi-write unit: each publish appends and flushes on its own. |
 | `OwnedTransactions` | No | Same reason: there is no transaction to own. |
-| `DescribeServer` | Yes | The generated AsyncAPI document names an in-process server: `file` with the path, or `stdio`. |
+| `DescribeServer` | Yes | The generated AsyncAPI document names an in-process server: `file` with the path, or `stdio`. With the `asyncapi` feature a `FileStream` channel also reports its stream key. See [The generated document](#the-generated-document). |
 
 `ack` and `nack` return `AckError::Unsupported` on both transports: the client records no consumer
 positions, and its resumable mode is unimplemented upstream. See
@@ -231,26 +231,45 @@ next run with `start_at(..)`, or replay the file from the beginning. `ack` and `
 
 `HandlerOutcome::retry_after(delay)` has no transport to lean on here, so the framework's own
 fallback is the whole mechanism: it drops the delivery and, once the delay is over, publishes a
-copy of the message with an incremented retry-count header. The registration names the publisher
-that copy leaves through:
+copy of the message with an incremented retry-count header. On a stream file the copy needs
+nothing from you:
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:mount"
+```
+
+The subscription reports the stream key it reads, the copy is appended under that key, and the
+handler gets its message back. A replay reports the same key: the copy lands in the file, and the
+replay reads it while it is still short of the end of the retained region.
+
+Standard output is the other case. It reaches the next process in the pipeline and never your own
+standard input, so nothing on stdio addresses the subscription and the mount site names where a
+copy goes, with `.out_retry(Publish).to("jobs.retry")` or a transform that names one per delivery.
+The [pipeline example](#stdio-pipelines) below writes the step. A stdio registration that names
+neither refuses to start, which is the right answer for a pipeline stage: a delayed message that
+went nowhere is worse than a service that does not come up.
+
+A handler that keeps answering `retry_after` circulates its message until an operator intervenes.
+Two steps right after `include` end that:
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:declaration"
+```
+
+`max_attempts(n)` is how many deliveries one message gets, counting the first. `dead_letter(key)`
+is the stream key a spent delivery is written to instead of coming back; a cap without one rejects
+it. Neither transport counts its own redeliveries, so the count is the framework's retry-count
+header, which every copy carries.
+
+`out_retry(policy)` replaces the publisher the copies leave through, once per registration:
 
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/redelivery.rs:out_retry"
 ```
 
-The copy goes to the stream key the subscription reads, so a live subscription on a stream file
-gets its message back. A replay does not: it reads the region the file already held and completes,
-and a copy written afterwards would never reach it. So a registration that binds `out_retry` over a
-`FileStream::replay()` subscription refuses to start, naming the subscription, rather than dropping
-every delayed message at runtime. Stdio refuses for the same reason: what you publish goes to the
-next process in the pipeline, not back into your own standard input.
-
 The position is a slot, so the steps after `out_retry` are the slot steps. `.transform(..)` runs on
 the copy and can stamp it, `.codec(..)` names the position's codec and encodes nothing: the copy
 carries the delivery's own bytes.
-
-Without `out_retry`, `retry_after` degrades to an immediate requeue, which on these transports
-means the delay is lost.
 
 ## Stdio pipelines
 
@@ -272,6 +291,45 @@ echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
 
 `StdioBroker::new().loopback()` sends this process's standard output back into its own standard
 input, so a stdio service runs under test in one process with no external commands.
+
+## The generated document
+
+The framework builds an AsyncAPI document from the handlers you mounted, and this crate fills in
+what it knows about the two transports. The `asyncapi` feature turns that on:
+
+```toml
+ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
+```
+
+Each broker is one server. The file broker reports the path of the stream file, the stdio broker
+its protocol name, and neither reports a host: there is nothing to connect to over a network.
+
+```json
+"servers": {
+  "file": { "protocol": "file", "description": "/var/lib/ruststream/orders.ss" },
+  "pipe": { "protocol": "stdio" }
+}
+```
+
+A subscription through `FileStream` describes its channel with the stream key it reads. The
+specification lists no binding for a file transport and its protocol keys are a closed list, so
+the description travels in an extension of this crate's own:
+
+```json
+"channels": {
+  "orders": {
+    "address": "orders",
+    "bindings": { "x-ruststream-file": { "streamKey": "orders" } }
+  }
+}
+```
+
+A subscription opened by a bare stream key carries no descriptor and describes nothing, which is
+every stdio subscription and a file subscription mounted without `FileStream`. The path is not
+repeated on the channel: the server is where a reader looks for the file.
+
+`max_attempts` and `dead_letter` reach the document as the framework's own extension on the receive
+operation, and the dead-letter stream key becomes a channel the service publishes to.
 
 ## Testing
 

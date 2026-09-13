@@ -25,7 +25,7 @@ serde = { version = "1", features = ["derive"] }
 | `RequestReply` | 否 | 两种传输都没有响应地址。 |
 | `TransactionalPublisher` | 否 | 流文件没有原子的多次写入单元：每次发布各自追加并刷盘。 |
 | `OwnedTransactions` | 否 | 同样的原因：没有事务可供拥有。 |
-| `DescribeServer` | 是 | 生成的 AsyncAPI 文档写的是一个进程内服务器：带路径的 `file`，或者 `stdio`。 |
+| `DescribeServer` | 是 | 生成的 AsyncAPI 文档写的是一个进程内服务器：带路径的 `file`，或者 `stdio`。打开 `asyncapi` feature 后，`FileStream` 的 channel 还会报出自己的流键。见[生成的文档](#the-generated-document)。 |
 
 两种传输上，`ack` 和 `nack` 都返回 `AckError::Unsupported`：客户端不记录消费者位置，它的可恢复模式
 在上游还没有实现。参见[确认](#acknowledgement)。
@@ -211,22 +211,40 @@ stdio 那种形态则写向标准输出。因此你可以用 `#[outgoing(name = 
 ### 延迟之后重试 { #retrying-after-a-delay }
 
 `HandlerOutcome::retry_after(delay)` 在这里没有传输可以依靠，因此框架自己的兜底就是全部机制：它
-丢弃这次投递，等延迟走完，再发布一份消息副本，重试计数消息头加一。副本从哪个发布者出去，由这条
-注册点名：
+丢弃这次投递，等延迟走完，再发布一份消息副本，重试计数消息头加一。在流文件上，这份副本不需要你
+做任何事：
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:mount"
+```
+
+订阅报出自己读取的流键，副本就追加在这个键下，处理器于是把消息拿回来。重放报出同一个键：副本落进
+文件，只要重放还没读到已有区段的末尾，它就会读到这份副本。
+
+标准输出是另一种情况。它通向管道里的下一个进程，永远不会回到你自己的标准输入，因此 stdio 上没有
+任何东西能定位到这条订阅，副本发往哪里由挂载点点名：`.out_retry(Publish).to("jobs.retry")`，或者
+用一个为每条投递点名的变换。下面的[管道示例](#stdio-pipelines)里写着这一步。两者都没点名的 stdio
+注册起不来，对管道里的一环来说这是对的答案：一条延迟消息发往虚无，比一个起不来的服务更糟。
+
+一个一直回答 `retry_after` 的处理器会让自己的消息一直转下去，直到有人介入。`include` 后面紧跟的
+两步终结这件事：
+
+```rust
+--8<-- "crates/ruststream-sea-file/tests/redelivery.rs:declaration"
+```
+
+`max_attempts(n)` 是一条消息能得到多少次投递，第一次也算在内。`dead_letter(key)` 是用尽次数的投递
+被写入的那个流键，它不再回来；只设上限而不给这个键，这条投递会被拒绝。两种传输都不统计自己的重新
+投递，因此计数由框架的重试计数消息头承担，每一份副本都带着它。
+
+`out_retry(policy)` 替换副本出去所经的发布者，每条注册一次：
 
 ```rust
 --8<-- "crates/ruststream-sea-file/tests/redelivery.rs:out_retry"
 ```
 
-副本发往该订阅读取的那个流键，因此流文件上的实时订阅能把消息拿回来。重放拿不回来：它读的是文件
-当时已有的那一段，读完就结束，之后写入的副本永远到不了它那里。因此在 `FileStream::replay()` 订阅
-之上占住 `out_retry` 的注册起不来，并报出是哪条订阅，而不是在运行期把每条延迟消息都丢掉。stdio
-因为同样的原因也起不来：你发布出去的东西流向管道里的下一个进程，而不是回到你自己的标准输入。
-
 这个位置就是一个槽位，所以 `out_retry` 后面接的是槽位的那几步。`.transform(..)` 作用在副本上，
 可以给它盖个戳；`.codec(..)` 点名这个位置的编解码器，并不编码任何东西：副本带的是投递本身的字节。
-
-没有 `out_retry` 时，`retry_after` 退化成立即重新入队，而在这两种传输上这意味着延迟丢失。
 
 ## stdio 管道 { #stdio-pipelines }
 
@@ -246,6 +264,43 @@ echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
 
 `StdioBroker::new().loopback()` 把本进程的标准输出送回它自己的标准输入，因此 stdio 服务可以在一个
 进程里跑测试，不需要外部命令。
+
+## 生成的文档 { #the-generated-document }
+
+框架按你挂载的处理器构建 AsyncAPI 文档，这个 crate 把自己知道的两种传输信息填进去。打开它的是
+`asyncapi` feature：
+
+```toml
+ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
+```
+
+每个 Broker 就是一个 server。文件 Broker 报出流文件的路径，stdio Broker 报出自己的协议名，两者
+都不报 host：没有任何东西可以通过网络连接。
+
+```json
+"servers": {
+  "file": { "protocol": "file", "description": "/var/lib/ruststream/orders.ss" },
+  "pipe": { "protocol": "stdio" }
+}
+```
+
+通过 `FileStream` 建立的订阅，用自己读取的流键来描述它的 channel。规范里没有文件传输的 binding，
+它的协议键又是一份封闭清单，因此这份描述走在本 crate 自己的扩展里：
+
+```json
+"channels": {
+  "orders": {
+    "address": "orders",
+    "bindings": { "x-ruststream-file": { "streamKey": "orders" } }
+  }
+}
+```
+
+用裸流键打开的订阅不带描述符，也就什么都不描述 - 每一条 stdio 订阅，以及不用 `FileStream` 挂载的
+文件订阅，都是这种情况。路径不在 channel 上重复：读者要找这个文件，去看 server。
+
+`max_attempts` 和 `dead_letter` 以框架自己的扩展进入文档，挂在接收操作上；用尽次数的投递所去的那个
+流键，成为服务向其发布的一条 channel。
 
 ## 测试 { #testing }
 
