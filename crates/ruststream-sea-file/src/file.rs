@@ -201,7 +201,7 @@ impl Broker for FileBroker {
 
 impl DescribeServer for FileBroker {
     fn describe_server(&self) -> ServerSpec {
-        ServerSpec::in_process("file").with_description(self.path.clone())
+        ServerSpec::in_process("file").description(self.path.clone())
     }
 }
 

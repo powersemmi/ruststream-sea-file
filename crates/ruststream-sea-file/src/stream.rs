@@ -2,10 +2,14 @@
 
 use std::future::{Future, ready};
 
+#[cfg(feature = "asyncapi")]
+use ruststream::asyncapi::{Binding, Bindings};
 use ruststream::runtime::IntoSource;
 use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource};
 #[cfg(feature = "testing")]
 use ruststream::{Seekable, Seeker};
+#[cfg(feature = "asyncapi")]
+use serde::Serialize;
 
 #[cfg(feature = "testing")]
 use crate::FilePosition;
@@ -80,6 +84,23 @@ impl FileStream {
         RedeliveryAddress::new(self.stream.clone())
     }
 
+    /// What this subscription adds to its channel in the generated `AsyncAPI` document.
+    ///
+    /// The specification lists no binding for a file transport and its protocol keys are a closed
+    /// list, so an `x-` extension is the only lawful place for what a stream file knows. The path
+    /// of the file is the server's own description and is not repeated here.
+    #[cfg(feature = "asyncapi")]
+    fn channel_extension(&self) -> Bindings {
+        let body = FileChannel {
+            stream_key: self.stream(),
+        };
+        // A binding that fails to build is a binding the document goes without: a broker never
+        // holds up a service over a description of itself.
+        Binding::extension(FILE_EXTENSION, &body)
+            .map(|binding| Bindings::new().with(binding))
+            .unwrap_or_default()
+    }
+
     /// Rejects descriptors that cannot form a subscription, before any I/O.
     pub(crate) fn validate(&self) -> Result<(), SeaFileError> {
         if self.stream.is_empty() {
@@ -87,6 +108,18 @@ impl FileStream {
         }
         Ok(())
     }
+}
+
+/// The extension key the file transport's channel description sits under.
+#[cfg(feature = "asyncapi")]
+const FILE_EXTENSION: &str = "x-ruststream-file";
+
+/// What the document reports about a file channel: the stream key the subscription reads.
+#[cfg(feature = "asyncapi")]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileChannel<'a> {
+    stream_key: &'a str,
 }
 
 impl IntoSource for FileStream {
@@ -112,6 +145,11 @@ impl SubscriptionSource<ConnectedFileBroker> for FileStream {
         connected: &ConnectedFileBroker,
     ) -> Result<FileSubscriber, SeaFileError> {
         connected.subscribe_stream(self).await
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        self.channel_extension()
     }
 }
 
@@ -153,6 +191,11 @@ impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream 
             Seeker::seek(&seeker, FilePosition::Beginning).await?;
         }
         Ok(subscriber)
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        self.channel_extension()
     }
 }
 

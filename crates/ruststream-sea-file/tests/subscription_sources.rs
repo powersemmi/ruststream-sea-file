@@ -15,12 +15,16 @@
 
 use std::future::{Future, ready};
 
+use ruststream::schemars::JsonSchema;
 use ruststream::testing::TestApp;
 use ruststream_sea_file::file::prelude::*;
 use ruststream_sea_file::testing::FileTestBroker;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
+// The manual chain below documents its handler, which is what a service gets by default under
+// the `asyncapi` feature: the payload carries a schema into the generated document.
+#[derive(Debug, Outgoing, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[schemars(crate = "ruststream::schemars")]
 struct Order {
     id: u64,
 }

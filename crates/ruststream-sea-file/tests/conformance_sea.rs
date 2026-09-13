@@ -37,6 +37,22 @@ fn tmp_path(name: &str) -> String {
         .into_owned()
 }
 
+/// Nothing the broker or the descriptor contributes to a document may carry a password.
+///
+/// Neither transport authenticates: a stream file is opened by path and a pipe by being the
+/// process's own, so there is no credential to plant and the scan looks for a string the
+/// configuration never held. It runs anyway, as the guard it is: the document reports the path
+/// and the stream key on purpose, and a field added later that serialized the broker's
+/// configuration wholesale would be caught here rather than after it shipped.
+#[test]
+fn the_document_carries_no_credential() {
+    harness::describes_without_credentials(
+        &FileBroker::new(tmp_path("credentials")),
+        &FileStream::new("orders"),
+        "hunter2",
+    );
+}
+
 #[test]
 fn sea_test_broker_passes_conformance_suite() {
     common::rt().block_on(async {
