@@ -78,6 +78,39 @@ fn sea_test_broker_passes_lifecycle() {
     });
 }
 
+/// The address the descriptor reports, held to its promise against real stream files: a publish
+/// there must reach the subscription that reported it. This is what a `retry_after` rests on here,
+/// because neither transport settles a delivery.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_redelivery_address() {
+    common::rt().block_on(async {
+        let path = tmp_path("redelivery-address");
+        harness::redelivery_address(
+            || FileBroker::new(path.clone()),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The same promise in process, because a service's own retry tests run here: a stand-in that
+/// reported an address nothing arrived at would pass a registration the file refuses.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn sea_test_broker_passes_redelivery_address() {
+    common::rt().block_on(async {
+        harness::redelivery_address(
+            FileTestBroker::new,
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
 /// The batch contract against real stream files: the suite opens its subscription at a size
 /// smaller than the run, so a batch coming back longer than the mount site asked for fails here.
 /// Neither client batches on the wire, so what this pins is the client-side assembly.

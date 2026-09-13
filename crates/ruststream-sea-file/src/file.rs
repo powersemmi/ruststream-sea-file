@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, RedeliveryAddress, ServerSpec, Subscribe,
+    AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage,
+    PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
 };
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
@@ -286,19 +286,16 @@ impl ConnectedBroker for ConnectedFileBroker {
 
 impl Subscribe for ConnectedFileBroker {
     type Subscriber = FileSubscriber;
+    /// A stream key is both ends of the file: a publisher on this broker appends under the key
+    /// the subscription tails, so the runtime's deferred copies have an address and the mount
+    /// site has nothing to name.
+    ///
+    /// This is what makes `retry_after` work on a stream file, and nothing else does: the
+    /// transport keeps no consumer positions, so a `nack` cannot hand the message back.
+    type Copies = AddressedCopies;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         self.subscribe_stream(FileStream::new(name)).await
-    }
-
-    /// The stream key itself: a publisher on this broker appends to the file the subscription
-    /// tails, so a deferred copy under the same key is read by it.
-    ///
-    /// This is what makes `retry_after` work on a stream file, and nothing else does: the
-    /// transport keeps no consumer positions, so a `nack` cannot hand the message back. Answer
-    /// nothing here and a registration bound with `out_retry` refuses to start.
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
-        Some(RedeliveryAddress::new(name.to_owned()))
     }
 }
 

@@ -33,7 +33,10 @@ async fn work(job: &Job) -> Done {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(work);
+        // Standard output never reaches this process's own standard input, so the mount site
+        // says where a deferred copy goes: the next stage of the pipeline reads it under that
+        // stream key.
+        b.include(work).out_retry(Publish).to("jobs.retry");
     })
 }
 // --8<-- [end:pipeline]

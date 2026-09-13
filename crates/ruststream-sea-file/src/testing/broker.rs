@@ -7,8 +7,8 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{
-    Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher, RawMessage,
-    RedeliveryAddress, Subscribe,
+    AddressedCopies, Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher,
+    RawMessage, Subscribe,
 };
 
 use crate::error::SeaFileError;
@@ -139,15 +139,18 @@ impl ConnectedFileTestBroker {
 
 impl Subscribe for ConnectedFileTestBroker {
     type Subscriber = FileTestSubscriber;
+    /// The answer a stream file gives, because this is the file transport's stand-in: a service
+    /// that starts against a file starts under the harness, with the same copies going to the
+    /// same stream key.
+    ///
+    /// A stdio service runs here too, and stdio names [`NamedCopies`](ruststream::NamedCopies):
+    /// a mount site that leaves the retry destination unnamed is refused against a pipe and
+    /// accepted here. That half of a stdio registration is checked against the real transport in
+    /// this repository's own suite rather than under the harness.
+    type Copies = AddressedCopies;
 
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         ready(self.open(name))
-    }
-
-    /// The stream key, the answer a stream file gives: a service whose mount site binds the
-    /// deferred-retry position against a file must be able to start under the harness too.
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
-        Some(RedeliveryAddress::new(name.to_owned()))
     }
 }
 

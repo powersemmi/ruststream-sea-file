@@ -1,13 +1,12 @@
-//! Where a delayed retry goes on each transport, and what a publish through a slot carries with
-//! it.
+//! Where a delayed retry goes on each transport, what a registration declares about its retries,
+//! and what a publish through a slot carries with it.
 //!
 //! Neither transport settles a delivery: `ack` and `nack` report `AckError::Unsupported`, so a
 //! handler asking for a pause before another attempt cannot be served by the transport. The
-//! runtime's own fallback is the whole retry story here, and it works only if the subscription
-//! says where a copy reaches it again. A stream file says its stream key. Standard output says
-//! nothing, because the process downstream of the pipe is not the one that sent the message;
-//! that half is asserted in `integration_sea.rs`, which owns the one stdio transport a test
-//! binary may attach.
+//! runtime's own fallback is the whole retry story here, and it rests on where a copy reaches the
+//! subscription again. A stream file says its stream key and needs nothing from the mount site.
+//! Standard output says nothing, because the process downstream of the pipe is not the one that
+//! sent the message, so a stdio registration names a destination itself.
 
 #![cfg(feature = "testing")]
 
@@ -15,11 +14,15 @@ use std::time::Duration;
 
 // The derive and the value a publish transform mutates share the name in different namespaces:
 // the derive is the macro `Outgoing`, the value is the type `ruststream::runtime::Outgoing`.
-use ruststream::runtime::{Outgoing, RETRY_COUNT_HEADER, SlotContext};
+use ruststream::runtime::{Outgoing, PublishContext, RETRY_COUNT_HEADER};
 use ruststream::testing::{Outcome, TestApp};
-use ruststream::{Broker, ConnectedBroker};
+use ruststream::{
+    AddressedCopies, Broker, ConnectedBroker, NamedCopies, RedeliveryAddress, RedeliveryAddressed,
+    Subscribe, nonzero,
+};
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::FileTestBroker;
+use ruststream_sea_file::testing::{ConnectedFileTestBroker, FileTestBroker};
+use ruststream_sea_file::{ConnectedFileBroker, ConnectedStdioBroker};
 use serde::{Deserialize, Serialize};
 
 /// How long the handler asks the runtime to hold the message back.
@@ -37,16 +40,20 @@ struct Audited {
     id: u64,
 }
 
+/// Reads the delivery's attempt from the framework's retry-count header, which is the only count
+/// on a transport that keeps none of its own.
+fn attempt<Cx, State>(ctx: &Context<'_, Cx, State>) -> u64 {
+    ctx.headers()
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
 /// Defers the first delivery and accepts the copy that comes back.
 #[subscriber(FileStream::new("orders"))]
 async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
-    let attempt = ctx
-        .headers()
-        .get_str(RETRY_COUNT_HEADER)
-        .and_then(|count| count.parse::<u64>().ok())
-        .unwrap_or(0);
     assert_eq!(order.id, 1);
-    if attempt == 0 {
+    if attempt(ctx) == 0 {
         HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
         HandlerOutcome::ack()
@@ -54,16 +61,17 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 }
 
 /// A stream file has no settlement, so the deferred copy is the only way a `retry_after` reaches
-/// the handler again. It arrives because the descriptor reports the stream key: a publisher on
-/// this broker appends under that key and the subscription reads the append.
+/// the handler again. It arrives with nothing named at the mount site: the descriptor reports the
+/// stream key, and the copy leaves through the publisher the runtime pairs from the broker's own
+/// default policy.
 #[tokio::test(start_paused = true)]
 async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
     let broker = FileTestBroker::new();
-    // --8<-- [start:out_retry]
+    // --8<-- [start:mount]
     let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.include(reconcile).out_retry(Publish);
+        b.include(reconcile);
     });
-    // --8<-- [end:out_retry]
+    // --8<-- [end:mount]
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.broker::<FileTestBroker>()
@@ -95,66 +103,124 @@ async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
     );
 }
 
-/// A replay reads the region the file already held and completes, so a copy written afterwards
-/// would never be read. The descriptor says so, and a registration binding the deferred-retry
-/// position over it refuses to start instead of dropping every delayed message.
-#[subscriber(FileStream::new("orders").replay())]
-async fn audit_the_finished_file(_order: &Order) -> HandlerOutcome {
+/// Never ready: every delivery asks for another attempt, which is what a cap is for.
+#[subscriber(FileStream::new("parcels"))]
+async fn never_ready(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
 
-#[tokio::test]
-async fn a_retry_over_a_replay_refuses_to_start() {
-    let app = RustStream::new(AppInfo::new("redelivery-replay", "0.1.0")).with_broker(
-        FileTestBroker::new(),
-        |b| {
-            b.include(audit_the_finished_file).out_retry(Publish);
-        },
-    );
+/// The cap counts deliveries, the first included, and the destination is where the last one goes.
+/// Neither transport counts its own redeliveries, so the count is the framework's header, which
+/// the copies carry.
+#[tokio::test(start_paused = true)]
+async fn the_cap_sends_the_last_delivery_to_the_dead_letter_stream_key() {
+    // --8<-- [start:declaration]
+    let app =
+        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+            b.include(never_ready)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("parcels.dead");
+        });
+    // --8<-- [end:declaration]
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let failed = TestApp::start(app)
+    tb.broker::<FileTestBroker>()
+        .message(&Order { id: 7 })
+        .to("parcels")
+        .publish()
         .await
-        .expect_err("a replay cannot address its retries and must not start");
-    let message = failed.to_string();
-    assert!(message.contains("orders"), "{message}");
-    assert!(message.contains("out_retry"), "{message}");
+        .expect("publish");
+
+    // Two copies come back; the third delivery is the last the cap allows.
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.broker::<FileTestBroker>()
+        .subscriber("parcels")
+        .assert_called(3);
+    tb.broker::<FileTestBroker>()
+        .published::<Order>("parcels.dead")
+        .assert_called_once()
+        .with(&Order { id: 7 });
+
+    // Nothing is left in flight: the delivery at the cap was carried away, not deferred.
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.broker::<FileTestBroker>()
+        .subscriber("parcels")
+        .assert_called(3);
 }
 
-/// Stamps the deferred copy with the slot it left through. The retry position is an ordinary `Out`
-/// slot, so a transform there reads a `SlotContext` and takes the options position every publish
-/// transform takes. Neither transport has a per-message setting, so this one stays generic over
-/// them and mounts on any publisher.
+/// The same handler on a stream key of its own: a cap with no destination beside it ends the
+/// circulation by rejecting the spent delivery, and writes it nowhere.
+#[subscriber(FileStream::new("crates"))]
+async fn never_ready_uncollected(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::retry_after(RETRY_DELAY)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
+    let app =
+        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+            b.include(never_ready_uncollected)
+                .max_attempts(nonzero!(2u32));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<FileTestBroker>()
+        .message(&Order { id: 8 })
+        .to("crates")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<FileTestBroker>()
+        .subscriber("crates")
+        .assert_called(2);
+    // The stream key carries the injected message and the one copy that brought the second
+    // delivery, and nothing else: the spent delivery was rejected rather than carried anywhere.
+    tb.broker::<FileTestBroker>()
+        .published::<Order>("crates")
+        .assert_called(2);
+}
+
+/// Stamps the deferred copy with the subscription the delivery came from. A transform on the
+/// retry position reads the delivery being retried, the way a reply's does, and takes the options
+/// position every publish transform takes. Neither transport has a per-message setting, so this
+/// one stays generic over them and mounts on any publisher.
 struct DeferredStamp;
 
-impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for DeferredStamp {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
-            .insert("x-deferred-through", cx.slot().to_owned());
+            .insert("x-deferred-from", cx.name().to_owned());
     }
 }
 
 /// Defers the first delivery the way `reconcile` does, on a stream key of its own.
 #[subscriber(FileStream::new("invoices"))]
 async fn settle(order: &Order, ctx: &mut Context) -> HandlerOutcome {
-    let attempt = ctx
-        .headers()
-        .get_str(RETRY_COUNT_HEADER)
-        .and_then(|count| count.parse::<u64>().ok())
-        .unwrap_or(0);
     assert_eq!(order.id, 2);
-    if attempt == 0 {
+    if attempt(ctx) == 0 {
         HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
         HandlerOutcome::ack()
     }
 }
 
-/// The deferred copy travels the retry slot's pipeline, so what a transform puts on it is on the
-/// message the subscription reads back.
+/// The deferred copy travels the retry position's pipeline, so what a transform puts on it is on
+/// the message the subscription reads back. Naming the publisher is what `out_retry` is for once
+/// the descriptor already addresses the copies.
 #[tokio::test(start_paused = true)]
 async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
+    // --8<-- [start:out_retry]
     let app = RustStream::new(AppInfo::new("redelivery-stamp", "0.1.0")).with_broker(
         FileTestBroker::new(),
         |b| {
@@ -163,6 +229,7 @@ async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
                 .transform(DeferredStamp);
         },
     );
+    // --8<-- [end:out_retry]
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.broker::<FileTestBroker>()
@@ -178,37 +245,50 @@ async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
         .assert_called(2);
     tb.broker::<FileTestBroker>()
         .published::<Order>("invoices")
-        .with_header("x-deferred-through", "Retry");
+        .with_header("x-deferred-from", "invoices");
 }
 
-/// A publish written by the file broker reaches a subscription opened under the same stream key.
-/// This is the promise the descriptor's answer makes, read directly off the transport.
+/// A publish written by the broker reaches a subscription opened under the same stream key. This
+/// is the promise the descriptor's answer makes, read directly off the transport, and it holds in
+/// both reading modes: a replay reads the same key, and a copy appended while it is still short
+/// of the end of the retained region is one it reads.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_reported_address_is_the_stream_key_on_both_forms() {
-    use ruststream::{RedeliveryAddress, Subscribe, SubscriptionSource};
-
+async fn the_reported_address_is_the_stream_key_in_both_reading_modes() {
     let connected = FileTestBroker::new()
         .connect()
         .await
         .expect("transport connects");
     assert_eq!(
-        Subscribe::redelivery_address(&connected, "orders"),
-        Some(RedeliveryAddress::new("orders")),
-    );
-    assert_eq!(
-        SubscriptionSource::redelivery_address(&FileStream::new("orders"), &connected)
+        RedeliveryAddressed::redelivery_address(&FileStream::new("orders"), &connected)
             .await
             .expect("reporting an address must not fail"),
-        Some(RedeliveryAddress::new("orders")),
+        RedeliveryAddress::new("orders"),
     );
     assert_eq!(
-        SubscriptionSource::redelivery_address(&FileStream::new("orders").replay(), &connected)
+        RedeliveryAddressed::redelivery_address(&FileStream::new("orders").replay(), &connected)
             .await
             .expect("reporting an address must not fail"),
-        None,
-        "a replay completes at the end of the retained region and reaches no later write",
+        RedeliveryAddress::new("orders"),
     );
     connected.shutdown().await.expect("shutdown succeeds");
+}
+
+/// The copy path each transport declares, held to by the compiler rather than by a comment.
+///
+/// A stream key is both ends of the file, so a registration on one needs nothing from its mount
+/// site. Standard output reaches the next process in the pipeline and never this one's standard
+/// input, so a stdio registration names the destination itself, and the runtime refuses to start
+/// one that names none. Naming the types here attaches no transport: stdio's own round trip is
+/// covered over a real pipe in `integration_sea.rs`, which owns the one stdio transport a test
+/// binary may attach.
+#[test]
+fn each_transport_declares_who_addresses_its_retry_copies() {
+    const fn addresses_its_copies<C: Subscribe<Copies = AddressedCopies>>() {}
+    const fn names_its_destination<C: Subscribe<Copies = NamedCopies>>() {}
+
+    addresses_its_copies::<ConnectedFileBroker>();
+    addresses_its_copies::<ConnectedFileTestBroker>();
+    names_its_destination::<ConnectedStdioBroker>();
 }
 
 #[derive(OutSlot)]

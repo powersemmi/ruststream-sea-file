@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures::Stream;
 use ruststream::{
     BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, ServerSpec, Subscribe,
+    NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
     Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
@@ -168,6 +168,18 @@ impl ConnectedBroker for ConnectedStdioBroker {
 
 impl Subscribe for ConnectedStdioBroker {
     type Subscriber = StdioSubscriber;
+    /// The mount site names where a deferred copy goes, because nothing on this transport
+    /// addresses the subscription: a publish writes to standard output and a subscription reads
+    /// standard input, so the process downstream of the pipe is not the one that sent the
+    /// message.
+    ///
+    /// A registration over stdio therefore names a destination - `.out_retry(Publish).to(name)`,
+    /// or a transform that names one per delivery - and one that names neither refuses to start,
+    /// which is the right answer for a pipeline stage: a delayed message that went nowhere is
+    /// worse than a service that does not come up. ([`loopback`](StdioBroker::loopback) does
+    /// route a publish back to this process, but it is a test aid, and an address that only held
+    /// under it would break in the shape a service ships.)
+    type Copies = NamedCopies;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         self.core.ensure_open()?;
@@ -215,19 +227,6 @@ impl Subscribe for ConnectedStdioBroker {
             stream: name.to_owned(),
             inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(BATCH_MAX_WAIT),
         })
-    }
-
-    /// Nothing: a publish writes to standard output and a subscription reads standard input, so
-    /// no address on this transport reaches the subscription again.
-    ///
-    /// A registration bound with `out_retry` over stdio therefore refuses to start, which is the
-    /// right answer for a pipeline stage: the next process downstream is not the one that sent the
-    /// message. Hold a delayed message inside the handler, or put the delay in the tool that
-    /// feeds the pipe. ([`loopback`](StdioBroker::loopback) does route a publish back to this
-    /// process, but it is a test aid, and an address that only holds under it would break in the
-    /// shape a service ships.)
-    fn redelivery_address(&self, _name: &str) -> Option<RedeliveryAddress> {
-        None
     }
 }
 
@@ -460,7 +459,7 @@ pub mod prelude {
     //! fn app() -> impl App {
     //!     RustStream::new(AppInfo::new("pipeline", "0.1.0"))
     //!         .with_broker(StdioBroker::new(), |b| {
-    //!             b.include(work);
+    //!             b.include(work).out_retry(Publish).to("jobs.retry");
     //!         })
     //! }
     //! ```

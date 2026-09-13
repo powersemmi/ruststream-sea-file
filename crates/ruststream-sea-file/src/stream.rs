@@ -3,7 +3,7 @@
 use std::future::{Future, ready};
 
 use ruststream::runtime::IntoSource;
-use ruststream::{RedeliveryAddress, SubscriptionSource};
+use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource};
 #[cfg(feature = "testing")]
 use ruststream::{Seekable, Seeker};
 
@@ -69,14 +69,15 @@ impl FileStream {
         self.replay
     }
 
-    /// Where a deferred copy of a delayed message reaches this subscription again.
+    /// Where a deferred copy of a delayed message reaches this subscription again: the stream
+    /// key, on both reading modes.
     ///
-    /// A live subscription tails the file, so the stream key is the answer: the publisher appends
-    /// under that key and the subscription reads the append. A replay is not tailing anything -
-    /// it reads the region the file already held and completes - so a copy written afterwards
-    /// would never be read, and the descriptor says so rather than promising a delivery.
-    fn redelivery_address_value(&self) -> Option<RedeliveryAddress> {
-        (!self.replay).then(|| RedeliveryAddress::new(self.stream.clone()))
+    /// A publisher on this broker appends under that key and the subscription reads the append.
+    /// A replay reads the region the file already held and completes, so the copy reaches it
+    /// while it is still short of that point and is left unread once it has passed it; the
+    /// address is the same either way, and the delay is what decides.
+    fn redelivery_address_value(&self) -> RedeliveryAddress {
+        RedeliveryAddress::new(self.stream.clone())
     }
 
     /// Rejects descriptors that cannot form a subscription, before any I/O.
@@ -98,6 +99,9 @@ impl IntoSource for FileStream {
 
 impl SubscriptionSource<ConnectedFileBroker> for FileStream {
     type Subscriber = FileSubscriber;
+    // One stream key is both ends of the file: a publisher appends under it and this
+    // subscription reads the append, so the runtime's deferred copies have an address.
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.stream()
@@ -109,11 +113,13 @@ impl SubscriptionSource<ConnectedFileBroker> for FileStream {
     ) -> Result<FileSubscriber, SeaFileError> {
         connected.subscribe_stream(self).await
     }
+}
 
+impl RedeliveryAddressed<ConnectedFileBroker> for FileStream {
     fn redelivery_address(
         &self,
         _connected: &ConnectedFileBroker,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, SeaFileError>> {
+    ) -> impl Future<Output = Result<RedeliveryAddress, SeaFileError>> {
         // The descriptor already knows the answer; nothing is asked of the connection.
         ready(Ok(self.redelivery_address_value()))
     }
@@ -128,6 +134,9 @@ impl SubscriptionSource<ConnectedFileBroker> for FileStream {
 #[cfg(feature = "testing")]
 impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream {
     type Subscriber = crate::testing::FileTestSubscriber;
+    // The stand-in's answer is the file's, so a registration that starts against one starts
+    // against the other.
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.stream()
@@ -145,11 +154,14 @@ impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream 
         }
         Ok(subscriber)
     }
+}
 
+#[cfg(feature = "testing")]
+impl RedeliveryAddressed<crate::testing::ConnectedFileTestBroker> for FileStream {
     fn redelivery_address(
         &self,
         _connected: &crate::testing::ConnectedFileTestBroker,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, SeaFileError>> {
+    ) -> impl Future<Output = Result<RedeliveryAddress, SeaFileError>> {
         ready(Ok(self.redelivery_address_value()))
     }
 }
