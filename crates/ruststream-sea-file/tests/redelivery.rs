@@ -13,7 +13,9 @@
 
 use std::time::Duration;
 
-use ruststream::runtime::RETRY_COUNT_HEADER;
+// The derive and the value a publish transform mutates share the name in different namespaces:
+// the derive is the macro `Outgoing`, the value is the type `ruststream::runtime::Outgoing`.
+use ruststream::runtime::{Outgoing, RETRY_COUNT_HEADER, SlotContext};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{Broker, ConnectedBroker};
 use ruststream_sea_file::file::prelude::*;
@@ -116,6 +118,67 @@ async fn a_retry_over_a_replay_refuses_to_start() {
     let message = failed.to_string();
     assert!(message.contains("orders"), "{message}");
     assert!(message.contains("out_retry"), "{message}");
+}
+
+/// Stamps the deferred copy with the slot it left through. The retry position is an ordinary `Out`
+/// slot, so a transform there reads a `SlotContext` and takes the options position every publish
+/// transform takes. Neither transport has a per-message setting, so this one stays generic over
+/// them and mounts on any publisher.
+struct DeferredStamp;
+
+impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+        out.headers_mut()
+            .insert("x-deferred-through", cx.slot().to_owned());
+    }
+}
+
+/// Defers the first delivery the way `reconcile` does, on a stream key of its own.
+#[subscriber(FileStream::new("invoices"))]
+async fn settle(order: &Order, ctx: &mut Context) -> HandlerOutcome {
+    let attempt = ctx
+        .headers()
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    assert_eq!(order.id, 2);
+    if attempt == 0 {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// The deferred copy travels the retry slot's pipeline, so what a transform puts on it is on the
+/// message the subscription reads back.
+#[tokio::test(start_paused = true)]
+async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
+    let app = RustStream::new(AppInfo::new("redelivery-stamp", "0.1.0")).with_broker(
+        FileTestBroker::new(),
+        |b| {
+            b.include(settle)
+                .out_retry(Publish)
+                .transform(DeferredStamp);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<FileTestBroker>()
+        .message(&Order { id: 2 })
+        .to("invoices")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<FileTestBroker>()
+        .subscriber("invoices")
+        .assert_called(2);
+    tb.broker::<FileTestBroker>()
+        .published::<Order>("invoices")
+        .with_header("x-deferred-through", "Retry");
 }
 
 /// A publish written by the file broker reaches a subscription opened under the same stream key.
