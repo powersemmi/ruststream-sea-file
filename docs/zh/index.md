@@ -21,15 +21,24 @@ serde = { version = "1", features = ["derive"] }
 
 ## 接下来读什么 { #where-to-go-next }
 
+订阅就是一个流键：在流文件上写 `FileStream::new("orders")`，在标准输入上直接写名字。流文件会重放
+它记录下来的内容，也能按需重新定位；批在客户端一侧组装；延迟的重新投递会以订阅所读的那个流键回到
+流文件。两种传输都不确认投递，所以服务从自己保存的位置继续读。这个 crate 自己的参考文档在
+docs.rs 上：
+
 <div class="grid cards" markdown>
 
-- :material-file-document-outline: **[文件与 stdio 指南](file.md)** - 流文件、重放、定位、消息头、管道和测试。
-- :material-book-open-variant: **[RustStream 文档](https://powersemmi.github.io/ruststream/)** - 框架本身：订阅者、路由、编解码器、中间件和 CLI。
+- :material-file-document-outline: **[流文件](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html)** - 描述符、重放、位置与定位、批、发布、延迟的重新投递。
+- :material-console: **[管道](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html)** - 行格式、延迟副本去往何处、把输出接回输入。
+- :material-test-tube: **[测试](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html)** - 每种传输的进程内替身。
+- :material-book-open-variant: **[RustStream 文档](https://powersemmi.github.io/ruststream/)** - 框架本身：安装、教程和 Broker 列表。
 - :material-language-rust: **[API 参考](https://docs.rs/ruststream-sea-file)** - 该 crate 在 docs.rs 上的 rustdoc。
 
 </div>
 
 ## 本站点与 RustStream 文档的关系 { #how-this-site-relates-to-the-ruststream-docs }
 
-本站点只介绍文件与 stdio 传输。适用于每个 Broker 的框架概念（编写订阅者、发布、路由、编解码器、
-中间件、可观测性和 CLI）在 [RustStream 文档](https://powersemmi.github.io/ruststream/)里。
+本页是文件与 stdio 传输的入口，其余内容都在 [crate 的 rustdoc](https://docs.rs/ruststream-sea-file)
+里。适用于每个 Broker 的框架概念（编写订阅者、发布、路由、编解码器、中间件、可观测性和 CLI）在
+[RustStream 的 rustdoc](https://docs.rs/ruststream/latest/ruststream/runtime/index.html) 里，框架
+自己的入口页面在 [RustStream 站点](https://powersemmi.github.io/ruststream/) 上。

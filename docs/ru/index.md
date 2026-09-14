@@ -23,16 +23,29 @@ serde = { version = "1", features = ["derive"] }
 
 ## Куда идти дальше {#where-to-go-next}
 
+Подписка - это ключ потока: `FileStream::new("orders")` на файле потока и просто имя на
+стандартном вводе. Файл потока воспроизводит записанное и перематывается по требованию, пакеты
+собираются на стороне клиента, а отложенная повторная доставка приходит в файл потока под тем
+ключом потока, который читает подписка. Ни один транспорт не подтверждает доставку, поэтому
+сервис продолжает чтение с позиции, которую сохранил сам. Собственный справочник крейта - на
+docs.rs:
+
 <div class="grid cards" markdown>
 
-- :material-file-document-outline: **[Руководство по файлам и stdio](file.md)** - файлы потоков, воспроизведение, перемотка, заголовки, конвейеры и тестирование.
-- :material-book-open-variant: **[Документация RustStream](https://powersemmi.github.io/ruststream/)** - сам фреймворк: подписчики, маршрутизация, кодеки, middleware, CLI.
+- :material-file-document-outline: **[Файл потока](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html)** - дескрипторы, воспроизведение, позиции и перемотка, пакеты, публикация, отложенная повторная доставка.
+- :material-console: **[Конвейер](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html)** - формат строки, куда уходит отложенная копия, замыкание вывода на ввод.
+- :material-test-tube: **[Тестирование](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html)** - внутрипроцессный стенд для каждого транспорта.
+- :material-book-open-variant: **[Документация RustStream](https://powersemmi.github.io/ruststream/)** - сам фреймворк: установка, учебник, список брокеров.
 - :material-language-rust: **[Справочник API](https://docs.rs/ruststream-sea-file)** - rustdoc крейта на docs.rs.
 
 </div>
 
 ## Как этот сайт связан с документацией RustStream {#how-this-site-relates-to-the-ruststream-docs}
 
-Этот сайт документирует только файловый и stdio-транспорт. Концепции фреймворка, общие для любого
+Эта страница - вход в файловый и stdio-транспорт, а всё остальное о них лежит в
+[rustdoc крейта](https://docs.rs/ruststream-sea-file). Концепции фреймворка, общие для любого
 брокера (написание подписчиков, публикация, маршрутизация, кодеки, middleware, наблюдаемость,
-CLI), описаны в [документации RustStream](https://powersemmi.github.io/ruststream/).
+CLI), описаны в
+[rustdoc RustStream](https://docs.rs/ruststream/latest/ruststream/runtime/index.html), а входные
+страницы самого фреймворка - на
+[сайте RustStream](https://powersemmi.github.io/ruststream/).
