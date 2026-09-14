@@ -1,7 +1,189 @@
-//! The file transport: [`FileBroker`] -> [`ConnectedFileBroker`], a persistent, replayable
-//! stream on disk.
+//! The stream file: a persistent, replayable log on disk that needs no server.
 //!
-//! A service on stream files globs this form's [`prelude`] and names its policy [`Publish`].
+//! [`FileBroker`] records the path of a `.ss` file and opens it on [`Broker::connect`], which
+//! yields [`ConnectedFileBroker`]; [`ConnectedBroker::shutdown`] flushes and closes it. A
+//! service on stream files globs this form's [`prelude`] and names its policy [`Publish`].
+//!
+//! # Subscribing
+//!
+//! [`FileStream::new(key)`](FileStream) is the subscription: one stream key inside the file. It
+//! sits inline in the `#[subscriber(..)]` attribute and follows the live tail. A bare stream key
+//! (`#[subscriber("orders")]`) opens the same subscription through the framework's `Subscribe`
+//! capability and carries no descriptor, so it describes nothing in the generated document.
+//!
+//! [`replay`](FileStream::replay) reads the retained file from its start and completes the
+//! subscription at the end of the file instead of following live writes: that is how a recorded
+//! log is processed in one pass. Point it at a file whose writer called
+//! [`end_with_eos`](FileBroker::end_with_eos), so the end is written into the file rather than
+//! inferred from it. Replay is the one reading mode a position cannot express.
+//!
+//! # Positions and seeking
+//!
+//! Where a subscription begins is the `start_at(..)` clause, and where a running handler moves it
+//! is the [`SeekHandle`](crate::SeekHandle) key. Both take a [`FilePosition`](crate::FilePosition):
+//!
+//! | Position | Meaning |
+//! | --- | --- |
+//! | `FilePosition::beginning()` | The start of the retained file. |
+//! | `FilePosition::end()` | The tip of the stream. |
+//! | `FilePosition::sequence(n)` | Message number `n`, redelivered inclusively. |
+//! | `FilePosition::timestamp(millis)` | The first message strictly later than that instant, in milliseconds since the Unix epoch. |
+//!
+//! A position read off a delivery is pinned: seeking back to it redelivers exactly that message,
+//! then the rest of the log in order. Deliveries already queued from before a seek are discarded,
+//! so the next message a handler sees comes from the new position.
+//!
+//! A handler reads two keys, as parameters of the `Ctx` extractor, and names no context type:
+//! [`Position`](crate::Position) is this delivery's place in the file, and
+//! [`SeekHandle`](crate::SeekHandle) is the subscription's own seeker. Both are fields of
+//! [`FileContext`](crate::FileContext), which the runtime builds per delivery.
+//!
+//! ```
+//! use ruststream_sea_file::file::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Debug, Deserialize)]
+//! struct Job {
+//!     id: u64,
+//!     poisoned: bool,
+//! }
+//!
+//! #[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
+//! async fn work(
+//!     job: &Job,
+//!     Ctx(at): Ctx<Position>,
+//!     Ctx(seeker): Ctx<SeekHandle>,
+//! ) -> HandlerOutcome {
+//!     if job.poisoned && seeker.seek(FilePosition::end()).await.is_err() {
+//!         return HandlerOutcome::retry();
+//!     }
+//!     println!("job {} sits at {at:?}", job.id);
+//!     HandlerOutcome::ack()
+//! }
+//!
+//! #[ruststream::app]
+//! fn app() -> impl App {
+//!     RustStream::new(AppInfo::new("jobs", "0.1.0"))
+//!         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
+//!             b.include(work);
+//!         })
+//! }
+//! ```
+//!
+//! A batch body declares `ctx: &mut Context<'_, FileBatchContext>` and reads the handle with
+//! `ctx.context(SeekHandle)`. A batch spans many deliveries, so
+//! [`FileBatchContext`](crate::FileBatchContext) holds no position, and each element's own
+//! sequence is in its [`SEQUENCE_HEADER`](crate::SEQUENCE_HEADER) header. Asking a batch body for
+//! a per-delivery position does not compile.
+//!
+//! # Batches
+//!
+//! A handler taking `&[T]` consumes a batch, and `batch(n)` at the mount site says how large one
+//! may be. The client reads one entry at a time, so the batch is assembled here: it never holds
+//! more than the size the mount site named, and holds fewer whenever that is all the file had. A
+//! partial batch goes out 10 ms after its first delivery; the deadline is fixed, and what it
+//! bounds is how long a batch waits at an idle tail.
+//!
+//! ```
+//! use ruststream_sea_file::file::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Debug, Deserialize)]
+//! struct Reading {
+//!     millivolts: u32,
+//! }
+//!
+//! #[subscriber(FileStream::new("readings"))]
+//! async fn aggregate(batch: &[Reading]) -> Vec<HandlerOutcome> {
+//!     let total: u32 = batch.iter().map(|reading| reading.millivolts).sum();
+//!     println!("batch of {}, {total} mV in total", batch.len());
+//!     batch.iter().map(|_| HandlerOutcome::ack()).collect()
+//! }
+//!
+//! #[ruststream::app]
+//! fn app() -> impl App {
+//!     RustStream::new(AppInfo::new("readings", "0.1.0"))
+//!         .with_broker(FileBroker::new("/tmp/readings.ss"), |b| {
+//!             b.include(aggregate.batch(nonzero!(4)))
+//!                 .max_attempts(nonzero!(3u32))
+//!                 .dead_letter("readings.dead");
+//!         })
+//! }
+//! ```
+//!
+//! # Publishing
+//!
+//! [`Publish`] is the policy that pairs into [`FilePublisher`], which appends to the stream file
+//! and flushes on every publish, so a live subscriber - or an external reader of the same file -
+//! sees a message as soon as the call returns. It is this broker's default, so a reply goes
+//! through it when the mount site names no other; `.out_reply(Publish)` names it for a reply and
+//! `.out(Ledger, Publish)` for a slot under its own marker.
+//!
+//! A destination here is a stream key inside the broker, and the file itself is named once, in
+//! [`FileBroker::new`]. A reply type may therefore declare its key with
+//! `#[outgoing(name = "receipts")]` and the subscriber carry the bare `publish` clause; a reply
+//! type that declares none is published where the mount site says, with `publish("receipts")`.
+//!
+//! An append takes a stream key and a payload and nothing else, so this crate adds no step to the
+//! publish builder and a handler body that publishes keeps the framework prelude alone and the
+//! plain bound `Out<impl Publisher, Marker>`.
+//!
+//! ```
+//! use ruststream_sea_file::file::prelude::*;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Debug, Deserialize)]
+//! struct Order {
+//!     id: u64,
+//! }
+//!
+//! #[derive(Debug, Outgoing, Serialize)]
+//! #[outgoing(name = "receipts")]
+//! struct Receipt {
+//!     order: u64,
+//! }
+//!
+//! #[subscriber(FileStream::new("orders"), publish)]
+//! async fn confirm(order: &Order) -> Receipt {
+//!     Receipt { order: order.id }
+//! }
+//!
+//! #[ruststream::app]
+//! fn app() -> impl App {
+//!     RustStream::new(AppInfo::new("orders", "0.1.0"))
+//!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
+//!             b.include(confirm).out_reply(Publish);
+//!         })
+//! }
+//! ```
+//!
+//! # Delayed redelivery
+//!
+//! `HandlerOutcome::retry_after(delay)` has no transport to lean on here, so the framework's
+//! fallback is the whole mechanism: it drops the delivery and, once the delay is over, publishes
+//! a copy of the message with an incremented retry-count header. On a stream file the copy needs
+//! nothing from the mount site. One stream key is both ends of the file - the subscription
+//! reports the key it reads, a publisher appends under it - so the copy lands where the handler
+//! reads. A replay reports the same key: the copy reaches it while the replay is still short of
+//! the end of the retained region, and is left unread once it has passed it.
+//!
+//! A handler that keeps answering `retry_after` circulates its message until an operator
+//! intervenes. `max_attempts(n)` is how many deliveries one message gets, the first included, and
+//! `dead_letter(key)` is the stream key a spent delivery is written to instead of coming back; a
+//! cap without a destination rejects the spent delivery and writes it nowhere. Neither transport
+//! counts its own redeliveries, so the count is the framework's retry-count header, which every
+//! copy carries. `out_retry(policy)` replaces the publisher the copies leave through, once per
+//! registration; the position is a slot, so `.transform(..)` runs on the copy and `.codec(..)`
+//! encodes nothing, since the copy carries the delivery's own bytes.
+//!
+//! # The broker's settings
+//!
+//! Three optional settings, all applied when the broker connects:
+//! [`existing_only`](FileBroker::existing_only) requires the file to exist instead of creating
+//! it, [`end_with_eos`](FileBroker::end_with_eos) writes an end-of-stream mark on shutdown (a
+//! live subscription ends on that mark, and nothing else ends one), and
+//! [`beacon_interval`](FileBroker::beacon_interval) sets how far apart the file's beacons sit, in
+//! bytes. A beacon summarises the streams written before it and is what makes the file seekable.
 
 use std::fs;
 use std::future::{Future, ready};
