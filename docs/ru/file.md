@@ -157,7 +157,7 @@ FileBroker::new(path)      только конфигурация, синхрон
 
 Доставки, стоявшие в очереди до перемотки, отбрасываются, поэтому следующее сообщение обработчик
 видит уже с новой позиции. Про саму совместимость см.
-[Перемотку](https://powersemmi.github.io/ruststream/latest/guides/subscribers/#seeking) в
+[Перемотку](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#seeking) в
 документации фреймворка.
 
 ## Публикация {#publishing}
@@ -384,7 +384,7 @@ ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
 Обвязка подаёт входные данные, доводит реакцию до состояния, когда в обработке ничего не осталось,
 и записывает происходящее, поэтому тесту не нужны ни ожидания, ни собственный сборщик. Поверхность
 проверок разобрана в разделе
-[Юнит-тестирование сервиса через TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp).
+[Что может утверждать тест](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say).
 
 Насколько велико сходство - измерено, а не заявлено. Наборы проверок контракта фреймворка -
 последовательность переходов жизненного цикла, перемотка, пакетирование - выполняются и против

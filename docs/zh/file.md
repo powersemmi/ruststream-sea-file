@@ -142,7 +142,7 @@ FileBroker::new(path)      只有配置，同步，没有 I/O
 读取这两个键中任何一个的处理器，在 `StdioBroker` 上编译不过：标准输入没有可供移动的日志。
 
 定位会丢弃排在它之前的投递，因此处理器看到的下一条消息来自新位置。能力本身参见框架文档里的
-[定位](https://powersemmi.github.io/ruststream/latest/guides/subscribers/#seeking)。
+[定位](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#seeking)。
 
 ## 发布 { #publishing }
 
@@ -336,7 +336,7 @@ ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
 
 测试套件负责送入输入，把反应一直跑到没有任何消息还在处理中，并记录下发生了什么，因此测试既不用
 等待，也不用自备收集器。断言的写法参见
-[用 TestApp 对服务做单元测试](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)。
+[测试能断言什么](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)。
 
 相似到什么程度，是量出来的，不是说出来的。框架的契约套件，也就是生命周期阶梯、定位和批量，既跑在
 进程内 Broker 上，也跑在真实的流文件上。因此文件遵守、而进程内 Broker 悄悄破坏了的契约，在这个

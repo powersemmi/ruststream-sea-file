@@ -155,7 +155,7 @@ to move within.
 
 Deliveries queued from before a seek are discarded, so the next message the handler sees comes from
 the new position. See
-[Seeking](https://powersemmi.github.io/ruststream/latest/guides/subscribers/#seeking) in the
+[Seeking](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#seeking) in the
 framework docs for the capability itself.
 
 ## Publishing
@@ -372,7 +372,7 @@ production. There is no harness-only policy to swap in.
 
 The harness supplies the input, runs the reaction until nothing is left in flight, and records what
 happened, so a test needs no waiting and no collector of its own. See
-[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp)
+[What a test can say](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)
 for the assertion surface.
 
 How far the resemblance goes is measured, not claimed. The framework's contract suites - the
