@@ -11,6 +11,12 @@ readme = "../../README.md"
 keywords = ["file", "stdio", "streaming", "broker", "ruststream"]
 categories = ["asynchronous", "network-programming"]
 
+# The in-process stands and the AsyncAPI extension are off by default, so a default build on
+# docs.rs would publish a reference without the `testing` module and without what a subscription
+# contributes to the generated document - the parts the crate overview sends readers to.
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 
