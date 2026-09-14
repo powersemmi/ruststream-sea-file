@@ -150,6 +150,43 @@ async fn the_cap_sends_the_last_delivery_to_the_dead_letter_stream_key() {
         .assert_called(3);
 }
 
+/// The same handler on a stream key of its own, mounted by a bare name rather than a descriptor.
+#[subscriber("pallets")]
+async fn never_ready_by_name(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::retry_after(RETRY_DELAY)
+}
+
+/// A registration mounted by a bare stream key declares its retries to the broker directly, with
+/// no descriptor in between. A stream file addresses its own copies, so the declaration is
+/// accepted and the runtime applies it: the cap counts the same deliveries and the spent one goes
+/// to the same stream key.
+#[tokio::test(start_paused = true)]
+async fn a_bare_stream_key_carries_its_declaration_to_the_broker() {
+    let app =
+        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+            b.include(never_ready_by_name)
+                .max_attempts(nonzero!(2u32))
+                .dead_letter("pallets.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<FileTestBroker>()
+        .message(&Order { id: 11 })
+        .to("pallets")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.broker::<FileTestBroker>()
+        .subscriber("pallets")
+        .assert_called(2);
+    tb.broker::<FileTestBroker>()
+        .published::<Order>("pallets.dead")
+        .assert_called_once()
+        .with(&Order { id: 11 });
+}
+
 /// The same handler on a stream key of its own: a cap with no destination beside it ends the
 /// circulation by rejecting the spent delivery, and writes it nowhere.
 #[subscriber(FileStream::new("crates"))]
