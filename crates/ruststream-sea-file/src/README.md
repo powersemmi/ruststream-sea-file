@@ -122,6 +122,11 @@ opened by a bare stream key carries no descriptor and describes nothing, which i
 subscription and a file subscription mounted without [`FileStream`]. The path of the file is not
 repeated on the channel: the server is where a reader looks for it.
 
+A channel the service publishes to carries the same extension, filled from the destination the
+mount site resolved: a reply's stream key, an `Out` slot's, the dead-letter one. One stream key is
+both ends of the file, so a channel is described the same way whether the service reads it or
+appends to it. A stdio publish describes nothing, the way a stdio subscription does.
+
 # Operations
 
 There is no authentication, no TLS and no connection setting to tune: the transport is a local

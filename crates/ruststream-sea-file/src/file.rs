@@ -172,7 +172,9 @@
 //! `dead_letter(key)` is the stream key a spent delivery is written to instead of coming back; a
 //! cap without a destination rejects the spent delivery and writes it nowhere. Neither transport
 //! counts its own redeliveries, so the count is the framework's retry-count header, which every
-//! copy carries. `out_retry(policy)` replaces the publisher the copies leave through, once per
+//! copy carries. A registration mounted by a bare stream key declares the same cap directly to
+//! the broker, with no descriptor in between, and the runtime applies it the same way.
+//! `out_retry(policy)` replaces the publisher the copies leave through, once per
 //! registration; the position is a slot, so `.transform(..)` runs on the copy and `.codec(..)`
 //! encodes nothing, since the copy carries the delivery's own bytes.
 //!
