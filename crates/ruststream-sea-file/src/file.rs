@@ -8,6 +8,8 @@ use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(feature = "asyncapi")]
+use ruststream::asyncapi::Bindings;
 use ruststream::{
     AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage,
     PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
@@ -23,6 +25,8 @@ use tokio::sync::OnceCell;
 
 use crate::error::{SeaFileError, box_err};
 use crate::stream::FileStream;
+#[cfg(feature = "asyncapi")]
+use crate::stream::channel_extension;
 use crate::subscriber::FileSubscriber;
 use crate::wire;
 
@@ -377,6 +381,13 @@ impl PublishPolicy<ConnectedFileBroker> for FilePublish {
     ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.publisher()))
     }
+
+    /// Names the stream key a publish through this policy appends under: the destination the
+    /// mount site resolved, which on this transport is the stream key itself.
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        channel_extension(channel)
+    }
 }
 
 impl DefaultPublish for ConnectedFileBroker {
@@ -401,6 +412,13 @@ impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for FilePublish {
         connected: &crate::testing::ConnectedFileTestBroker,
     ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.publisher()))
+    }
+
+    /// The stand-in describes a destination the way the file does, so a document built in a test
+    /// is the document the service ships.
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        channel_extension(channel)
     }
 }
 

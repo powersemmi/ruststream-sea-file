@@ -1,8 +1,9 @@
 //! What the two transports put into a generated `AsyncAPI` document.
 //!
 //! The specification's protocol keys are a closed list and neither a file transport nor stdio is
-//! on it, so a binding object of their own is not available: what a file subscription knows
-//! travels in the `x-ruststream-file` extension, and stdio says nothing beyond its protocol name.
+//! on it, so a binding object of their own is not available: what the file transport knows travels
+//! in the `x-ruststream-file` extension, on the channel a subscription reads and on the channel a
+//! publish appends to, and stdio says nothing beyond its protocol name.
 //! Both servers are in-process, so neither carries a host, and neither protocol has versions a
 //! client has to match, so neither carries a protocol version.
 
@@ -24,6 +25,11 @@ struct Order {
     id: u64,
 }
 
+#[derive(Debug, Deserialize, Outgoing, Serialize)]
+struct Receipt {
+    id: u64,
+}
+
 /// Reads one stream key of the file, through the descriptor that describes its channel.
 #[subscriber(FileStream::new("orders"))]
 async fn reconcile(order: &Order) -> HandlerOutcome {
@@ -32,11 +38,10 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
 }
 
 /// Reads a stream key on standard input, through the bare-name form, which carries no descriptor
-/// and therefore describes nothing.
-#[subscriber("lines")]
-async fn tee(order: &Order) -> HandlerOutcome {
-    let _ = order.id;
-    HandlerOutcome::ack()
+/// and therefore describes nothing, and answers on a second key.
+#[subscriber("lines", publish("lines.out"))]
+async fn tee(order: &Order) -> Receipt {
+    Receipt { id: order.id }
 }
 
 fn document() -> Value {
@@ -47,7 +52,10 @@ fn document() -> Value {
                 .dead_letter("orders.dead");
         })
         .with_broker_labeled("pipe", StdioBroker::new(), |b| {
-            b.include(tee).out_retry(StdioPublish).to("lines.retry");
+            b.include(tee)
+                .out(Reply, StdioPublish)
+                .out_retry(StdioPublish)
+                .to("lines.retry");
         });
     let json = build_spec(&app)
         .to_json()
@@ -132,8 +140,7 @@ fn the_documented_excerpt_is_the_one_the_crate_emits() {
 }
 
 /// A registration's cap and dead-letter destination reach the document as the framework's own
-/// extension, and the destination becomes a channel the service publishes to. A publish policy of
-/// this crate adds nothing to it: a policy holds no settings on either transport.
+/// extension, and the destination becomes a channel the service publishes to.
 #[test]
 fn the_declaration_reaches_the_document_and_the_destination_is_a_channel() {
     let value = document();
@@ -142,11 +149,32 @@ fn the_declaration_reaches_the_document_and_the_destination_is_a_channel() {
         value["operations"]["receive_orders"]["x-ruststream-retry"],
         serde_json::json!({ "maxAttempts": 3, "deadLetter": "orders.dead" }),
     );
+    assert_eq!(value["channels"]["orders.dead"]["address"], "orders.dead");
+}
 
-    let dead_letter = &value["channels"]["orders.dead"];
-    assert_eq!(dead_letter["address"], "orders.dead");
+/// A stream key names both ends of the file, so a channel the service publishes to carries the
+/// same extension a channel it reads does. The key is the destination the mount site resolved,
+/// which is the only place a publish policy can learn it: the policy itself holds no name.
+#[test]
+fn a_file_publish_destination_describes_its_stream_key() {
+    let value = document();
+
+    assert_eq!(
+        value["channels"]["orders.dead"]["bindings"],
+        serde_json::json!({ "x-ruststream-file": { "streamKey": "orders.dead" } }),
+    );
+}
+
+/// Stdio has nothing of the protocol's to report on either end, so the key a reply is written to
+/// comes out as a channel with no bindings object at all.
+#[test]
+fn a_stdio_publish_destination_describes_nothing() {
+    let value = document();
+
+    let reply = &value["channels"]["lines.out"];
+    assert_eq!(reply["address"], "lines.out");
     assert!(
-        dead_letter.get("bindings").is_none(),
-        "a file publisher has nothing of the protocol's to report: {dead_letter}",
+        reply.get("bindings").is_none(),
+        "a stdio publisher has nothing of the protocol's to report: {reply}",
     );
 }

@@ -331,6 +331,11 @@ repeated on the channel: the server is where a reader looks for the file.
 `max_attempts` and `dead_letter` reach the document as the framework's own extension on the receive
 operation, and the dead-letter stream key becomes a channel the service publishes to.
 
+A channel the service publishes to carries the same extension, filled from the destination the
+mount site resolved: a reply's stream key, an `Out` slot's, the dead-letter one. One stream key is
+both ends of the file, so a channel is described the same way whether the service reads it or
+appends to it. A stdio publish describes nothing, the way a stdio subscription does.
+
 ## Testing
 
 Every suite in this crate runs locally, on temp files and in-process pipes, with no broker to

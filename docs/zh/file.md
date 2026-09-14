@@ -302,6 +302,10 @@ ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
 `max_attempts` 和 `dead_letter` 以框架自己的扩展进入文档，挂在接收操作上；用尽次数的投递所去的那个
 流键，成为服务向其发布的一条 channel。
 
+服务向其发布的 channel 带同一个扩展，内容取自挂载点解析出来的目的地：应答的流键、`Out` 槽的流键、
+用尽次数的投递所去的流键。一个流键就是文件的两端，所以无论服务是读这条 channel 还是往里追加，描述
+都一样。stdio 的发布什么都不描述，和 stdio 的订阅一样。
+
 ## 测试 { #testing }
 
 这个 crate 里的每一个测试集都在本地运行，用的是临时文件和进程内管道，不需要启动任何 Broker。

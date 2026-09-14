@@ -85,20 +85,9 @@ impl FileStream {
     }
 
     /// What this subscription adds to its channel in the generated `AsyncAPI` document.
-    ///
-    /// The specification lists no binding for a file transport and its protocol keys are a closed
-    /// list, so an `x-` extension is the only lawful place for what a stream file knows. The path
-    /// of the file is the server's own description and is not repeated here.
     #[cfg(feature = "asyncapi")]
     fn channel_extension(&self) -> Bindings {
-        let body = FileChannel {
-            stream_key: self.stream(),
-        };
-        // A binding that fails to build is a binding the document goes without: a broker never
-        // holds up a service over a description of itself.
-        Binding::extension(FILE_EXTENSION, &body)
-            .map(|binding| Bindings::new().with(binding))
-            .unwrap_or_default()
+        channel_extension(self.stream())
     }
 
     /// Rejects descriptors that cannot form a subscription, before any I/O.
@@ -114,12 +103,31 @@ impl FileStream {
 #[cfg(feature = "asyncapi")]
 const FILE_EXTENSION: &str = "x-ruststream-file";
 
-/// What the document reports about a file channel: the stream key the subscription reads.
+/// What the document reports about a file channel: the stream key the channel resolves to.
 #[cfg(feature = "asyncapi")]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FileChannel<'a> {
     stream_key: &'a str,
+}
+
+/// What a file channel adds to the generated `AsyncAPI` document: the stream key it resolves to.
+///
+/// The specification lists no binding for a file transport and its protocol keys are a closed
+/// list, so an `x-` extension is the only lawful place for what a stream file knows. The path of
+/// the file is the server's own description and is not repeated here.
+///
+/// Both ends of the transport answer through this: a subscription passes the key its descriptor
+/// names, a publish policy passes the destination the mount site resolved. One stream key is both
+/// ends of the file, so the two descriptions agree by construction.
+#[cfg(feature = "asyncapi")]
+pub(crate) fn channel_extension(stream_key: &str) -> Bindings {
+    let body = FileChannel { stream_key };
+    // A binding that fails to build is a binding the document goes without: a broker never holds
+    // up a service over a description of itself.
+    Binding::extension(FILE_EXTENSION, &body)
+        .map(|binding| Bindings::new().with(binding))
+        .unwrap_or_default()
 }
 
 impl IntoSource for FileStream {
