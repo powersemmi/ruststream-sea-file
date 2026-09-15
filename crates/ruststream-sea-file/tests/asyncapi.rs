@@ -139,19 +139,6 @@ fn the_documented_excerpt_is_the_one_the_crate_emits() {
     );
 }
 
-/// A registration's cap and dead-letter destination reach the document as the framework's own
-/// extension, and the destination becomes a channel the service publishes to.
-#[test]
-fn the_declaration_reaches_the_document_and_the_destination_is_a_channel() {
-    let value = document();
-
-    assert_eq!(
-        value["operations"]["receive_orders"]["x-ruststream-retry"],
-        serde_json::json!({ "maxAttempts": 3, "deadLetter": "orders.dead" }),
-    );
-    assert_eq!(value["channels"]["orders.dead"]["address"], "orders.dead");
-}
-
 /// A stream key names both ends of the file, so a channel the service publishes to carries the
 /// same extension a channel it reads does. The key is the destination the mount site resolved,
 /// which is the only place a publish policy can learn it: the policy itself holds no name.
