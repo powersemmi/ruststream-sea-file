@@ -103,8 +103,10 @@ async fn never_ready(
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
 
-/// The same, on a stream key with no dead-letter destination beside its cap.
-#[subscriber(FileStream::new("crates"))]
+/// The same, on a stream key with no dead-letter destination beside its cap, and mounted by a
+/// bare stream key rather than a descriptor - so the cap reaches the broker through its own
+/// `declare_retry` with nothing in between.
+#[subscriber("crates")]
 async fn never_ready_uncollected(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
@@ -249,7 +251,8 @@ fn the_cap_carries_the_spent_delivery_to_the_dead_letter_stream_key() {
 
 /// A cap with no destination beside it ends the circulation by rejecting the spent delivery, and
 /// writes it nowhere: the stream key holds the injected order and the one copy that brought the
-/// second delivery, and nothing else.
+/// second delivery, and nothing else. The registration is a bare stream key, so the broker is the
+/// one that accepted the declaration.
 #[test]
 fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
     common::on_a_file(async {
