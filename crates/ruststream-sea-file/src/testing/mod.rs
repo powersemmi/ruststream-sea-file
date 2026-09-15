@@ -67,7 +67,10 @@
 //! [`FileBatchContext`](crate::FileBatchContext) build off its deliveries unchanged. A seeking
 //! service therefore mounts on it with no edit at all, and a batch handler sees batches of the
 //! size its mount site asked for. Settlement answers what a file answers: `ack` and `nack` report
-//! [`AckError::Unsupported`](ruststream::AckError::Unsupported).
+//! [`AckError::Unsupported`](ruststream::AckError::Unsupported). Positions answer what a file
+//! answers too: the log is numbered from one per stream key, and a seek to a position the log has
+//! not reached is refused and ends the subscription, so a test cannot pass on a resume the file
+//! would refuse.
 //!
 //! [`StdioTestBroker`] is a separate type because a pipe answers differently. It addresses no
 //! retry copy, so a registration that names no destination refuses to start here exactly as it

@@ -26,12 +26,17 @@
 //! | --- | --- |
 //! | `FilePosition::beginning()` | The start of the retained file. |
 //! | `FilePosition::end()` | The tip of the stream. |
-//! | `FilePosition::sequence(n)` | Message number `n`, redelivered inclusively. |
+//! | `FilePosition::sequence(n)` | Message number `n`, redelivered inclusively. A stream key is numbered from one, and the numbering carries on when a later connection appends to the same file. |
 //! | `FilePosition::timestamp(millis)` | The first message strictly later than that instant, in milliseconds since the Unix epoch. |
 //!
 //! A position read off a delivery is pinned: seeking back to it redelivers exactly that message,
 //! then the rest of the log in order. Deliveries already queued from before a seek are discarded,
 //! so the next message a handler sees comes from the new position.
+//!
+//! Seek to a position the stream has reached. A sequence past the last one written, and an
+//! instant later than every message the file holds, are both refused, and the subscription ends
+//! with the refusal rather than staying where it was: the transport reads forward looking for the
+//! message and runs out of file. A captured position, the beginning and the tip are always safe.
 //!
 //! A handler reads two keys, as parameters of the `Ctx` extractor, and names no context type:
 //! [`Position`](crate::Position) is this delivery's place in the file, and

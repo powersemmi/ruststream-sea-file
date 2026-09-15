@@ -126,13 +126,13 @@ async fn record(
 }
 
 /// The run every seeking test replays: the second job marks what follows it poisoned and names
-/// where to resume - position 3, the fourth entry.
+/// where to resume - sequence 4, the fourth entry, because a stream key is numbered from one.
 fn poisoned_run() -> Vec<Job> {
     vec![
         Job::plain(1),
         Job {
             id: 2,
-            resume_at: Some(3),
+            resume_at: Some(4),
         },
         Job::plain(3),
         Job::plain(4),
@@ -165,7 +165,7 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
         tb.broker::<FileTestBroker>()
             .published::<Seen>("audit")
             .decoded(),
-        vec![Seen { id: 1, at: 0 }, Seen { id: 2, at: 1 }],
+        vec![Seen { id: 1, at: 1 }, Seen { id: 2, at: 2 }],
     );
     Ok(())
 }
@@ -195,10 +195,10 @@ async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
             .published::<Seen>("audit")
             .decoded(),
         vec![
-            Seen { id: 1, at: 0 },
-            Seen { id: 2, at: 1 },
-            // Job 3 sat at position 2 and was skipped; job 4 arrives from the seek target.
-            Seen { id: 4, at: 3 },
+            Seen { id: 1, at: 1 },
+            Seen { id: 2, at: 2 },
+            // Job 3 sat at sequence 3 and was skipped; job 4 arrives from the seek target.
+            Seen { id: 4, at: 4 },
         ],
     );
     Ok(())

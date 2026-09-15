@@ -77,7 +77,7 @@ that broker opened: the transport is process-wide by the client's design.
 | Capability | Answer |
 | --- | --- |
 | `Subscribe` | Both. A stream key is a subscription, so `#[subscriber("key")]` needs no descriptor. |
-| `Positioned` | Both. Every delivery reports the sequence it sits at. |
+| `Positioned` | Both. Every delivery reports the sequence it sits at, counted from one per stream key. |
 | `Seekable` | The stream file only. Standard input keeps no log to move within, so a handler that reads [`SeekHandle`] does not compile against [`StdioBroker`]. |
 | `BatchSubscriber` | Both, assembled on the client: neither client reads more than one entry at a time. |
 | `Partitioned` | Neither. A stream file is one ordered log and the client writes every message to shard zero. |
@@ -88,7 +88,9 @@ that broker opened: the transport is process-wide by the client's design.
 `ack` and `nack` report `AckError::Unsupported` on both transports. The client records no
 consumer positions, and its resumable mode is unimplemented upstream, so nothing tracks how far a
 service read. You resume explicitly: store a [`FilePosition`] read off a delivery and open the
-next run with `start_at(..)`, or replay the file from its beginning.
+next run with `start_at(..)`, or replay the file from its beginning. Seek to a position the stream
+has reached: a sequence past the last one written, and an instant later than every message the
+file holds, are both refused, and the subscription ends with the refusal.
 
 # Headers
 
