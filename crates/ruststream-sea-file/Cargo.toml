@@ -52,4 +52,13 @@ ruststream = { workspace = true, features = [
 ] }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    # The stdio pipeline suite drives the shipped stage as a child process, over piped
+    # standard input and output.
+    "process",
+    "io-util",
+] }

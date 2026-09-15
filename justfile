@@ -14,12 +14,18 @@ check:
 test:
     cargo test --workspace --all-features
 
-# The suites that run against the real transports: stream files in the temp directory, and the
-# process's own standard input and output. There is no server and no docker stand to start - on
-# this broker the local machine is the transport - so `just test` covers these too; the recipe
-# exists so the fleet's live-suite command means the same thing in every broker repository.
+# The suites that run against the real transports: stream files in the temp directory, the
+# process's own standard input and output, and the shipped pipeline stage as a child process.
+# There is no server and no docker stand to start - on this broker the local machine is the
+# transport - so `just test` covers these too; the recipe exists so the fleet's live-suite command
+# means the same thing in every broker repository.
+#
+# --examples: the pipeline suite spawns the `stdio_pipeline` example, which a run naming test
+# targets would otherwise not build.
 test-brokers:
-    cargo test --workspace --all-features --test integration_sea --test conformance_sea
+    cargo test --workspace --all-features --examples \
+        --test integration_sea --test conformance_sea --test file_positions \
+        --test file_retry --test stdio_processes --test stdio_retry
 
 fmt:
     cargo fmt --all
