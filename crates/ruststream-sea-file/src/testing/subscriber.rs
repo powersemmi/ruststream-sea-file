@@ -210,6 +210,11 @@ impl Subscriber for Deliveries {
             // Same ordering as the in-memory reference broker: register, then apply a pending
             // seek, so a seek requested while the stream was parked is not missed.
             self.seek.waker.register(cx.waker());
+            if self.seek.ended() {
+                // A refused seek. The transport's consumer does not survive one, so neither does
+                // this subscription: it reported the refusal, and now it reports the end.
+                return Poll::Ready(None);
+            }
             self.apply_pending_seek();
             loop {
                 match self.rx.poll_recv(cx) {

@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::{
     Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -75,6 +75,10 @@ pub(crate) struct SeekControl {
     /// Deliveries stamped below this position are stale pre-seek copies (a publish that raced the
     /// seek) and are dropped by the polling side.
     watermark: AtomicU64,
+    /// Set when a seek was refused. The file client's consumer does not survive one - it reports
+    /// the refusal and then reports the stream ended - so the polling side ends the stream here
+    /// rather than leaving a subscription the real transport would not have left running.
+    ended: AtomicBool,
     /// Wakes the subscriber's stream task after `pending` is set.
     pub(crate) waker: AtomicWaker,
 }
@@ -86,6 +90,11 @@ impl SeekControl {
     /// observes a delivery enqueued after a seek also observes that seek's watermark.
     pub(crate) fn watermark(&self) -> u64 {
         self.watermark.load(Ordering::Acquire)
+    }
+
+    /// Whether a refused seek has ended this subscription.
+    pub(crate) fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     /// Takes the pending replay, if a seek was requested since the last poll.
@@ -225,10 +234,13 @@ impl AddressRouter {
                 Ok(target) => target,
                 Err(why) => {
                     // The file client's consumer does not survive a refused seek: it reports the
-                    // refusal and then reports the stream ended. Dropping the subscription here is
-                    // that, in process - the sender goes with it and the stream completes - so a
-                    // service testing a seek it cannot make sees what it would see against a file.
+                    // refusal and then reports the stream ended. That is what happens here too, so
+                    // a service testing a seek it cannot make sees what it would see against a
+                    // file - the registry stops routing to it, and its stream completes.
                     state.subscriptions.remove(&id);
+                    drop(state);
+                    control.ended.store(true, Ordering::Release);
+                    control.waker.wake();
                     return Err(SeaFileError::Seek {
                         stream: address,
                         source: Box::from(why),

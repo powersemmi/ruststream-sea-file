@@ -12,7 +12,7 @@ use futures::StreamExt;
 use ruststream::testing::TestableBroker;
 use ruststream::{
     AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
-    OutgoingMessage, Positioned, Publisher, Subscribe, Subscriber,
+    OutgoingMessage, Positioned, Publisher, Seekable, Seeker, Subscribe, Subscriber,
 };
 #[cfg(feature = "testing")]
 use ruststream_sea_file::testing::FileTestBroker;
@@ -197,6 +197,83 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
             stubbed.nack(true).await,
             Err(AckError::Unsupported)
         ));
+
+        file.shutdown().await.expect("shutdown succeeds");
+        in_process.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The in-process transport positions the way a stream file positions, read side by side for the
+/// reason settlement is: a stand that numbered its log differently, or that let a service resume
+/// from a position the file has not reached, would pass a test the file refuses - and a resume
+/// that works under test and fails in production is the whole cost of keeping a stand.
+#[cfg(feature = "testing")]
+#[test]
+fn the_in_process_transport_positions_the_way_a_stream_file_does() {
+    common::on_a_file(async {
+        let path = common::tmp_path("positions");
+        let file = FileBroker::new(&path).connect().await.expect("file opens");
+        let mut from_file = file.subscribe("orders").await.expect("subscription opens");
+        file.publisher()
+            .publish(OutgoingMessage::new("orders", b"one".as_slice()), None)
+            .await
+            .expect("publish succeeds");
+
+        let in_process = FileTestBroker::new()
+            .connect()
+            .await
+            .expect("transport connects");
+        let mut from_transport = in_process
+            .subscribe("orders")
+            .await
+            .expect("subscription opens");
+        in_process.inject(OutgoingMessage::new("orders", b"one".as_slice()));
+
+        // Minted before the streams borrow the subscribers, and past the end of a log holding one
+        // message.
+        let filed_seeker = from_file.seeker();
+        let stubbed_seeker = from_transport.seeker();
+        let past_the_end = FilePosition::sequence(99);
+
+        let mut filed = pin!(from_file.stream());
+        let first = tokio::time::timeout(RECV_TIMEOUT, filed.next())
+            .await
+            .expect("delivery arrives")
+            .expect("stream is open")
+            .expect("delivery is ok");
+        assert_eq!(first.position(), FilePosition::sequence(1));
+        filed_seeker
+            .seek(past_the_end)
+            .await
+            .expect_err("the file refuses a position it has not reached");
+        let ended = tokio::time::timeout(RECV_TIMEOUT, filed.next())
+            .await
+            .expect("the end arrives rather than hanging");
+        assert!(ended.is_none(), "got {ended:?}");
+
+        let mut stubbed = pin!(from_transport.stream());
+        let first = tokio::time::timeout(RECV_TIMEOUT, stubbed.next())
+            .await
+            .expect("delivery arrives")
+            .expect("stream is open")
+            .expect("delivery is ok");
+        assert_eq!(
+            first.position(),
+            FilePosition::sequence(1),
+            "the stand numbers a stream key from one, as the file does",
+        );
+        stubbed_seeker
+            .seek(past_the_end)
+            .await
+            .expect_err("the stand refuses what the file refuses");
+        let ended = tokio::time::timeout(RECV_TIMEOUT, stubbed.next())
+            .await
+            .expect("the end arrives rather than hanging");
+        assert!(
+            ended.is_none(),
+            "the stand ends the subscription a refused seek left behind, got {ended:?}",
+        );
 
         file.shutdown().await.expect("shutdown succeeds");
         in_process.shutdown().await.expect("shutdown succeeds");
