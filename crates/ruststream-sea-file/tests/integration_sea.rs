@@ -5,7 +5,6 @@ mod common;
 
 use std::num::NonZeroUsize;
 use std::pin::pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -13,11 +12,13 @@ use futures::StreamExt;
 use ruststream::testing::TestableBroker;
 use ruststream::{
     AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
-    OutgoingMessage, Publisher, Subscribe, Subscriber,
+    OutgoingMessage, Positioned, Publisher, Subscribe, Subscriber,
 };
 #[cfg(feature = "testing")]
 use ruststream_sea_file::testing::FileTestBroker;
-use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
+use ruststream_sea_file::{
+    FileBroker, FilePosition, FileStream, SEQUENCE_HEADER, SeaFileError, StdioBroker,
+};
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -25,22 +26,10 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 /// carrying more than the mount site asked for is caught rather than missed.
 const STDIO_BATCH: NonZeroUsize = NonZeroUsize::new(2).unwrap();
 
-fn tmp_path(name: &str) -> String {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir()
-        .join(format!(
-            "ruststream-sea-it-{name}-{}-{}.ss",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ))
-        .to_string_lossy()
-        .into_owned()
-}
-
 #[test]
 fn file_roundtrip_preserves_payload_and_headers() {
-    common::rt().block_on(async {
-        let path = tmp_path("roundtrip");
+    common::on_a_file(async {
+        let path = common::tmp_path("roundtrip");
         let connected = FileBroker::new(&path).connect().await.expect("file opens");
         let mut subscriber = connected
             .subscribe("orders")
@@ -71,6 +60,10 @@ fn file_roundtrip_preserves_payload_and_headers() {
             Some("application/json")
         );
         assert_eq!(message.headers().get_str("x-tenant"), Some("acme"));
+        // The file's own sequence for this stream key, reported twice and in agreement: as a
+        // header a handler can read, and as the position a seek takes back.
+        assert_eq!(message.headers().get_str(SEQUENCE_HEADER), Some("1"));
+        assert_eq!(message.position(), FilePosition::sequence(1));
         // The transport keeps no consumer positions: acknowledgement is honestly unsupported.
         assert!(matches!(message.ack().await, Err(AckError::Unsupported)));
 
@@ -81,8 +74,8 @@ fn file_roundtrip_preserves_payload_and_headers() {
 
 #[test]
 fn a_finished_file_replays_and_completes() {
-    common::rt().block_on(async {
-        let path = tmp_path("replay");
+    common::on_a_file(async {
+        let path = common::tmp_path("replay");
 
         // Record a stream and finish it with an end-of-stream mark.
         {
@@ -137,8 +130,8 @@ fn a_finished_file_replays_and_completes() {
 #[cfg(feature = "testing")]
 #[test]
 fn the_in_process_transport_settles_the_way_a_stream_file_does() {
-    common::rt().block_on(async {
-        let path = tmp_path("settlement");
+    common::on_a_file(async {
+        let path = common::tmp_path("settlement");
         let file = FileBroker::new(&path).connect().await.expect("file opens");
         let mut from_file = file.subscribe("orders").await.expect("subscription opens");
         file.publisher()
@@ -215,8 +208,8 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
 /// that finished the file is not a receive failure for the reader that was tailing it.
 #[test]
 fn a_live_subscription_completes_at_the_end_of_stream_mark() {
-    common::rt().block_on(async {
-        let path = tmp_path("live-eos");
+    common::on_a_file(async {
+        let path = common::tmp_path("live-eos");
 
         let writer = FileBroker::new(&path)
             .end_with_eos()
@@ -269,8 +262,8 @@ fn a_live_subscription_completes_at_the_end_of_stream_mark() {
 /// than wait for a message that is never coming.
 #[test]
 fn a_replay_of_a_key_with_no_messages_finishes_instead_of_waiting() {
-    common::rt().block_on(async {
-        let path = tmp_path("replay-empty-key");
+    common::on_a_file(async {
+        let path = common::tmp_path("replay-empty-key");
 
         {
             let connected = FileBroker::new(&path)
@@ -314,6 +307,98 @@ fn a_replay_of_a_key_with_no_messages_finishes_instead_of_waiting() {
     });
 }
 
+/// `existing_only` is the difference between a reader and a writer: a service that must find the
+/// file already there fails to connect rather than creating an empty one and reporting nothing.
+#[test]
+fn existing_only_refuses_a_missing_file_and_opens_one_that_is_there() {
+    common::on_a_file(async {
+        let path = common::tmp_path("existing-only");
+
+        let missing = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect_err("a missing file must not be created under existing_only");
+        assert!(
+            matches!(missing, SeaFileError::Connect { .. }),
+            "opening a missing file must report a connect failure, got {missing:?}",
+        );
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "a refused connect must leave no file behind",
+        );
+
+        // The same configuration over a file that does exist opens it.
+        let writer = FileBroker::new(&path).connect().await.expect("file opens");
+        writer.shutdown().await.expect("shutdown succeeds");
+        let reader = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("an existing file opens under existing_only");
+        reader.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The beacon interval the broker was configured with, read back out of the file the broker
+/// wrote: the format keeps it in the header, and it is what a reader seeks by.
+///
+/// The layout is the client's: a two-byte mark and a version, the file name as a length-prefixed
+/// string, a millisecond timestamp, then the interval as a big-endian `u32`.
+fn beacon_interval_of(path: &str) -> u32 {
+    let header = std::fs::read(path).expect("the stream file is readable");
+    let name_len = header[3] as usize;
+    let at = 4 + name_len + 8;
+    u32::from_be_bytes(
+        header[at..at + 4]
+            .try_into()
+            .expect("the header holds four bytes of interval"),
+    )
+}
+
+/// Beacons are what makes a stream file seekable, and `beacon_interval` is how dense they are.
+/// The setting is refused rather than rounded when it is not a positive multiple of 1024, so a
+/// file is never written with an interval its author did not ask for.
+#[test]
+fn the_beacon_interval_reaches_the_file_and_an_invalid_one_is_refused() {
+    common::on_a_file(async {
+        let dense_path = common::tmp_path("beacons-dense");
+        let dense = FileBroker::new(&dense_path)
+            .beacon_interval(1024)
+            .connect()
+            .await
+            .expect("file opens");
+        dense.shutdown().await.expect("shutdown succeeds");
+        assert_eq!(beacon_interval_of(&dense_path), 1024);
+
+        // The default the client applies when the broker names none, so the assertion above
+        // reads as the setting taking effect rather than as a coincidence.
+        let plain_path = common::tmp_path("beacons-default");
+        let plain = FileBroker::new(&plain_path).connect().await.expect("opens");
+        plain.shutdown().await.expect("shutdown succeeds");
+        assert_eq!(beacon_interval_of(&plain_path), 1024 * 1024);
+
+        let invalid_path = common::tmp_path("beacons-invalid");
+        let refused = FileBroker::new(&invalid_path)
+            .beacon_interval(1000)
+            .connect()
+            .await
+            .expect_err("an interval that is not a multiple of 1024 must be refused");
+        assert!(
+            matches!(refused, SeaFileError::Invalid(ref why) if why.contains("beacon interval")),
+            "an invalid interval must name itself, got {refused:?}",
+        );
+        assert!(
+            !std::path::Path::new(&invalid_path).exists(),
+            "a refused configuration must write no file",
+        );
+
+        let _ = std::fs::remove_file(&dense_path);
+        let _ = std::fs::remove_file(&plain_path);
+    });
+}
+
 /// Both stdio checks share one test: shutting the transport down ends every stdio consumer and
 /// producer in the process, so a second stdio test running beside this one would be torn down by
 /// it.
@@ -346,7 +431,35 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
                 .expect("delivery is ok");
             // The stdio line format is text; the envelope carried the binary payload through it.
             assert_eq!(message.payload(), raw.as_slice());
+            // A pipe keeps no retained log, so neither settlement is pretended: what a handler
+            // asks for here is refused rather than silently dropped.
+            assert!(matches!(message.ack().await, Err(AckError::Unsupported)));
+
+            publisher
+                .publish(OutgoingMessage::new("pipe", raw.as_slice()), None)
+                .await
+                .expect("publish succeeds");
+            let requeued = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("delivery arrives")
+                .expect("stream is open")
+                .expect("delivery is ok");
+            assert!(matches!(
+                requeued.nack(true).await,
+                Err(AckError::Unsupported)
+            ));
         }
+
+        // The client's line format drops an empty line, so a message that would become one is
+        // refused at the publisher rather than lost on the way to the next process.
+        let empty = publisher
+            .publish(OutgoingMessage::new("pipe", b"".as_slice()), None)
+            .await
+            .expect_err("an empty message must not be transmitted");
+        assert!(
+            matches!(empty, SeaFileError::Invalid(ref why) if why.contains("empty")),
+            "an empty message must say why it cannot travel, got {empty:?}",
+        );
 
         // Standard input delivers one line at a time, so the batches are assembled on the client;
         // what the mount site asks for is still the cap a batch may never exceed.
@@ -374,5 +487,16 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
 
         connected.shutdown().await.expect("shutdown succeeds");
+
+        // The publisher handed out before the shutdown outlives the connection, and the pipe it
+        // wrote to is gone: it must say so rather than accept a line nobody will ever read.
+        let after = publisher
+            .publish(OutgoingMessage::new("pipe", b"late".as_slice()), None)
+            .await
+            .expect_err("a publish through a closed transport must error");
+        assert!(
+            matches!(after, SeaFileError::NotConnected),
+            "a publish after shutdown must report a closed transport, got {after:?}",
+        );
     });
 }

@@ -19,24 +19,10 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use ruststream::Name;
 use ruststream::conformance::{capabilities, harness};
 use ruststream_sea_file::testing::{FileTestBroker, StdioTestBroker};
 use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
-
-fn tmp_path(name: &str) -> String {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir()
-        .join(format!(
-            "ruststream-sea-{name}-{}-{}.ss",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ))
-        .to_string_lossy()
-        .into_owned()
-}
 
 /// Nothing the broker or the descriptor contributes to a document may carry a password.
 ///
@@ -48,7 +34,7 @@ fn tmp_path(name: &str) -> String {
 #[test]
 fn the_document_carries_no_credential() {
     harness::describes_without_credentials(
-        &FileBroker::new(tmp_path("credentials")),
+        &FileBroker::new(common::tmp_path("credentials")),
         &FileStream::new("orders"),
         "hunter2",
     );
@@ -96,8 +82,8 @@ fn stdio_test_broker_passes_lifecycle() {
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
 fn file_broker_passes_lifecycle() {
-    common::rt().block_on(async {
-        let path = tmp_path("lifecycle");
+    common::on_a_file(async {
+        let path = common::tmp_path("lifecycle");
         harness::lifecycle(
             || FileBroker::new(path.clone()),
             |name| FileStream::new(name),
@@ -130,8 +116,8 @@ fn sea_test_broker_passes_lifecycle() {
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
 fn file_broker_passes_redelivery_address() {
-    common::rt().block_on(async {
-        let path = tmp_path("redelivery-address");
+    common::on_a_file(async {
+        let path = common::tmp_path("redelivery-address");
         harness::redelivery_address(
             || FileBroker::new(path.clone()),
             |name| FileStream::new(name),
@@ -163,8 +149,8 @@ fn sea_test_broker_passes_redelivery_address() {
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
 fn file_broker_passes_batch_suite() {
-    common::rt().block_on(async {
-        let path = tmp_path("batches");
+    common::on_a_file(async {
+        let path = common::tmp_path("batches");
         capabilities::batches(
             || FileBroker::new(path.clone()),
             |name| FileStream::new(name),
@@ -193,8 +179,8 @@ fn sea_test_broker_passes_batch_suite() {
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
 fn file_broker_passes_seeking_suite() {
-    common::rt().block_on(async {
-        let path = tmp_path("seeking");
+    common::on_a_file(async {
+        let path = common::tmp_path("seeking");
         capabilities::seeking(
             || FileBroker::new(path.clone()),
             |name| FileStream::new(name),
