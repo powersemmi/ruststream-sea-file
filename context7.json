@@ -1,0 +1,14 @@
+{
+  "rules": [
+    "Glob one prelude: `ruststream_sea_file::file::prelude::*` on a stream file, `ruststream_sea_file::stdio::prelude::*` on a pipeline, and `ruststream_sea_file::prelude::*` only in a service that spans both, where the policies are written `FilePublish` and `StdioPublish`.",
+    "Subscribe to a stream file with `#[subscriber(FileStream::new(\"key\"))]`; the bare `#[subscriber(\"key\")]` works on both transports but carries no descriptor, so it describes nothing in the generated AsyncAPI document.",
+    "Open a subscription at a position with `start_at(FilePosition::beginning() | end() | sequence(n) | timestamp(millis))`; `FileStream::new(key).replay()` is the separate mode that reads the retained file in one pass and completes at its end.",
+    "Reposition a running subscription through the `Ctx<Position>` and `Ctx<SeekHandle>` parameters; both belong to the file transport, and a handler that reads them does not compile against `StdioBroker`.",
+    "Name the publish policy `Publish` at the mount site (`.out_reply(Publish)`, `.out(Marker, Publish)`); neither transport carries per-message settings, so a handler body imports the framework prelude alone and bounds an injected publisher as `Out<impl Publisher, Marker>`.",
+    "A `retry_after` copy reaches a stream file under the stream key its subscription reads and needs nothing at the mount site, while a stdio registration must name where the copy goes with `.out_retry(Publish).to(\"key\")` or it refuses to start.",
+    "Cap circulating retries with `.max_attempts(n)` and `.dead_letter(\"key\")` right after `include`; the count is the framework's retry-count header, because neither transport counts its own redeliveries.",
+    "Take batches with a `&[T]` handler and `.batch(n)` at the mount site; both clients read one entry at a time, so a batch is assembled on the client and a partial one goes out 10 ms after its first delivery.",
+    "Do not rely on acknowledgement: `ack` and `nack` report `AckError::Unsupported` on both transports, so a service resumes by storing a `FilePosition` and reopening with `start_at(..)`, or by replaying the file.",
+    "Unit-test handlers with `ruststream::testing::TestApp` against `FileTestBroker` or `StdioTestBroker` behind the `testing` feature, keeping the descriptor and the policy the service ships with; there is no harness-only policy to swap in."
+  ]
+}

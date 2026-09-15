@@ -1,7 +1,79 @@
-//! The stdio transport: [`StdioBroker`], standard input and output as one stream - a service
-//! that composes with ordinary command-line tools.
+//! Standard input and output as one stream: a service that is a stage of a shell pipeline.
 //!
-//! A service on a shell pipeline globs this form's [`prelude`] and names its policy [`Publish`].
+//! [`StdioBroker`] records nothing and attaches the process's own pipes on
+//! [`Broker::connect`]. Standard input is the subscription, standard output the publisher, so
+//! `producer | service | consumer` works with ordinary command-line tools. A service on a
+//! pipeline globs this form's [`prelude`] and names its policy [`Publish`].
+//!
+//! Shutting this broker down ends every stdio consumer and producer in the process, not only the
+//! ones it opened: the client's transport is process-wide.
+//!
+//! # The line format
+//!
+//! Lines follow the client's `[timestamp | stream_key | sequence | shard_id] payload` format,
+//! with every meta field optional. The stream key is part of the line, so one process serves
+//! several keys:
+//!
+//! ```text
+//! echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
+//! ```
+//!
+//! # Subscribing
+//!
+//! A subscription here is the stream key itself, so this form has no descriptor type and
+//! `#[subscriber("jobs")]` consumes the `jobs` key off standard input. Standard input keeps no
+//! retained log: there is no acknowledgement (`ack` and `nack` report `AckError::Unsupported`)
+//! and no repositioning, and a handler that reads the [`SeekHandle`](crate::SeekHandle) key does
+//! not compile against this broker. Batches it does serve - the client reads one line at a time,
+//! so `batch(n)` is honoured by assembling them here, and a partial batch goes out 10 ms after
+//! its first delivery.
+//!
+//! # Publishing and deferred copies
+//!
+//! [`Publish`] pairs into [`StdioPublisher`], which writes a line to standard output under the
+//! message's stream key. A line carries a key and a payload and nothing else, so this crate adds
+//! no step to the publish builder. A message with no payload and no headers is rejected with
+//! [`SeaFileError::Invalid`], because the client's line format
+//! silently drops empty lines.
+//!
+//! Standard output reaches the next process in the pipeline and never this process's own
+//! standard input, so nothing here addresses the subscription. A registration that defers a
+//! delivery therefore names where the copy goes - `.out_retry(Publish).to("jobs.retry")`, or a
+//! transform that names one per delivery - and one that names neither refuses to start. That is
+//! the right answer for a pipeline stage: a delayed message that went nowhere is worse than a
+//! service that does not come up.
+//!
+//! ```
+//! use ruststream_sea_file::stdio::prelude::*;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Debug, Deserialize)]
+//! struct Job {
+//!     id: u64,
+//! }
+//!
+//! #[derive(Debug, Outgoing, Serialize)]
+//! #[outgoing(name = "results")]
+//! struct Done {
+//!     id: u64,
+//! }
+//!
+//! #[subscriber("jobs", publish)]
+//! async fn work(job: &Job) -> Done {
+//!     Done { id: job.id }
+//! }
+//!
+//! #[ruststream::app]
+//! fn app() -> impl App {
+//!     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
+//!         b.include(work).out_retry(Publish).to("jobs.retry");
+//!     })
+//! }
+//! ```
+//!
+//! [`loopback`](StdioBroker::loopback) sends this process's standard output back into its own
+//! standard input, so a stdio service runs in one process with no external commands. It is a test
+//! aid: an address that only held under it would break in the shape a service ships.
 
 use std::future::{Future, ready};
 use std::num::NonZeroUsize;
@@ -11,7 +83,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures::Stream;
 use ruststream::{
     BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
+    NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
 use sea_streamer_types::{
@@ -167,6 +240,18 @@ impl ConnectedBroker for ConnectedStdioBroker {
 
 impl Subscribe for ConnectedStdioBroker {
     type Subscriber = StdioSubscriber;
+    /// The mount site names where a deferred copy goes, because nothing on this transport
+    /// addresses the subscription: a publish writes to standard output and a subscription reads
+    /// standard input, so the process downstream of the pipe is not the one that sent the
+    /// message.
+    ///
+    /// A registration over stdio therefore names a destination - `.out_retry(Publish).to(name)`,
+    /// or a transform that names one per delivery - and one that names neither refuses to start,
+    /// which is the right answer for a pipeline stage: a delayed message that went nowhere is
+    /// worse than a service that does not come up. ([`loopback`](StdioBroker::loopback) does
+    /// route a publish back to this process, but it is a test aid, and an address that only held
+    /// under it would break in the shape a service ships.)
+    type Copies = NamedCopies;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         self.core.ensure_open()?;
@@ -282,6 +367,10 @@ impl Subscriber for StdioDeliveries {
 /// The line format is the client's own; payloads must be text, so a non-UTF-8 payload (and
 /// any message with headers) travels in the text-safe envelope. The client silently drops
 /// empty lines, so an empty payload is rejected here instead.
+///
+/// A publish carries no per-message settings: a line on standard output takes a key and a
+/// payload and nothing else, so [`Publisher::Options`] is the unit type and the publish builder
+/// gains no step from this crate.
 #[derive(Clone)]
 pub struct StdioPublisher {
     cell: StdioCell,
@@ -296,8 +385,13 @@ impl std::fmt::Debug for StdioPublisher {
 
 impl Publisher for StdioPublisher {
     type Error = SeaFileError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&()>,
+    ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
         if msg.payload().is_empty() && msg.headers().is_empty() {
@@ -361,6 +455,29 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     }
 }
 
+/// The policy pairs against this transport's in-process stand too, so a stdio routes file that
+/// names it - `.out_reply(Publish)`, the way production writes it - mounts on
+/// [`StdioTestBroker`](crate::testing::StdioTestBroker) unchanged.
+///
+/// It pairs against that stand and no other: a stdio service belongs on the stdio stand, which
+/// answers about retry copies and about seeking the way a pipe answers.
+///
+/// What the stand does not reproduce is the line format [`StdioPublisher`] writes: payloads
+/// travel as bytes, the text-safe envelope is not applied, and the empty payload a pipe would
+/// reject goes through. Those are the real transport's, and are covered against a real pipe - so a
+/// test here must not conclude that a payload survives a shell pipeline.
+#[cfg(feature = "testing")]
+impl PublishPolicy<crate::testing::ConnectedStdioTestBroker> for StdioPublish {
+    type Live = crate::testing::StdioTestPublisher;
+
+    fn pair(
+        self,
+        connected: &crate::testing::ConnectedStdioTestBroker,
+    ) -> impl Future<Output = Result<Self::Live, PairError>> {
+        ready(Ok(connected.publisher()))
+    }
+}
+
 /// The publish policy of this form, under the name every form uses.
 ///
 /// A mount site names the concept, never the transport: moving a service from one form to
@@ -398,12 +515,13 @@ pub mod prelude {
     //!     id: u64,
     //! }
     //!
-    //! #[derive(Debug, Serialize)]
+    //! #[derive(Debug, Outgoing, Serialize)]
+    //! #[outgoing(name = "results")]
     //! struct Done {
     //!     id: u64,
     //! }
     //!
-    //! #[subscriber("jobs", publish("results"))]
+    //! #[subscriber("jobs", publish)]
     //! async fn work(job: &Job) -> Done {
     //!     Done { id: job.id }
     //! }
@@ -412,7 +530,7 @@ pub mod prelude {
     //! fn app() -> impl App {
     //!     RustStream::new(AppInfo::new("pipeline", "0.1.0"))
     //!         .with_broker(StdioBroker::new(), |b| {
-    //!             b.include(work);
+    //!             b.include(work).out_retry(Publish).to("jobs.retry");
     //!         })
     //! }
     //! ```

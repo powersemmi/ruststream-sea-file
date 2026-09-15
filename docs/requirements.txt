@@ -13,3 +13,6 @@ mkdocs-material>=9.5
 mkdocs-static-i18n>=1.3
 pymdown-extensions>=10.7
 mike>=2.2
+# The guide moved to the crate's rustdoc; the old page URLs stay alive as redirects into
+# docs.rs (see the `redirects` plugin in `properdocs.yml`).
+mkdocs-redirects>=1.2.3

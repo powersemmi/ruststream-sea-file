@@ -1,16 +1,21 @@
-//! The file form's context keys, driven through the `TestApp` harness on the in-process
-//! transport.
+//! The file form's context keys and reply destinations, driven through the `TestApp` harness on
+//! the in-process transport.
 //!
 //! Every handler here is an ordinary service handler: it names `FileStream` as its subscription
 //! and reads the transport's keys, exactly as it would against a stream file. Nothing in this
 //! file knows it is a test - the harness supplies the input, drives the reaction to a standstill,
 //! and records what happened, so there is no collector, no channel and no clock anywhere.
+//!
+//! A stream key on this transport is a name inside the broker: the file is named once, in
+//! `FileBroker::new(path)`, and standard output is named nowhere. Both ways of resolving a reply
+//! destination therefore behave here the way they do on a subject broker, and the last two tests
+//! pin them.
 
 #![cfg(feature = "testing")]
 
 use ruststream::testing::TestApp;
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::{FileTestBroker, FileTestPublish};
+use ruststream_sea_file::testing::FileTestBroker;
 use serde::{Deserialize, Serialize};
 
 /// The producer's cursor contract: an entry carrying `resume_at` asks the consumer to skip
@@ -31,8 +36,9 @@ impl Job {
 }
 
 /// What the audit trail records: which job was seen, and where the subscription sat when it
-/// arrived. Publishing it is how the handler's view of the context leaves the handler.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// arrived. Publishing it is how the handler's view of the context leaves the handler. It
+/// declares no destination of its own, so the subscriber that produces it names one.
+#[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
 struct Seen {
     id: u64,
     at: u64,
@@ -66,6 +72,32 @@ async fn work(job: &Job, Ctx(at): Ctx<Position>, Ctx(seeker): Ctx<SeekHandle>) -
 }
 // --8<-- [end:handler]
 
+/// A receipt belongs on the `receipts` stream key wherever it is produced, so the type carries
+/// the destination and every mounting of a handler returning one publishes it there. Its field
+/// names the job it confirms, which also keeps a receipt from decoding out of a `Job` payload:
+/// a destination assertion that read the request by mistake would then pass on the wrong key.
+#[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
+#[outgoing(name = "receipts")]
+struct Receipt {
+    job: u64,
+}
+
+/// The declared form: the clause says only that the return value is published.
+#[subscriber("checkout", publish)]
+async fn checkout(job: &Job) -> Receipt {
+    Receipt { job: job.id }
+}
+
+/// The mount-site form: `Seen` declares no destination, so this subscriber names one, and the
+/// same type reaches a different key from the audit handler above.
+#[subscriber("review", publish("reviewed"))]
+async fn review(job: &Job) -> Seen {
+    Seen {
+        id: job.id,
+        at: job.resume_at.unwrap_or_default(),
+    }
+}
+
 /// The batch counterpart: the seek handle is subscription-scoped, so it rides the batch context,
 /// while the target rides the elements themselves.
 #[subscriber(FileStream::new("digest"), start_at(FilePosition::beginning()))]
@@ -94,13 +126,13 @@ async fn record(
 }
 
 /// The run every seeking test replays: the second job marks what follows it poisoned and names
-/// where to resume - position 3, the fourth entry.
+/// where to resume - sequence 4, the fourth entry, because a stream key is numbered from one.
 fn poisoned_run() -> Vec<Job> {
     vec![
         Job::plain(1),
         Job {
             id: 2,
-            resume_at: Some(3),
+            resume_at: Some(4),
         },
         Job::plain(3),
         Job::plain(4),
@@ -115,7 +147,7 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
         |b| {
             // The audit reply through the policy the mount site names, rather than through the
             // broker's default: the same route the other tests take by omission.
-            b.include(work).out(Reply, FileTestPublish);
+            b.include(work).out(Reply, Publish);
         },
     );
     let tb = TestApp::start(app).await?;
@@ -133,7 +165,7 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
         tb.broker::<FileTestBroker>()
             .published::<Seen>("audit")
             .decoded(),
-        vec![Seen { id: 1, at: 0 }, Seen { id: 2, at: 1 }],
+        vec![Seen { id: 1, at: 1 }, Seen { id: 2, at: 2 }],
     );
     Ok(())
 }
@@ -163,10 +195,10 @@ async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
             .published::<Seen>("audit")
             .decoded(),
         vec![
-            Seen { id: 1, at: 0 },
-            Seen { id: 2, at: 1 },
-            // Job 3 sat at position 2 and was skipped; job 4 arrives from the seek target.
-            Seen { id: 4, at: 3 },
+            Seen { id: 1, at: 1 },
+            Seen { id: 2, at: 2 },
+            // Job 3 sat at sequence 3 and was skipped; job 4 arrives from the seek target.
+            Seen { id: 4, at: 4 },
         ],
     );
     Ok(())
@@ -200,5 +232,59 @@ async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
         .map(|job| job.id)
         .collect();
     assert_eq!(seen, vec![1, 2, 3, 4, 4]);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_type_that_declares_a_key_is_published_there()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
+        FileTestBroker::new(),
+        |b| {
+            b.include(checkout);
+        },
+    );
+    let tb = TestApp::start(app).await?;
+
+    tb.broker::<FileTestBroker>()
+        .message(&Job::plain(7))
+        .to("checkout")
+        .publish()
+        .await?;
+
+    tb.broker::<FileTestBroker>()
+        .subscriber("checkout")
+        .assert_called_once();
+    tb.broker::<FileTestBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with(&Receipt { job: 7 });
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_type_declaring_no_key_takes_the_one_the_subscriber_names()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
+        FileTestBroker::new(),
+        |b| {
+            b.include(review).out(Reply, Publish);
+        },
+    );
+    let tb = TestApp::start(app).await?;
+
+    tb.broker::<FileTestBroker>()
+        .message(&Job::plain(3))
+        .to("review")
+        .publish()
+        .await?;
+
+    tb.broker::<FileTestBroker>()
+        .subscriber("review")
+        .assert_called_once();
+    tb.broker::<FileTestBroker>()
+        .published::<Seen>("reviewed")
+        .assert_called_once()
+        .with(&Seen { id: 3, at: 0 });
     Ok(())
 }
