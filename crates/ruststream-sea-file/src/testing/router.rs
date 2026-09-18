@@ -3,13 +3,14 @@
 //! Core routing plus the one transport property a stream file's handlers are written against: the
 //! log is retained and positioned, so a subscription can be repositioned inside it. An exact-name
 //! match fans a published message out to every live subscription on that name, each message is
-//! stamped with its index in that name's log, and the log is what a seek replays from. The file's
+//! stamped with its sequence in that name's log - counted from one, the way a stream file counts a
+//! stream key - and the log is what a seek replays from. The file's
 //! own machinery (files, beacons, end-of-stream marks) is transport behaviour and is not simulated.
 
 use std::collections::HashMap;
 use std::sync::{
     Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -30,8 +31,9 @@ pub(crate) struct SubscriptionId(u64);
 pub(crate) struct Delivery {
     pub(crate) payload: Bytes,
     pub(crate) headers: HeaderMap,
-    /// Zero-based index of this message in its address's retained log. Stable across requeues and
-    /// replays, so a redelivered message reports the same [`FilePosition`].
+    /// This message's sequence in its address's retained log, counted from one the way a stream
+    /// file counts a stream key. Stable across requeues and replays, so a redelivered message
+    /// reports the same [`FilePosition`].
     pub(crate) sequence: u64,
 }
 
@@ -73,6 +75,10 @@ pub(crate) struct SeekControl {
     /// Deliveries stamped below this position are stale pre-seek copies (a publish that raced the
     /// seek) and are dropped by the polling side.
     watermark: AtomicU64,
+    /// Set when a seek was refused. The file client's consumer does not survive one - it reports
+    /// the refusal and then reports the stream ended - so the polling side ends the stream here
+    /// rather than leaving a subscription the real transport would not have left running.
+    ended: AtomicBool,
     /// Wakes the subscriber's stream task after `pending` is set.
     pub(crate) waker: AtomicWaker,
 }
@@ -84,6 +90,11 @@ impl SeekControl {
     /// observes a delivery enqueued after a seek also observes that seek's watermark.
     pub(crate) fn watermark(&self) -> u64 {
         self.watermark.load(Ordering::Acquire)
+    }
+
+    /// Whether a refused seek has ended this subscription.
+    pub(crate) fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
     }
 
     /// Takes the pending replay, if a seek was requested since the last poll.
@@ -156,7 +167,7 @@ impl AddressRouter {
                 .lock()
                 .expect("sea-file test router mutex poisoned");
             let entries = state.log.entry(address.to_owned()).or_default();
-            sequence = entries.len() as u64;
+            sequence = entries.len() as u64 + 1;
             entries.push(LogEntry {
                 message: snapshot,
                 at_millis: now_millis(),
@@ -192,7 +203,9 @@ impl AddressRouter {
     /// # Errors
     ///
     /// Returns [`SeaFileError::Seek`] once the subscription is gone - dropped, or cleared by the
-    /// broker's shutdown - which is the in-process reading of seeking through a dead handle.
+    /// broker's shutdown - which is the in-process reading of seeking through a dead handle, and
+    /// when the position names nothing the log holds, which ends the subscription the way the
+    /// file client's refused seek ends a consumer.
     pub(crate) fn request_seek(
         &self,
         id: SubscriptionId,
@@ -201,7 +214,7 @@ impl AddressRouter {
         coordinator: Option<&Coordinator>,
     ) -> Result<(), SeaFileError> {
         let (target, replay) = {
-            let state = self
+            let mut state = self
                 .state
                 .lock()
                 .expect("sea-file test router mutex poisoned");
@@ -211,20 +224,46 @@ impl AddressRouter {
                     source: Box::from("the subscription has been closed"),
                 });
             };
+            let address = subscription.address.clone();
             let entries = state
                 .log
-                .get(&subscription.address)
+                .get(&address)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
-            let target = resolve(entries, to);
+            let target = match resolve(entries, to) {
+                Ok(target) => target,
+                Err(why) => {
+                    // The file client's consumer does not survive a refused seek: it reports the
+                    // refusal and then reports the stream ended. That is what happens here too, so
+                    // a service testing a seek it cannot make sees what it would see against a
+                    // file - the registry stops routing to it, and its stream completes.
+                    state.subscriptions.remove(&id);
+                    drop(state);
+                    control.ended.store(true, Ordering::Release);
+                    control.waker.wake();
+                    return Err(SeaFileError::Seek {
+                        stream: address,
+                        source: Box::from(why),
+                    });
+                }
+            };
+            let entries = state
+                .log
+                .get(&address)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             let replay = entries
                 .iter()
                 .enumerate()
-                .skip(usize::try_from(target).unwrap_or(usize::MAX))
-                .map(|(sequence, entry)| Delivery {
+                .skip(
+                    usize::try_from(target)
+                        .unwrap_or(usize::MAX)
+                        .saturating_sub(1),
+                )
+                .map(|(index, entry)| Delivery {
                     payload: entry.message.payload().to_vec().into(),
                     headers: entry.message.headers().clone(),
-                    sequence: sequence as u64,
+                    sequence: index as u64 + 1,
                 })
                 .collect::<Vec<_>>();
             drop(state);
@@ -268,22 +307,33 @@ impl AddressRouter {
     }
 }
 
-/// Resolves a position against one address's retained log, clamped to its end.
+/// Resolves a position against one address's retained log into the sequence the subscription
+/// resumes at, counting from one.
 ///
-/// `End` and a sequence past the tail both land on the tail, where the subscription waits for the
-/// next publish - the in-process reading of "skip everything retained".
-fn resolve(entries: &[LogEntry], to: FilePosition) -> u64 {
-    let end = entries.len() as u64;
+/// `End` is the one position past the last entry, where the subscription waits for the next
+/// publish - the in-process reading of "skip everything retained".
+///
+/// # Errors
+///
+/// Returns the reason when the position names no message the log holds: a sequence past the last
+/// one, or an instant later than every entry. A stream file refuses both rather than rounding
+/// them to the tail, because it looks forward for the message and runs out of file.
+fn resolve(entries: &[LogEntry], to: FilePosition) -> Result<u64, &'static str> {
+    let retained = entries.len() as u64;
     match to {
-        FilePosition::Beginning => 0,
-        FilePosition::End => end,
-        FilePosition::Sequence(sequence) => sequence.min(end),
+        FilePosition::Beginning => Ok(1),
+        FilePosition::End => Ok(retained + 1),
+        // Sequence zero is the position before the first message, which both transports read as
+        // the start; past the last one there is nothing to resume at.
+        FilePosition::Sequence(sequence) if sequence <= retained => Ok(sequence.max(1)),
+        FilePosition::Sequence(_) => Err("no message carries that sequence"),
         // The retained log stamps each entry, so the timestamp form resolves the same way the
         // file does: the earliest entry strictly later than the instant.
         FilePosition::Timestamp(millis) => entries
             .iter()
             .position(|entry| entry.at_millis > millis)
-            .map_or(end, |index| index as u64),
+            .map(|index| index as u64 + 1)
+            .ok_or("no message is later than that instant"),
     }
 }
 

@@ -38,7 +38,7 @@
 //!         })
 //!         .with_broker(StdioBroker::new(), |b| {
 //!             b.after_startup(StdioPublish, async move |_publisher| Ok::<_, std::io::Error>(()));
-//!             b.include(tee);
+//!             b.include(tee).out_retry(StdioPublish).to("lines.retry");
 //!         })
 //! }
 //! ```

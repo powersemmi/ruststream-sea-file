@@ -73,13 +73,22 @@ hooks:
 
 plugins:
   - search
+  # The guide moved to the crate's rustdoc, where each module documents its own topics, so the
+  # old page URL in every language lands on the crate's overview. `latest` on docs.rs is the
+  # newest stable release, so the sections appear once the 0.7 line is out of its release
+  # candidates.
+  - redirects:
+      redirect_maps:
+        file.md: https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html
+        ru/file.md: https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html
+        zh/file.md: https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html
   # Versioned docs are published with `mike` (see the Docs workflow and the version switcher).
   # Each translation is a tree of its own under `docs/<locale>/`, mirroring the English paths.
   # English stays at the docs root: a file outside a locale folder is the default language.
   #
   # English is normative; a page with no translation yet falls back to the English text inside
   # the localized site rather than disappearing from it, which is what lets translations land
-  # page by page. Nothing is translated yet, so today every localized page is that fallback.
+  # page by page. Every page of this site is translated, so the fallback is currently unused.
   - i18n:
       docs_structure: folder
       fallback_to_default: true
@@ -95,7 +104,6 @@ plugins:
           build: true
           nav_translations:
             Home: Главная
-            Guide: Руководство
             RustStream docs: Документация RustStream
             API reference: Справочник API
         - locale: zh
@@ -103,7 +111,6 @@ plugins:
           build: true
           nav_translations:
             Home: 首页
-            Guide: 指南
             RustStream docs: RustStream 文档
             API reference: API 参考
 
@@ -116,7 +123,5 @@ extra:
 
 nav:
   - Home: index.md
-  - Guide:
-      - file.md
   - RustStream docs: https://powersemmi.github.io/ruststream/
   - API reference: https://docs.rs/ruststream-sea-file

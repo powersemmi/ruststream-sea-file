@@ -19,13 +19,20 @@ pub const SEQUENCE_HEADER: &str = "stream-sequence";
 /// is inclusive). The other forms keep the transport's own semantics: `Beginning` replays
 /// everything retained, `End` skips to the tip, and `Timestamp` resumes at the earliest
 /// message strictly later than the instant (milliseconds since the Unix epoch).
+///
+/// Seek to a position the stream has reached. A sequence the stream has not written yet, and an
+/// instant later than every message it holds, are both refused - the transport reads forward
+/// looking for the message and runs out of file - and the subscription ends with that refusal
+/// rather than staying where it was. A captured position, the beginning and the tip are always
+/// safe; a number a service worked out for itself is what needs the care.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilePosition {
     /// Everything retained.
     Beginning,
     /// The tip of the stream.
     End,
-    /// A captured message sequence (inclusive).
+    /// A message sequence (inclusive). A stream key is numbered from one, and the numbering
+    /// carries on when a later connection appends to the same file.
     Sequence(u64),
     /// Milliseconds since the Unix epoch (exclusive).
     Timestamp(u64),
