@@ -214,11 +214,10 @@ impl Publisher for FileTestPublisher {
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(self.state.ensure_open().map(|()| {
-            self.state.publish(
-                msg.name(),
-                Bytes::copy_from_slice(msg.payload()),
-                msg.headers().clone(),
-            );
+            let headers = msg.headers().clone();
+            let name = msg.name();
+            self.state
+                .publish(name, msg.into_payload().freeze(), headers);
         }))
     }
 }
