@@ -91,8 +91,16 @@ def memory() -> str:
 
 
 def filesystem(directory: str) -> str:
-    """The filesystem the stream files were written to, named the way `findmnt` names it."""
-    line = run("findmnt", "-no", "FSTYPE,SOURCE", "-T", directory).split()
+    """The filesystem the stream files were written to, named the way `findmnt` names it.
+
+    The directory itself is transient - the recipe removes it once the run is over - so the
+    lookup climbs to the nearest ancestor that is still there. A mount point is what is being
+    asked about, and that does not move when a subdirectory goes.
+    """
+    path = Path(directory).resolve()
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    line = run("findmnt", "-no", "FSTYPE,SOURCE", "-T", str(path)).split()
     return f"{line[0]} on {line[1]}" if len(line) >= 2 else "unknown"
 
 

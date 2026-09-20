@@ -33,6 +33,12 @@ consumer and publisher cost over the library they wrap, which is what this repos
 responsible for. `Framework overhead` is the whole service against the same raw client, so the
 distance between the two columns is what the runtime adds over this transport in particular.
 
+A negative figure means that column was faster than the raw client. On the replay row it is, and
+the reason is the shape of the code rather than the speed of it: a hand-written loop reads a
+message and handles it in the same task, while this crate's subscription reads ahead on a task of
+its own, so the next body is out of the file before the current one is done. That head start
+belongs to the crate rather than to the library, and the runtime's own task widens it.
+
 There are two scenarios because a stream file is read two ways. A replay reads a file written in
 full before the subscription opened, and nothing paces it: this is where the cost of dispatch shows
 in full rather than inside a wait. A live tail follows a file still being appended to, and there
