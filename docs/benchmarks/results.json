@@ -14,7 +14,7 @@
     "os": "Linux 7.2.6-x64v3-xanmod1-1",
     "broker": "none: the transport is a stream file on this machine's filesystem",
     "filesystem": "btrfs on /dev/nvme1n1p1",
-    "file_size": "0.61 GiB per run at its largest",
+    "file_size": "0.64 GiB per run at its largest",
     "page_cache": "warm: every run writes its stream file immediately before reading it back, so the figures are the filesystem's rather than the device's",
     "round_trip": "19.0 us per durable append",
     "rustc": "1.98.1",
@@ -26,50 +26,50 @@
     {
       "name": "replay of a recorded stream file, 512 B JSON",
       "unit": "msg/s",
-      "messages": 1142991,
+      "messages": 1196013,
       "pairs": 11,
       "raw": {
-        "median": 223373,
-        "min": 220588,
-        "max": 225667
+        "median": 225324,
+        "min": 189244,
+        "max": 226899
       },
       "adapter": {
-        "median": 288374,
-        "min": 287431,
-        "max": 290801
+        "median": 291690,
+        "min": 245210,
+        "max": 296144
       },
       "framework": {
-        "median": 299069,
-        "min": 297804,
-        "max": 302443
+        "median": 303452,
+        "min": 279639,
+        "max": 307084
       },
-      "adapter_overhead_percent": -29.1,
-      "overhead_percent": -33.9,
+      "adapter_overhead_percent": -29.5,
+      "overhead_percent": -34.7,
       "verdict": "measured",
       "broker_bound": false
     },
     {
       "name": "live tail of a file being appended to, 512 B JSON",
       "unit": "msg/s",
-      "messages": 427730,
+      "messages": 428649,
       "pairs": 11,
       "raw": {
-        "median": 67725,
-        "min": 67557,
-        "max": 68295
+        "median": 61766,
+        "min": 58844,
+        "max": 68585
       },
       "adapter": {
-        "median": 66869,
-        "min": 63838,
-        "max": 67383
+        "median": 60967,
+        "min": 57922,
+        "max": 67935
       },
       "framework": {
-        "median": 65649,
-        "min": 62804,
-        "max": 65955
+        "median": 58805,
+        "min": 54975,
+        "max": 66650
       },
       "adapter_overhead_percent": 1.3,
-      "overhead_percent": 3.1,
+      "overhead_percent": 4.8,
       "verdict": "indistinguishable",
       "broker_bound": true
     }
