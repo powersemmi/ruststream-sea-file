@@ -124,6 +124,7 @@ async fn an_order_is_confirmed() -> Result<(), Box<dyn std::error::Error>> {
 A stdio service swaps the type and names the destination its copies go to, the way it names it in production:
 
 ```rust
+use ruststream_sea_file::stdio::prelude::*;
 use ruststream_sea_file::testing::StdioTestBroker;
 
 let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
