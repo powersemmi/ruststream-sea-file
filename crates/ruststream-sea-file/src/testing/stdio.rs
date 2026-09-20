@@ -185,10 +185,8 @@ impl Publisher for StdioTestPublisher {
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(self.state.ensure_open().map(|()| {
-            let headers = msg.headers().clone();
-            let name = msg.name();
-            self.state
-                .publish(name, msg.into_payload().freeze(), headers);
+            let (name, payload, headers) = msg.into_parts();
+            self.state.publish(name, payload.freeze(), headers);
         }))
     }
 }
