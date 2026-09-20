@@ -83,7 +83,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures::Stream;
 use ruststream::{
     BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
-    NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    Lend, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
     Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
@@ -384,12 +384,16 @@ impl std::fmt::Debug for StdioPublisher {
 }
 
 impl Publisher for StdioPublisher {
+    /// A line on standard output is written from the bytes and keeps nothing: the client's
+    /// `send_to` takes a slice, and the text-safe envelope is a buffer of this crate's own.
+    type Payload = Lend;
+
     type Error = SeaFileError;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&()>,
     ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
