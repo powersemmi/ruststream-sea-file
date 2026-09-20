@@ -8,7 +8,8 @@ site serves at `benchmarks/results.json`.
 
 The schema is the core's, declared at
 https://powersemmi.github.io/ruststream/latest/benchmarks/#publishing-results. This crate
-publishes the throughput table alone, so the document declares schema 1.
+publishes the throughput table alone, each loop as its best and worst round, so the document
+declares schema 3.
 
 There is no broker here: the transport is a file on the machine's own filesystem. The `broker`
 field says so, and the filesystem, the size of a run's stream file and the state of the page
@@ -162,7 +163,7 @@ def main() -> int:
         return 2
     summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     document = {
-        "schema": 1,
+        "schema": 3,
         "crate": "ruststream-sea-file",
         "crate_version": crate_version(),
         "core_version": core_version(),
