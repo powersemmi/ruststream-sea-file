@@ -7,8 +7,13 @@ default: check
 
 check:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
-    cargo check --workspace --all-targets --all-features
+    # The benchmark package is left out of the all-features legs on purpose: it is built with the
+    # feature set a service ships, and the framework's harness feature is a compile error in it.
+    # Its own leg follows.
+    cargo clippy --workspace --exclude ruststream-sea-file-bench --all-targets --all-features -- -D warnings
+    cargo clippy -p ruststream-sea-file-bench --all-targets -- -D warnings
+    cargo check --workspace --exclude ruststream-sea-file-bench --all-targets --all-features
+    cargo check -p ruststream-sea-file-bench --all-targets
     cargo check --workspace --no-default-features
 
 test:
@@ -26,6 +31,26 @@ test-brokers:
     cargo test --workspace --all-features --examples \
         --test integration_sea --test conformance_sea --test file_positions \
         --test file_retry --test stdio_processes --test stdio_retry
+
+# What this crate costs over the sea-streamer-file client it wraps, and what the runtime costs on
+# top: every scenario runs three times over - the client driven directly, this crate's own consumer
+# and publisher hand-driven, and the service a user writes. There is no stand to start - on this
+# broker the local machine is the transport - so the recipe only points the runs at a directory for
+# their stream files and removes it again afterwards. On demand only: it takes minutes, it writes
+# tens of gigabytes through that directory, and it wants the machine to itself. The page it feeds
+# is docs/benchmarks.md.
+bench *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    streams="$PWD/target/bench-streams"
+    trap 'rm -rf "$streams"' EXIT
+    mkdir -p "$streams"
+    # RUSTFLAGS is cleared so the numbers are not tied to this machine's CPU: a binary built with
+    # `-C target-cpu=native` cannot be reproduced anywhere else.
+    RUSTFLAGS="" RUSTSTREAM_BENCH_DIR="$streams" \
+    RUSTSTREAM_BENCH_OUT="$PWD/target/bench-paired.json" \
+        cargo bench -p ruststream-sea-file-bench --bench paired {{ ARGS }}
+    python3 scripts/bench_results.py target/bench-paired.json docs/benchmarks/results.json
 
 fmt:
     cargo fmt --all
