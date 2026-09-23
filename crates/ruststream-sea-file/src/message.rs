@@ -3,7 +3,7 @@
 use std::future::{Future, ready};
 
 use bytes::Bytes;
-use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned};
+use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Str};
 use sea_streamer_types::{Buffer as _, Message as _, SharedMessage};
 
 use crate::wire;
@@ -96,7 +96,7 @@ impl SeaMessage {
     pub(crate) fn new(message: &SharedMessage) -> Self {
         let (mut headers, payload) = wire::decode(message.message().as_bytes());
         let sequence = message.sequence();
-        headers.insert(SEQUENCE_HEADER, sequence.to_string());
+        headers.insert(Str::from_static(SEQUENCE_HEADER), sequence.to_string());
         Self {
             payload,
             headers,

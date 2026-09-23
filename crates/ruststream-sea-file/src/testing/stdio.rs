@@ -8,8 +8,8 @@ use bytes::Bytes;
 use futures::Stream;
 use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{
-    BatchSubscriber, Broker, ConnectedBroker, DefaultPublish, NamedCopies, OutgoingMessage,
-    Publisher, RawMessage, Subscribe, Subscriber,
+    BatchSubscriber, Broker, BytesMut, ConnectedBroker, DefaultPublish, NamedCopies,
+    OutgoingMessage, Publisher, RawMessage, Subscribe, Subscriber, Take,
 };
 
 use crate::error::SeaFileError;
@@ -170,6 +170,10 @@ pub struct StdioTestPublisher {
 }
 
 impl Publisher for StdioTestPublisher {
+    /// Unlike the pipe it stands in for, the stand keeps what it is given: a recorded delivery
+    /// owns its payload.
+    type Payload = Take;
+
     type Error = SeaFileError;
     // The unit type the real publisher declares: a line on standard output takes a stream key and
     // a payload and nothing else.
@@ -177,15 +181,12 @@ impl Publisher for StdioTestPublisher {
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(self.state.ensure_open().map(|()| {
-            self.state.publish(
-                msg.name(),
-                Bytes::copy_from_slice(msg.payload()),
-                msg.headers().clone(),
-            );
+            let (name, payload, headers) = msg.into_parts();
+            self.state.publish(name, payload.freeze(), headers);
         }))
     }
 }

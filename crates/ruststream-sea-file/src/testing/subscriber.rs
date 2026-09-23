@@ -9,7 +9,7 @@ use futures::Stream;
 
 use ruststream::{
     AckError, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage, Positioned,
-    Seekable, Subscriber, testing::Coordinator,
+    Seekable, Str, Subscriber, testing::Coordinator,
 };
 
 use crate::batching::BATCH_MAX_WAIT;
@@ -283,7 +283,7 @@ impl FileTestMessage {
         // The same well-known header the file transport writes, so a batch body that reads
         // positions off its elements works identically here.
         let mut headers = delivery.headers.clone();
-        headers.insert(SEQUENCE_HEADER, sequence.to_string());
+        headers.insert(Str::from_static(SEQUENCE_HEADER), sequence.to_string());
         Self {
             delivery,
             headers,

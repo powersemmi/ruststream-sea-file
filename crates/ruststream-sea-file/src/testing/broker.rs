@@ -7,8 +7,8 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use ruststream::testing::{Coordinator, TestableBroker};
 use ruststream::{
-    AddressedCopies, Broker, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher,
-    RawMessage, Subscribe,
+    AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, OutgoingMessage, Publisher,
+    RawMessage, Subscribe, Take,
 };
 
 use crate::error::SeaFileError;
@@ -199,6 +199,10 @@ pub struct FileTestPublisher {
 }
 
 impl Publisher for FileTestPublisher {
+    /// Unlike the stream file it stands in for, the stand keeps what it is given: a recorded
+    /// delivery owns its payload.
+    type Payload = Take;
+
     type Error = SeaFileError;
     // The same unit type both real publishers declare: a test must not be able to set something
     // in process that a stream file would have nowhere to put.
@@ -206,15 +210,12 @@ impl Publisher for FileTestPublisher {
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(self.state.ensure_open().map(|()| {
-            self.state.publish(
-                msg.name(),
-                Bytes::copy_from_slice(msg.payload()),
-                msg.headers().clone(),
-            );
+            let (name, payload, headers) = msg.into_parts();
+            self.state.publish(name, payload.freeze(), headers);
         }))
     }
 }

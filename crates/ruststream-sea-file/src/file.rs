@@ -200,8 +200,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi::Bindings;
 use ruststream::{
-    AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, OutgoingMessage,
-    PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
+    AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Lend,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
 };
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
@@ -512,12 +512,16 @@ impl std::fmt::Debug for FilePublisher {
 }
 
 impl Publisher for FilePublisher {
+    /// The append reads the bytes and keeps nothing: the client's `send_to` takes a slice, and
+    /// the envelope this crate writes is a buffer of its own anyway.
+    type Payload = Lend;
+
     type Error = SeaFileError;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&()>,
     ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
