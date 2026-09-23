@@ -1,0 +1,28 @@
+# ruststream-sea-file
+
+> `ruststream-sea-file` is the file and stdio transport for RustStream, a Rust framework for services that subscribe to message brokers and publish to them. Over `sea-streamer-file` and `sea-streamer-stdio`, a broker is a log kept in one `.ss` stream file on disk, or the process's own standard input and output, with no server anywhere.
+
+`FileBroker` is a replayable log that survives restarts and repositions on demand: it is the framework's reference implementation of seeking. `StdioBroker` makes a service a stage of a shell pipeline. A subscription is a stream key: `FileStream::new("orders")` on a stream file, the bare name on standard input. A service globs the prelude of the form it runs on (`ruststream_sea_file::file::prelude::*` or `ruststream_sea_file::stdio::prelude::*`), which offers that form's publish policy as `Publish`; a service on both globs `ruststream_sea_file::prelude::*` and writes `FilePublish` and `StdioPublish`. Neither transport settles a delivery, so a service resumes from a position it stored itself.
+
+This site holds the entry pages. The crate's guides are its module overviews on docs.rs, and the framework itself is documented on the RustStream site.
+
+## Site
+
+- [Home](https://powersemmi.github.io/ruststream-sea-file/latest/): the two transports, the dependency lines, a first service and where each topic is documented
+- [Benchmarks](https://powersemmi.github.io/ruststream-sea-file/latest/benchmarks/): what this crate and the framework's runtime cost over `sea-streamer-file`, and how to re-measure it with `just bench`
+
+## Guides
+
+- [Overview](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html): the two forms, what each transport answers, headers, the generated document, operations and cargo features
+- [What the transports answer](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#what-the-transports-answer): which framework capabilities each transport implements, and how a service resumes
+- [Operations](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#operations): platform limits, beacon interval, end-of-stream marks and file growth
+- [The stream file](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html): subscribing, positions and seeking, batches, publishing, delayed redelivery and the broker's settings
+- [The pipeline](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html): the line format, subscribing on standard input, publishing and where a deferred copy goes
+- [Testing](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html): the in-process stand for each transport, behind the `testing` feature
+- [Prelude](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/prelude/index.html): the one glob for a service that spans both forms
+
+## Optional
+
+- [API reference](https://docs.rs/ruststream-sea-file): the full rustdoc of the crate
+- [RustStream llms.txt](https://powersemmi.github.io/ruststream/llms.txt): the index of the framework's own documentation
+- [Source](https://github.com/powersemmi/ruststream-sea-file): the crate's repository
