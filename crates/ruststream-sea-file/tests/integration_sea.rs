@@ -123,6 +123,66 @@ fn a_finished_file_replays_and_completes() {
     });
 }
 
+/// Bodies the unmarked replay records: past the thousand messages the file client reads ahead of
+/// its consumer, and not a multiple of it, so the end of the file falls inside a read-ahead
+/// window that is still full.
+const UNMARKED_REPLAY: usize = 1_537;
+
+/// A replay of a file with no end-of-stream mark finds the end by running out of file, and
+/// delivers every message the file holds before it reports that end.
+#[test]
+fn a_replay_delivers_the_whole_file_before_it_ends() {
+    common::on_a_file(async {
+        let path = common::tmp_path("replay-unmarked");
+
+        {
+            let connected = FileBroker::new(&path).connect().await.expect("file opens");
+            let publisher = connected.publisher();
+            for i in 0..UNMARKED_REPLAY {
+                let body = u32::try_from(i).expect("the count fits").to_be_bytes();
+                publisher
+                    .publish(OutgoingMessage::new("orders", body.as_slice()), None)
+                    .await
+                    .expect("publish succeeds");
+            }
+            connected.shutdown().await.expect("shutdown succeeds");
+        }
+
+        let connected = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("file reopens");
+        let mut subscriber = connected
+            .subscribe_stream(FileStream::new("orders").replay())
+            .await
+            .expect("replay opens");
+        let mut handled = 0_usize;
+        {
+            let mut stream = pin!(subscriber.stream());
+            while let Some(next) = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("the replay moves on")
+            {
+                let message = next.expect("delivery is ok");
+                let expected = u32::try_from(handled)
+                    .expect("the count fits")
+                    .to_be_bytes();
+                assert_eq!(message.payload(), expected.as_slice(), "in publish order");
+                handled += 1;
+            }
+        }
+        assert_eq!(
+            handled, UNMARKED_REPLAY,
+            "the replay ended before it delivered the whole file"
+        );
+
+        drop(subscriber);
+        connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
 /// The in-process transport answers settlement the way a stream file answers it. Both are read
 /// here in one test, because the value of the answer is that the two agree: a stand-in that
 /// claimed a settlement would make a handler's retry look effective under test and lose the

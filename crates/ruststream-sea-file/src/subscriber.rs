@@ -8,8 +8,8 @@
 //! Batches sit on top of that channel rather than in the client, which reads one message at a
 //! time; see [`crate::batching`] for why, and for the deadline that closes a partial one.
 //!
-//! A replay reads its first delivery before the driver task starts, and the driver sends that one
-//! on before anything else; see [`FileSubscriber::spawn`] for what that avoids.
+//! A replay reads the file itself rather than through the client's consumer; see [`Reader`] for
+//! why.
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -21,8 +21,8 @@ use ruststream::{
     AckError, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage, Positioned,
     Seekable, Seeker, Subscriber,
 };
-use sea_streamer_file::{FileConsumer, FileErr};
-use sea_streamer_types::{Consumer as _, SeqPos, SharedMessage, StreamErr, Timestamp};
+use sea_streamer_file::{FileConsumer, FileErr, MessageSource, SeekTarget, is_end_of_stream};
+use sea_streamer_types::{Consumer as _, ShardId, SharedMessage, StreamErr, StreamKey, Timestamp};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::batching::BATCH_MAX_WAIT;
@@ -75,24 +75,11 @@ impl FileSubscriber {
         &self.stream
     }
 
-    pub(crate) async fn spawn(stream: String, consumer: FileConsumer, replay: bool) -> Self {
+    pub(crate) fn spawn(stream: String, reader: Reader) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
-        // A replay reads a file that already holds everything it will ever hold, and the client
-        // starts reading it the moment the consumer exists. If the first read happens on the
-        // driver task instead, the client can reach the end of the file and drop what it had
-        // buffered before that task is ever scheduled, and the replay yields nothing at all. So
-        // the first delivery is read here, in the task that created the consumer, and handed to
-        // the driver to send on before anything else. A live subscription reads nothing here: it
-        // has no retained region to lose, and waiting for its first message would turn
-        // subscribing into a wait for traffic.
-        let first = if replay {
-            Some(consumer.next().await)
-        } else {
-            None
-        };
-        tokio::spawn(drive(consumer, out_tx, cmd_rx, stream.clone(), first));
+        tokio::spawn(drive(reader, out_tx, cmd_rx, stream.clone()));
         let stream: Arc<str> = Arc::from(stream);
         Self {
             stream: Arc::clone(&stream),
@@ -345,8 +332,54 @@ impl Seeker for FileSeeker {
     }
 }
 
+/// The shard every message of a stream file is written to: the file transport has one per key.
+const SHARD: ShardId = ShardId::new(0);
+
+/// What a subscription's driver task reads the file through.
+pub(crate) enum Reader {
+    /// The client's consumer, which follows the live tail.
+    Tail(FileConsumer),
+    /// The file read directly, from the beginning, one message at a time.
+    ///
+    /// The client's own replay reads ahead of its consumer and, at the end of a file with no
+    /// end-of-stream mark, reports the end while that read-ahead is still undelivered, so the
+    /// tail of the file never reaches the handler. Read here, nothing sits between the file and
+    /// the delivery channel, and the end is reported after the last message was sent on.
+    Replay {
+        source: Box<MessageSource>,
+        key: StreamKey,
+    },
+}
+
+impl Reader {
+    /// The next message of the subscription's stream key.
+    async fn next(&mut self) -> Result<SharedMessage, StreamErr<FileErr>> {
+        match self {
+            Self::Tail(consumer) => consumer.next().await,
+            Self::Replay { source, key } => loop {
+                let message = source.next().await.map_err(StreamErr::Backend)?.message;
+                if is_end_of_stream(&message) {
+                    return Err(StreamErr::Backend(FileErr::StreamEnded));
+                }
+                // One file holds every stream key, the client's internal ones included.
+                if message.header().stream_key() == key {
+                    return Ok(message.to_shared());
+                }
+            },
+        }
+    }
+
+    /// Moves the subscription; not cancel-safe, so it runs to completion on the driver task.
+    async fn reposition(&mut self, target: SeekTarget) -> Result<(), FileErr> {
+        match self {
+            Self::Tail(consumer) => consumer.seek_to(target).await,
+            Self::Replay { source, key } => source.seek(key, &SHARD, target).await,
+        }
+    }
+}
+
 /// A receive failure that means the stream ended cleanly: the writer's end-of-stream mark,
-/// or the end of a dead file in replay mode.
+/// or the end of the file in replay mode.
 fn is_clean_end(err: &StreamErr<FileErr>) -> bool {
     matches!(
         err,
@@ -355,40 +388,28 @@ fn is_clean_end(err: &StreamErr<FileErr>) -> bool {
 }
 
 async fn drive(
-    mut consumer: FileConsumer,
+    mut reader: Reader,
     out: mpsc::Sender<Stamped>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     stream: String,
-    first: Option<Result<SharedMessage, StreamErr<FileErr>>>,
 ) {
-    // The generation the consumer is actually positioned in. It advances when a reposition has
+    // The generation the reader is actually positioned in. It advances when a reposition has
     // run, never when one is merely requested, so a delivery read at the old position cannot be
     // stamped with the generation the request opened and pass the reader's filter.
     let mut applied = 0;
-    // The delivery already read for this subscription goes out before anything else, so holding
-    // it changes the order of nothing.
-    if let Some(next) = first
-        && !forward(next, &out, &stream, applied).await
-    {
-        return;
-    }
     loop {
         tokio::select! {
             biased;
             cmd = cmd_rx.recv() => {
                 let Some(SeekCmd { position, epoch: opened, done }) = cmd else { break };
-                // The client's seek is not cancel-safe: it runs here to completion, never
-                // inside a racing select arm.
-                let result = match position {
-                    FilePosition::Beginning => consumer.rewind(SeqPos::Beginning).await,
-                    FilePosition::End => consumer.rewind(SeqPos::End).await,
-                    FilePosition::Sequence(sequence) => {
-                        consumer.rewind(SeqPos::At(sequence)).await
-                    }
+                let target = match position {
+                    FilePosition::Beginning => SeekTarget::Beginning,
+                    FilePosition::End => SeekTarget::End,
+                    FilePosition::Sequence(sequence) => SeekTarget::SeqNo(sequence),
                     FilePosition::Timestamp(millis) => {
                         let nanos = i128::from(millis) * 1_000_000;
                         match Timestamp::from_unix_timestamp_nanos(nanos) {
-                            Ok(timestamp) => consumer.seek(timestamp).await,
+                            Ok(timestamp) => SeekTarget::Timestamp(timestamp),
                             Err(err) => {
                                 applied = opened;
                                 let _ = done.send(Err(SeaFileError::Invalid(format!(
@@ -399,6 +420,10 @@ async fn drive(
                         }
                     }
                 };
+                // The client's seek is not cancel-safe: it runs here to completion, never
+                // inside a racing select arm. A read it interrupted is discarded with the old
+                // position.
+                let result = reader.reposition(target).await;
                 // The generation the request opened starts here, whether or not the reposition
                 // succeeded: a failed one leaves the subscription where it was, and what it
                 // reads next is current again rather than discarded for ever.
@@ -409,7 +434,7 @@ async fn drive(
                 }));
             }
             () = out.closed() => break,
-            next = consumer.next() => {
+            next = reader.next() => {
                 if !forward(next, &out, &stream, applied).await {
                     break;
                 }

@@ -13,9 +13,10 @@
 //!
 //! [`replay`](FileStream::replay) reads the retained file from its start and completes the
 //! subscription at the end of the file instead of following live writes: that is how a recorded
-//! log is processed in one pass. Point it at a file whose writer called
-//! [`end_with_eos`](FileBroker::end_with_eos), so the end is written into the file rather than
-//! inferred from it. Replay is the one reading mode a position cannot express.
+//! log is processed in one pass. Every message the file holds is delivered before the
+//! subscription completes, at the end-of-stream mark a writer left with
+//! [`end_with_eos`](FileBroker::end_with_eos) or at the end of the file when there is none.
+//! Replay is the one reading mode a position cannot express.
 //!
 //! # Positions and seeking
 //!
@@ -205,7 +206,7 @@ use ruststream::{
 };
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
-    FileProducerOptions, FileStreamer,
+    FileProducerOptions, FileStreamer, MessageSource, StreamMode,
 };
 use sea_streamer_types::{
     ConsumerMode, ConsumerOptions as _, Producer as _, StreamErr, StreamKey, Streamer as _,
@@ -216,7 +217,7 @@ use crate::error::{SeaFileError, box_err};
 use crate::stream::FileStream;
 #[cfg(feature = "asyncapi")]
 use crate::stream::channel_extension;
-use crate::subscriber::FileSubscriber;
+use crate::subscriber::{FileSubscriber, Reader};
 use crate::wire;
 
 pub(crate) struct Core {
@@ -295,10 +296,8 @@ impl FileBroker {
     /// Writes an end-of-stream mark when the broker shuts down, marking the file finished.
     ///
     /// A subscription that tails the file reads the mark and ends there, which is the only
-    /// thing that ends a live subscription; a replay reads a marked file to its end and
-    /// completes. Finish a file a reader will replay: without the mark the reader has to find
-    /// the end of the file for itself, and it may report the end before it has delivered
-    /// everything the file holds.
+    /// thing that ends a live subscription. A replay completes at the mark, or at the end of the
+    /// file when there is none, after delivering every message before it.
     pub fn end_with_eos(mut self) -> Self {
         self.end_with_eos = true;
         self
@@ -430,31 +429,40 @@ impl ConnectedFileBroker {
 
         let key = StreamKey::new(descriptor.stream())
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", descriptor.stream())))?;
-        let mut options = FileConsumerOptions::new(ConsumerMode::RealTime);
-        // A live subscription tails the file; where reading begins is the framework's
-        // start_at / Seek surface. Replay is the one mode a seek cannot express: it reads
-        // the retained file from the start and completes the stream at its end.
-        options.set_auto_stream_reset(if descriptor.replay_value() {
-            AutoStreamReset::Earliest
+        // A live subscription tails the file through the client's consumer; where reading begins
+        // is the framework's start_at / Seek surface. Replay is the one mode a seek cannot
+        // express: it reads the retained file from the start and completes the stream at its end,
+        // and it reads the file itself - see `Reader::Replay` for why.
+        let reader = if descriptor.replay_value() {
+            let source =
+                MessageSource::new(FileId::new(self.core.path.clone()), StreamMode::Replay)
+                    .await
+                    .map_err(|e| SeaFileError::Subscribe {
+                        stream: descriptor.stream().to_owned(),
+                        source: box_err(e),
+                    })?;
+            Reader::Replay {
+                source: Box::new(source),
+                key,
+            }
         } else {
-            AutoStreamReset::Latest
-        });
-        options.set_live_streaming(!descriptor.replay_value());
-        let consumer = self
-            .core
-            .streamer
-            .create_consumer(&[key], options)
-            .await
-            .map_err(|e| SeaFileError::Subscribe {
-                stream: descriptor.stream().to_owned(),
-                source: box_err(e),
-            })?;
+            let mut options = FileConsumerOptions::new(ConsumerMode::RealTime);
+            options.set_auto_stream_reset(AutoStreamReset::Latest);
+            let consumer = self
+                .core
+                .streamer
+                .create_consumer(&[key], options)
+                .await
+                .map_err(|e| SeaFileError::Subscribe {
+                    stream: descriptor.stream().to_owned(),
+                    source: box_err(e),
+                })?;
+            Reader::Tail(consumer)
+        };
         Ok(FileSubscriber::spawn(
             descriptor.stream().to_owned(),
-            consumer,
-            descriptor.replay_value(),
-        )
-        .await)
+            reader,
+        ))
     }
 }
 

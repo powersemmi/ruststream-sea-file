@@ -55,9 +55,10 @@ impl FileStream {
     /// Replays the retained file from the beginning instead of following live writes; the
     /// subscription completes at the end of the file.
     ///
-    /// Point it at a file whose writer called
-    /// [`end_with_eos`](crate::FileBroker::end_with_eos), so the end is written into the file
-    /// rather than inferred from it.
+    /// Every message the file holds is delivered before the subscription completes. The end is
+    /// the end-of-stream mark a writer left with
+    /// [`end_with_eos`](crate::FileBroker::end_with_eos), or the end of the file when there is
+    /// none.
     pub fn replay(mut self) -> Self {
         self.replay = true;
         self

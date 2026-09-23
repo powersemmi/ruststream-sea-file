@@ -140,9 +140,9 @@ file or the process's own pipes. What is worth knowing before shipping:
 * The file transport does not build on Windows, an upstream constraint of the file client.
 * [`beacon_interval`](FileBroker::beacon_interval) must be a positive multiple of 1024 bytes;
   denser beacons make seeking finer-grained and the file larger.
-* [`end_with_eos`](FileBroker::end_with_eos) is what finishes a file a reader will replay.
-  Without the mark the reader has to find the end itself, and may report the end before it has
-  delivered everything the file holds.
+* [`end_with_eos`](FileBroker::end_with_eos) marks a file finished. A live subscription ends
+  only on that mark. A replay ends on it or at the end of the file, after delivering every
+  message before it.
 * A stream file grows without bound. Retention, rotation and disk budget are the operator's.
 * The stdio publisher rejects a message with no payload and no headers with
   [`SeaFileError::Invalid`], because the client's line format silently drops empty lines.
