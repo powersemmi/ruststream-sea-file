@@ -97,10 +97,13 @@ file holds, are both refused, and the subscription ends with the refusal.
 The client's payloads are plain bytes with no header space, so headers travel in the payload
 itself, and only when a message has any. A message published without headers is written verbatim,
 so a file recorded that way stays readable as a plain payload stream by any `sea-streamer`
-consumer, and a file written by another tool stays readable here. A message with headers is
+consumer, and a file written by another tool stays readable here. The one exception is a payload
+that itself begins with `rs1:`, which is enveloped so that no reader takes it for an envelope. A message with headers is
 written as `rs1:` followed by base64 of a length-prefixed header block and the payload; the form
 is text-safe because the stdio transport is line-oriented UTF-8. The stdio publisher also
-envelopes a non-UTF-8 payload that has no headers, so binary survives a shell pipeline intact.
+envelopes a payload that has no headers when a line would not carry it as it is: one that is not
+UTF-8, holds a newline, or begins or ends with whitespace. So binary, multi-line and padded
+payloads survive a shell pipeline intact.
 
 Every delivery carries its sequence number in the [`SEQUENCE_HEADER`] header.
 

@@ -12,12 +12,14 @@ use ruststream::HeaderMap;
 
 const PREFIX: &str = "rs1:";
 
-/// Encodes a payload with its headers. Headerless payloads pass through untouched;
-/// `force_text` additionally envelopes a non-UTF-8 payload (the stdio transport rejects
-/// binary lines).
+/// Encodes a payload with its headers. Headerless payloads pass through untouched, unless the
+/// reader would take them for something else: a payload that begins like an envelope is
+/// enveloped itself on both transports. `force_text` marks a line of the stdio transport, which
+/// additionally envelopes a payload a line cannot carry as it is.
 pub(crate) fn encode(headers: &HeaderMap, payload: &[u8], force_text: bool) -> Vec<u8> {
-    let needs_envelope =
-        !headers.is_empty() || (force_text && std::str::from_utf8(payload).is_err());
+    let needs_envelope = !headers.is_empty()
+        || payload.starts_with(PREFIX.as_bytes())
+        || (force_text && !fits_a_line(payload));
     if !needs_envelope {
         return payload.to_vec();
     }
@@ -37,6 +39,16 @@ pub(crate) fn encode(headers: &HeaderMap, payload: &[u8], force_text: bool) -> V
     out.push_str(PREFIX);
     BASE64.encode_string(&framed, &mut out);
     out.into_bytes()
+}
+
+/// Whether a line of the stdio client carries `payload` unchanged.
+///
+/// The line is text. The client writes the payload after the line's meta fields and ends it with
+/// a newline, and the reader at the other end of the pipe splits on newlines and trims the payload
+/// it finds. So a payload that is not UTF-8, holds a newline, or begins or ends with whitespace
+/// would arrive cut into pieces or trimmed.
+fn fits_a_line(payload: &[u8]) -> bool {
+    std::str::from_utf8(payload).is_ok_and(|text| !text.contains('\n') && text.trim() == text)
 }
 
 /// Splits a payload back into headers and raw bytes; anything without the envelope prefix
@@ -92,6 +104,43 @@ mod tests {
         assert_eq!(decoded.get_str("content-type"), Some("application/json"));
         assert_eq!(decoded.get_str("x-tenant"), Some("acme"));
         assert_eq!(payload.as_ref(), b"{\"id\":1}");
+    }
+
+    #[test]
+    fn a_line_envelopes_what_the_line_format_would_cut_or_trim() {
+        for raw in [
+            b"first\nsecond".as_slice(),
+            b" padded".as_slice(),
+            b"padded\t".as_slice(),
+            b"ends with a carriage return\r".as_slice(),
+        ] {
+            let encoded = encode(&HeaderMap::new(), raw, true);
+            let line = std::str::from_utf8(&encoded).expect("envelope must be text-safe");
+            assert!(!line.contains('\n'), "{line:?} would split the line");
+            assert_eq!(line.trim(), line, "{line:?} would be trimmed");
+            let (headers, payload) = decode(&encoded);
+            assert!(headers.is_empty());
+            assert_eq!(payload.as_ref(), raw);
+        }
+        // A line that survives the format is written as it is, so a pipeline stays readable.
+        assert_eq!(
+            encode(&HeaderMap::new(), b"{\"id\":1}", true),
+            b"{\"id\":1}"
+        );
+        // A stream file is not a line: it keeps such payloads verbatim.
+        assert_eq!(encode(&HeaderMap::new(), b" padded\n", false), b" padded\n");
+    }
+
+    #[test]
+    fn a_payload_that_looks_like_an_envelope_is_enveloped() {
+        // Four zero bytes in base64: without its own envelope this payload would decode as an
+        // empty one.
+        let raw = b"rs1:AAAAAA==".as_slice();
+        for force_text in [false, true] {
+            let (headers, payload) = decode(&encode(&HeaderMap::new(), raw, force_text));
+            assert!(headers.is_empty());
+            assert_eq!(payload.as_ref(), raw);
+        }
     }
 
     #[test]
