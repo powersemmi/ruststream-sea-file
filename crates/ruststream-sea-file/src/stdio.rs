@@ -364,8 +364,9 @@ impl Subscriber for StdioDeliveries {
 
 /// Publishes messages to standard output.
 ///
-/// The line format is the client's own; payloads must be text, so a non-UTF-8 payload (and
-/// any message with headers) travels in the text-safe envelope. The client silently drops
+/// The line format is the client's own. A line is text, ends at a newline, and the reader trims
+/// it, so a payload that is not UTF-8, holds a newline or begins or ends with whitespace (and any
+/// message with headers) travels in the text-safe envelope. The client silently drops
 /// empty lines, so an empty payload is rejected here instead.
 ///
 /// A publish carries no per-message settings: a line on standard output takes a key and a
