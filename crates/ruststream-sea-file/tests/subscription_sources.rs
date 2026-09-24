@@ -1,25 +1,24 @@
-//! Every subscription form this crate ships resolves against the in-process broker.
+//! Every subscription form this crate ships resolves against the file broker in process.
 //!
-//! A service names its subscription once, in the declaration that ships. If that same
-//! declaration did not resolve against [`FileTestBroker`], a test would have to name the
-//! subscription differently from production and would cover a wiring nobody runs. So each form
-//! is mounted here exactly as a service writes it - the file form's descriptor, its replay mode,
-//! and the bare stream key a mount site without a descriptor writes - and driven through the
-//! `TestApp` harness.
+//! Each form is mounted here exactly as a service writes it - the file form's descriptor, its
+//! replay mode, and the bare stream key a mount site without a descriptor writes - and driven
+//! through the `TestApp` harness.
 //!
-//! What the stand-in does with each form is asserted rather than assumed: the descriptor's two
-//! reading modes are told apart on one run, so the replay mode landing at the start of the
-//! retained log is checked, not just documented.
+//! What the in-process file does with each form is asserted rather than assumed: the descriptor's
+//! two reading modes are told apart on one run, so the replay mode landing at the start of the
+//! retained log, and completing at its end, is checked, not just documented.
 
 #![cfg(feature = "testing")]
 
 use std::future::{Future, ready};
 
 use ruststream::schemars::JsonSchema;
-use ruststream::testing::TestApp;
+use ruststream::testing::{InProcess, TestApp};
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::FileTestBroker;
 use serde::{Deserialize, Serialize};
+
+/// The file the service is built on; in process nothing is opened at it.
+const PATH: &str = "/var/lib/orders/orders.ss";
 
 // The manual chain below documents its handler, which is what a service gets by default under
 // the `asyncapi` feature: the payload carries a schema into the generated document.
@@ -82,13 +81,15 @@ impl Handle<Order> for Archive {
     }
 }
 
-/// Appends `orders` to the broker's retained log before any subscription opens, the way a
-/// producer that ran earlier would have left them in a stream file.
+/// Opens the service's file in process and appends `orders` to it before the service starts, the
+/// way a producer that ran earlier would have left them in the stream file. The service's broker
+/// is a clone of `broker`, so it connects to the same file.
 async fn record(
-    broker: &FileTestBroker,
+    broker: &FileBroker,
     stream: &str,
     orders: impl IntoIterator<Item = Order>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _file = broker.clone().connect_in_process().await?;
     let publisher = broker.publisher();
     for order in orders {
         publisher.message(&order).to(stream).publish().await?;
@@ -100,19 +101,19 @@ async fn record(
 async fn the_descriptor_form_mounts_on_the_in_process_broker()
 -> Result<(), Box<dyn std::error::Error>> {
     let app =
-        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(confirm);
         });
     let tb = TestApp::start(app).await?;
 
     tb.message(&Order { id: 1 }).to("orders").publish().await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("orders")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
     assert_eq!(
-        tb.broker::<FileTestBroker>()
+        tb.broker::<FileBroker>()
             .published::<Receipt>("receipts")
             .decoded(),
         vec![Receipt { id: 1 }],
@@ -124,7 +125,7 @@ async fn the_descriptor_form_mounts_on_the_in_process_broker()
 async fn the_replay_mode_opens_at_the_start_of_the_retained_log()
 -> Result<(), Box<dyn std::error::Error>> {
     // Two streams recorded before the service exists, one per reading mode.
-    let broker = FileTestBroker::new();
+    let broker = FileBroker::new(PATH);
     let run = || (1..=3).map(|id| Order { id });
     record(&broker, "recorded", run()).await?;
     record(&broker, "tailed", run()).await?;
@@ -136,18 +137,18 @@ async fn the_replay_mode_opens_at_the_start_of_the_retained_log()
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("recorded")
         .assert_called(3)
         .settled(HandlerOutcome::ack());
     // The plain descriptor follows the tail, so the same recorded run is not delivered to it.
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("tailed")
         .assert_called(0);
 
     // What it does follow is everything published from here on.
     tb.message(&Order { id: 4 }).to("tailed").publish().await?;
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("tailed")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
@@ -158,14 +159,14 @@ async fn the_replay_mode_opens_at_the_start_of_the_retained_log()
 async fn a_bare_stream_key_mounts_on_the_in_process_broker()
 -> Result<(), Box<dyn std::error::Error>> {
     let app =
-        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(audited);
         });
     let tb = TestApp::start(app).await?;
 
     tb.message(&Order { id: 1 }).to("audit").publish().await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("audit")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
@@ -176,14 +177,14 @@ async fn a_bare_stream_key_mounts_on_the_in_process_broker()
 async fn the_descriptor_mounts_through_the_manual_path_too()
 -> Result<(), Box<dyn std::error::Error>> {
     let app =
-        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(subscriber(FileStream::new("archive"), Archive).build());
         });
     let tb = TestApp::start(app).await?;
 
     tb.message(&Order { id: 1 }).to("archive").publish().await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("archive")
         .assert_called_once()
         .settled(HandlerOutcome::ack());

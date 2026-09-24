@@ -6,8 +6,8 @@
 //! runtime's own fallback is the whole retry story here, and it rests on where a copy reaches the
 //! subscription again. A stream file says its stream key and needs nothing from the mount site.
 //! Standard output says nothing, because the process downstream of the pipe is not the one that
-//! sent the message, so a stdio registration names a destination itself. Each transport is driven
-//! on its own in-process stand, which is what makes that difference visible in a test.
+//! sent the message, so a stdio registration names a destination itself. Each transport's broker
+//! runs in process, which is what makes that difference visible in a test.
 
 #![cfg(feature = "testing")]
 
@@ -16,15 +16,17 @@ use std::time::Duration;
 // The derive and the value a publish transform mutates share the name in different namespaces:
 // the derive is the macro `Outgoing`, the value is the type `ruststream::runtime::Outgoing`.
 use ruststream::runtime::{Outgoing, PublishContext, RETRY_COUNT_HEADER};
-use ruststream::testing::{Outcome, TestApp};
+use ruststream::testing::{InProcess, Outcome, TestApp};
 use ruststream::{
-    AddressedCopies, Broker, ConnectedBroker, NamedCopies, RedeliveryAddress, RedeliveryAddressed,
+    AddressedCopies, ConnectedBroker, NamedCopies, RedeliveryAddress, RedeliveryAddressed,
     Subscribe, nonzero,
 };
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::{ConnectedFileTestBroker, FileTestBroker};
 use ruststream_sea_file::{ConnectedFileBroker, ConnectedStdioBroker};
 use serde::{Deserialize, Serialize};
+
+/// The file every service here is built on; in process nothing is opened at it.
+const PATH: &str = "/var/lib/redelivery/orders.ss";
 
 /// How long the handler asks the runtime to hold the message back.
 const RETRY_DELAY: Duration = Duration::from_secs(30);
@@ -67,21 +69,23 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 /// default policy.
 #[tokio::test(start_paused = true)]
 async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
-    let broker = FileTestBroker::new();
     // --8<-- [start:mount]
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.include(reconcile);
-    });
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        FileBroker::new(PATH),
+        |b| {
+            b.include(reconcile);
+        },
+    );
     // --8<-- [end:mount]
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Order { id: 1 })
         .to("orders")
         .publish()
         .await
         .expect("publish");
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("orders")
         .assert_called_once()
         .settled(HandlerOutcome::retry_after(RETRY_DELAY));
@@ -90,15 +94,13 @@ async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
     tb.advance(RETRY_DELAY.saturating_sub(Duration::from_millis(1)))
         .await
         .expect("settle");
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("orders")
         .assert_called_once();
 
     tb.advance(Duration::from_millis(1)).await.expect("settle");
     assert_eq!(
-        tb.broker::<FileTestBroker>()
-            .subscriber("orders")
-            .outcomes(),
+        tb.broker::<FileBroker>().subscriber("orders").outcomes(),
         [Outcome::Nack, Outcome::Ack],
         "the deferred copy must reach the handler and settle",
     );
@@ -117,7 +119,7 @@ async fn never_ready(_order: &Order) -> HandlerOutcome {
 async fn the_cap_sends_the_last_delivery_to_the_dead_letter_stream_key() {
     // --8<-- [start:declaration]
     let app =
-        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(never_ready)
                 .max_attempts(nonzero!(3u32))
                 .dead_letter("parcels.dead");
@@ -125,7 +127,7 @@ async fn the_cap_sends_the_last_delivery_to_the_dead_letter_stream_key() {
     // --8<-- [end:declaration]
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Order { id: 7 })
         .to("parcels")
         .publish()
@@ -135,17 +137,17 @@ async fn the_cap_sends_the_last_delivery_to_the_dead_letter_stream_key() {
     // Two copies come back; the third delivery is the last the cap allows.
     tb.advance(RETRY_DELAY).await.expect("settle");
     tb.advance(RETRY_DELAY).await.expect("settle");
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("parcels")
         .assert_called(3);
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Order>("parcels.dead")
         .assert_called_once()
         .with(&Order { id: 7 });
 
     // Nothing is left in flight: the delivery at the cap was carried away, not deferred.
     tb.advance(RETRY_DELAY).await.expect("settle");
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("parcels")
         .assert_called(3);
 }
@@ -163,14 +165,14 @@ async fn never_ready_by_name(_order: &Order) -> HandlerOutcome {
 #[tokio::test(start_paused = true)]
 async fn a_bare_stream_key_carries_its_declaration_to_the_broker() {
     let app =
-        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(never_ready_by_name)
                 .max_attempts(nonzero!(2u32))
                 .dead_letter("pallets.dead");
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Order { id: 11 })
         .to("pallets")
         .publish()
@@ -178,10 +180,10 @@ async fn a_bare_stream_key_carries_its_declaration_to_the_broker() {
         .expect("publish");
 
     tb.advance(RETRY_DELAY).await.expect("settle");
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("pallets")
         .assert_called(2);
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Order>("pallets.dead")
         .assert_called_once()
         .with(&Order { id: 11 });
@@ -197,13 +199,13 @@ async fn never_ready_uncollected(_order: &Order) -> HandlerOutcome {
 #[tokio::test(start_paused = true)]
 async fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
     let app =
-        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(never_ready_uncollected)
                 .max_attempts(nonzero!(2u32));
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Order { id: 8 })
         .to("crates")
         .publish()
@@ -212,12 +214,12 @@ async fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
     tb.advance(RETRY_DELAY).await.expect("settle");
     tb.advance(RETRY_DELAY).await.expect("settle");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("crates")
         .assert_called(2);
     // The stream key carries the injected message and the one copy that brought the second
     // delivery, and nothing else: the spent delivery was rejected rather than carried anywhere.
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Order>("crates")
         .assert_called(2);
 }
@@ -260,7 +262,7 @@ async fn settle(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
     // --8<-- [start:out_retry]
     let app = RustStream::new(AppInfo::new("redelivery-stamp", "0.1.0")).with_broker(
-        FileTestBroker::new(),
+        FileBroker::new(PATH),
         |b| {
             b.include(settle)
                 .out_retry(Publish)
@@ -270,7 +272,7 @@ async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
     // --8<-- [end:out_retry]
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Order { id: 2 })
         .to("invoices")
         .publish()
@@ -278,10 +280,10 @@ async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
         .expect("publish");
     tb.advance(RETRY_DELAY).await.expect("settle");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("invoices")
         .assert_called(2);
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Order>("invoices")
         .with_header("x-deferred-from", "invoices");
 }
@@ -292,8 +294,8 @@ async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
 /// of the end of the retained region is one it reads.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_reported_address_is_the_stream_key_in_both_reading_modes() {
-    let connected = FileTestBroker::new()
-        .connect()
+    let connected = FileBroker::new(PATH)
+        .connect_in_process()
         .await
         .expect("transport connects");
     assert_eq!(
@@ -311,14 +313,13 @@ async fn the_reported_address_is_the_stream_key_in_both_reading_modes() {
     connected.shutdown().await.expect("shutdown succeeds");
 }
 
-/// The stdio stand, which answers about retry copies the way a pipe answers: the mount site names
+/// The stdio broker, which answers about retry copies the way a pipe answers: the mount site names
 /// the destination, and a registration that names none does not start.
-mod stdio_stand {
+mod stdio_form {
     use std::time::Duration;
 
     use ruststream::testing::TestApp;
     use ruststream_sea_file::stdio::prelude::*;
-    use ruststream_sea_file::testing::StdioTestBroker;
     use serde::{Deserialize, Serialize};
 
     use super::RETRY_DELAY;
@@ -334,13 +335,13 @@ mod stdio_stand {
         HandlerOutcome::retry_after(RETRY_DELAY)
     }
 
-    /// The refusal a real pipeline stage gets, under the harness: the stand declares the copy path
-    /// a pipe has, so the runtime raises the same error here, naming the subscription and the step
-    /// that fixes it.
+    /// The refusal a real pipeline stage gets, under the harness: the broker declares the copy path
+    /// a pipe has, so the runtime raises the same error in process, naming the subscription and
+    /// the step that fixes it.
     #[tokio::test]
     async fn a_mount_without_a_destination_refuses_to_start() {
         let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
-            StdioTestBroker::new(),
+            StdioBroker::new(),
             |b| {
                 b.include(work);
             },
@@ -355,21 +356,21 @@ mod stdio_stand {
         assert!(message.contains(".to("), "{message}");
     }
 
-    /// With the destination named, the copy leaves through the publisher and the stand records it
+    /// With the destination named, the copy leaves through the publisher and the pipe carries it
     /// under that stream key - what a service writes to its standard output, read back. It does
     /// not come back to the subscription: the next process in the pipeline is the one that reads
     /// it.
     #[tokio::test(start_paused = true)]
     async fn a_named_destination_records_the_copy_the_service_wrote() {
         let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
-            StdioTestBroker::new(),
+            StdioBroker::new(),
             |b| {
                 b.include(work).out_retry(Publish).to("jobs.retry");
             },
         );
         let tb = TestApp::start(app).await.expect("startup failed");
 
-        tb.broker::<StdioTestBroker>()
+        tb.broker::<StdioBroker>()
             .message(&Job { id: 3 })
             .to("jobs")
             .publish()
@@ -379,10 +380,10 @@ mod stdio_stand {
             .await
             .expect("settle");
 
-        tb.broker::<StdioTestBroker>()
+        tb.broker::<StdioBroker>()
             .subscriber("jobs")
             .assert_called_once();
-        tb.broker::<StdioTestBroker>()
+        tb.broker::<StdioBroker>()
             .published::<Job>("jobs.retry")
             .assert_called_once()
             .with(&Job { id: 3 });
@@ -396,19 +397,15 @@ mod stdio_stand {
 /// input, so a stdio registration names the destination itself, and the runtime refuses to start
 /// one that names none. Naming the types here attaches no transport: stdio's own round trip is
 /// covered over a real pipe in `integration_sea.rs`, which owns the one stdio transport a test
-/// binary may attach. The stand answers the same, so the refusal is reproducible under the
-/// harness.
+/// binary may attach. The in-process mode runs the same connected forms, so the refusal is
+/// reproducible under the harness.
 #[test]
 fn each_transport_declares_who_addresses_its_retry_copies() {
     const fn addresses_its_copies<C: Subscribe<Copies = AddressedCopies>>() {}
     const fn names_its_destination<C: Subscribe<Copies = NamedCopies>>() {}
 
     addresses_its_copies::<ConnectedFileBroker>();
-    addresses_its_copies::<ConnectedFileTestBroker>();
     names_its_destination::<ConnectedStdioBroker>();
-    // The stand answers what the pipe answers, so a registration refused in production is refused
-    // under the harness rather than passing a test it has no right to pass.
-    names_its_destination::<ruststream_sea_file::testing::ConnectedStdioTestBroker>();
 }
 
 #[derive(OutSlot)]
@@ -436,12 +433,12 @@ async fn record(order: &Order, Out(ledger): Out<impl Publisher, Ledger>) -> Hand
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publish_carries_no_per_message_options() {
     let app =
-        RustStream::new(AppInfo::new("options", "0.1.0")).with_broker(FileTestBroker::new(), |b| {
+        RustStream::new(AppInfo::new("options", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(record).out(Ledger, Publish).build();
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Order { id: 4 })
         .to("settings")
         .publish()
@@ -451,7 +448,7 @@ async fn a_publish_carries_no_per_message_options() {
     tb.out::<Ledger>()
         .assert_called_once()
         .assert_options_default();
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Audited>("audit")
         .assert_called_once()
         .with(&Audited { id: 4 });

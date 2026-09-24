@@ -9,13 +9,11 @@ use std::time::Duration;
 
 use futures::StreamExt;
 #[cfg(feature = "testing")]
-use ruststream::testing::TestableBroker;
+use ruststream::testing::{InProcess, TestableBroker};
 use ruststream::{
     AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
     OutgoingMessage, Positioned, Publisher, Seekable, Seeker, Subscribe, Subscriber,
 };
-#[cfg(feature = "testing")]
-use ruststream_sea_file::testing::FileTestBroker;
 use ruststream_sea_file::{
     FileBroker, FilePosition, FileStream, SEQUENCE_HEADER, SeaFileError, StdioBroker,
 };
@@ -184,8 +182,8 @@ fn a_replay_delivers_the_whole_file_before_it_ends() {
 }
 
 /// The in-process transport answers settlement the way a stream file answers it. Both are read
-/// here in one test, because the value of the answer is that the two agree: a stand-in that
-/// claimed a settlement would make a handler's retry look effective under test and lose the
+/// here in one test, because the value of the answer is that the two agree: an in-process
+/// transport that claimed a settlement would make a handler's retry look effective under test and lose the
 /// message against a file.
 #[cfg(feature = "testing")]
 #[test]
@@ -199,8 +197,8 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
             .await
             .expect("publish succeeds");
 
-        let in_process = FileTestBroker::new()
-            .connect()
+        let in_process = FileBroker::new(&path)
+            .connect_in_process()
             .await
             .expect("transport connects");
         let mut from_transport = in_process
@@ -230,7 +228,7 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
         assert!(matches!(stubbed.ack().await, Err(AckError::Unsupported)));
 
         // The requeue too: neither transport takes a message back, so a handler asking for one
-        // is refused on both rather than served by the stand-in alone.
+        // is refused on both rather than served in process alone.
         file.publisher()
             .publish(OutgoingMessage::new("orders", b"two".as_slice()), None)
             .await
@@ -265,9 +263,8 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
 }
 
 /// The in-process transport positions the way a stream file positions, read side by side for the
-/// reason settlement is: a stand that numbered its log differently, or that let a service resume
-/// from a position the file has not reached, would pass a test the file refuses - and a resume
-/// that works under test and fails in production is the whole cost of keeping a stand.
+/// reason settlement is: an in-process log numbered differently, or one that let a service resume
+/// from a position the file has not reached, would pass a test the file refuses.
 #[cfg(feature = "testing")]
 #[test]
 fn the_in_process_transport_positions_the_way_a_stream_file_does() {
@@ -280,8 +277,8 @@ fn the_in_process_transport_positions_the_way_a_stream_file_does() {
             .await
             .expect("publish succeeds");
 
-        let in_process = FileTestBroker::new()
-            .connect()
+        let in_process = FileBroker::new(&path)
+            .connect_in_process()
             .await
             .expect("transport connects");
         let mut from_transport = in_process
@@ -321,18 +318,18 @@ fn the_in_process_transport_positions_the_way_a_stream_file_does() {
         assert_eq!(
             first.position(),
             FilePosition::sequence(1),
-            "the stand numbers a stream key from one, as the file does",
+            "the in-process file numbers a stream key from one, as the file does",
         );
         stubbed_seeker
             .seek(past_the_end)
             .await
-            .expect_err("the stand refuses what the file refuses");
+            .expect_err("the in-process file refuses what the file refuses");
         let ended = tokio::time::timeout(RECV_TIMEOUT, stubbed.next())
             .await
             .expect("the end arrives rather than hanging");
         assert!(
             ended.is_none(),
-            "the stand ends the subscription a refused seek left behind, got {ended:?}",
+            "the in-process file ends the subscription a refused seek left behind, got {ended:?}",
         );
 
         file.shutdown().await.expect("shutdown succeeds");
@@ -568,6 +565,8 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
                 .expect("delivery is ok");
             // The stdio line format is text; the envelope carried the binary payload through it.
             assert_eq!(message.payload(), raw.as_slice());
+            // The client numbers the lines of a stream key from zero, unlike a stream file.
+            assert_eq!(message.headers().get_str(SEQUENCE_HEADER), Some("0"));
             // A pipe keeps no retained log, so neither settlement is pretended: what a handler
             // asks for here is refused rather than silently dropped.
             assert!(matches!(message.ack().await, Err(AckError::Unsupported)));

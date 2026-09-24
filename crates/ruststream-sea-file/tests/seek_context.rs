@@ -1,5 +1,5 @@
-//! The file form's context keys and reply destinations, driven through the `TestApp` harness on
-//! the in-process transport.
+//! The file form's context keys and reply destinations, driven through the `TestApp` harness with
+//! the file broker in process.
 //!
 //! Every handler here is an ordinary service handler: it names `FileStream` as its subscription
 //! and reads the transport's keys, exactly as it would against a stream file. Nothing in this
@@ -13,10 +13,12 @@
 
 #![cfg(feature = "testing")]
 
-use ruststream::testing::TestApp;
+use ruststream::testing::{InProcess, TestApp};
 use ruststream_sea_file::file::prelude::*;
-use ruststream_sea_file::testing::FileTestBroker;
 use serde::{Deserialize, Serialize};
+
+/// The file the service is built on; in process nothing is opened at it.
+const PATH: &str = "/var/lib/jobs/jobs.ss";
 
 /// The producer's cursor contract: an entry carrying `resume_at` asks the consumer to skip
 /// forward to that position once it has been handled.
@@ -111,13 +113,15 @@ async fn digest(batch: &[Job], ctx: &mut Context<'_, FileBatchContext>) -> Vec<H
     batch.iter().map(|_| HandlerOutcome::ack()).collect()
 }
 
-/// Appends `jobs` to the broker's retained log before any subscription opens, the way a producer
-/// that ran earlier would have left them in a stream file.
+/// Opens the service's file in process and appends `jobs` to it before the service starts, the
+/// way a producer that ran earlier would have left them in the stream file. The service's broker
+/// is a clone of `broker`, so it connects to the same file.
 async fn record(
-    broker: &FileTestBroker,
+    broker: &FileBroker,
     stream: &str,
     jobs: impl IntoIterator<Item = Job>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _file = broker.clone().connect_in_process().await?;
     let publisher = broker.publisher();
     for job in jobs {
         publisher.message(&job).to(stream).publish().await?;
@@ -143,7 +147,7 @@ fn poisoned_run() -> Vec<Job> {
 async fn a_handler_reads_its_position_off_the_delivery_context()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("seek-context", "0.1.0")).with_broker(
-        FileTestBroker::new(),
+        FileBroker::new(PATH),
         |b| {
             // The audit reply through the policy the mount site names, rather than through the
             // broker's default: the same route the other tests take by omission.
@@ -156,13 +160,13 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
         tb.message(&Job::plain(id)).to("jobs").publish().await?;
     }
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("jobs")
         .assert_called(2)
         .settled(HandlerOutcome::ack());
     // Each delivery reported its own place in the retained log, in order.
     assert_eq!(
-        tb.broker::<FileTestBroker>()
+        tb.broker::<FileBroker>()
             .published::<Seen>("audit")
             .decoded(),
         vec![Seen { id: 1, at: 1 }, Seen { id: 2, at: 2 }],
@@ -175,7 +179,7 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
 async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
 -> Result<(), Box<dyn std::error::Error>> {
     // A run recorded before the service exists, the way an earlier producer would have left it.
-    let broker = FileTestBroker::new();
+    let broker = FileBroker::new(PATH);
     record(&broker, "jobs", poisoned_run()).await?;
 
     let app = RustStream::new(AppInfo::new("seek-context", "0.1.0")).with_broker(broker, |b| {
@@ -186,12 +190,12 @@ async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
     // into it; nothing else is published.
     tb.settle().await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("jobs")
         .assert_called(3)
         .settled(HandlerOutcome::ack());
     assert_eq!(
-        tb.broker::<FileTestBroker>()
+        tb.broker::<FileBroker>()
             .published::<Seen>("audit")
             .decoded(),
         vec![
@@ -208,7 +212,7 @@ async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
 -> Result<(), Box<dyn std::error::Error>> {
-    let broker = FileTestBroker::new();
+    let broker = FileBroker::new(PATH);
     record(&broker, "digest", poisoned_run()).await?;
 
     let app = RustStream::new(AppInfo::new("batch-context", "0.1.0")).with_broker(broker, |b| {
@@ -220,12 +224,12 @@ async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
     // Two batches: the whole recorded run, then the one the seek repositioned onto. A batch is
     // settled before the reposition takes effect, so the skipped region is part of the first
     // batch and absent from the second - the seek governs what comes after it, not what it saw.
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("digest")
         .assert_called(2)
         .settled(HandlerOutcome::ack());
     let seen: Vec<u64> = tb
-        .broker::<FileTestBroker>()
+        .broker::<FileBroker>()
         .subscriber("digest")
         .received::<Job>()
         .into_iter()
@@ -239,23 +243,23 @@ async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
 async fn a_reply_type_that_declares_a_key_is_published_there()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        FileTestBroker::new(),
+        FileBroker::new(PATH),
         |b| {
             b.include(checkout);
         },
     );
     let tb = TestApp::start(app).await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Job::plain(7))
         .to("checkout")
         .publish()
         .await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("checkout")
         .assert_called_once();
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Receipt>("receipts")
         .assert_called_once()
         .with(&Receipt { job: 7 });
@@ -266,23 +270,23 @@ async fn a_reply_type_that_declares_a_key_is_published_there()
 async fn a_reply_type_declaring_no_key_takes_the_one_the_subscriber_names()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        FileTestBroker::new(),
+        FileBroker::new(PATH),
         |b| {
             b.include(review).out(Reply, Publish);
         },
     );
     let tb = TestApp::start(app).await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .message(&Job::plain(3))
         .to("review")
         .publish()
         .await?;
 
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .subscriber("review")
         .assert_called_once();
-    tb.broker::<FileTestBroker>()
+    tb.broker::<FileBroker>()
         .published::<Seen>("reviewed")
         .assert_called_once()
         .with(&Seen { id: 3, at: 0 });

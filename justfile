@@ -25,12 +25,15 @@ test:
 # transport - so `just test` covers these too; the recipe exists so the fleet's live-suite command
 # means the same thing in every broker repository.
 #
+# `both_modes` runs one test body twice, with the file broker in process and against a real stream
+# file.
+#
 # --examples: the pipeline suite spawns the `stdio_pipeline` example, which a run naming test
 # targets would otherwise not build.
 test-brokers:
     cargo test --workspace --all-features --examples \
         --test integration_sea --test conformance_sea --test file_positions \
-        --test file_retry --test stdio_processes --test stdio_retry
+        --test file_retry --test stdio_processes --test stdio_retry --test both_modes
 
 # What this crate costs over the sea-streamer-file client it wraps, and what the runtime costs on
 # top: every scenario runs three times over - the client driven directly, this crate's own consumer

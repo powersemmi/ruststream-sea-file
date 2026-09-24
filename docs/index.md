@@ -33,7 +33,7 @@ stored itself. The crate's own reference is on docs.rs:
 
 - :material-file-document-outline: **[The stream file](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html)** - descriptors, replay, positions and seeking, batches, publishing, delayed redelivery.
 - :material-console: **[The pipeline](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html)** - the line format, where a deferred copy goes, loopback.
-- :material-test-tube: **[Testing](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html)** - the in-process stand for each transport.
+- :material-test-tube: **[Testing](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#testing)** - the production app under `TestApp`, in process or against a real file.
 - :material-book-open-variant: **[RustStream docs](https://powersemmi.github.io/ruststream/)** - the framework itself: installation, the tutorial, the list of brokers.
 - :material-language-rust: **[API reference](https://docs.rs/ruststream-sea-file)** - the crate's rustdoc on docs.rs.
 
