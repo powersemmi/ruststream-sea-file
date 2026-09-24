@@ -11,8 +11,8 @@ readme = "../../README.md"
 keywords = ["file", "stdio", "streaming", "broker", "ruststream"]
 categories = ["asynchronous", "network-programming"]
 
-# The in-process stands and the AsyncAPI extension are off by default, so a default build on
-# docs.rs would publish a reference without the `testing` module and without what a subscription
+# The in-process mode and the AsyncAPI extension are off by default, so a default build on docs.rs
+# would publish a reference without the testing example and without what a subscription
 # contributes to the generated document - the parts the crate overview sends readers to.
 [package.metadata.docs.rs]
 all-features = true
@@ -22,7 +22,8 @@ workspace = true
 
 [features]
 default = []
-# The in-process test broker (TestableBroker + TestApp support). The conformance harness is a
+# The brokers' in-process mode: `TestApp::start` connects `FileBroker` and `StdioBroker` with no
+# file and no pipe. A service enables it in its dev-dependencies. The conformance harness is a
 # broker-author tool and stays in this repo's dev-dependencies, not in the user-facing feature.
 testing = ["ruststream/testing"]
 # What this crate adds to a generated AsyncAPI document. The specification lists no binding for a

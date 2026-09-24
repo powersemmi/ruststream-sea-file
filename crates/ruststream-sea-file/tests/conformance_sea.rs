@@ -1,17 +1,17 @@
 //! Conformance: every suite this crate's capabilities justify, run against a real stream file in
-//! the temp directory and against the in-process stand-in.
+//! the temp directory and against the same broker in process.
 //!
-//! Both forms, because either one alone leaves a hole. The file is what ships, so it is what the
-//! contract is really about; the stand-in is what a service's own tests run on, so a contract it
-//! quietly fails is one a test author is misled by. Where the two disagree the disagreement is the
-//! finding, and the stand-in is what gets fixed.
+//! Both modes, because either one alone leaves a hole. The file is what ships, so it is what the
+//! contract is really about; the in-process mode is what a service's own tests run on, so a
+//! contract it quietly fails is one a test author is misled by. Where the two disagree the
+//! disagreement is the finding, and the in-process transport is what gets fixed.
 //!
-//! The routing suite is the exception, and only because of how it is built: it drives the broker
-//! through `TestableBroker`, which the stand-in implements and a stream file cannot.
+//! The routing suite runs in process only, because of how it is built: it drives the broker
+//! through `TestableBroker`, which reads and feeds the in-process transport.
 //!
-//! Not run: `request_reply`, `transactions` and `owned_transactions`, for the plain reason that
-//! neither transport implements those capabilities. The stdio form is not driven through the
-//! suites either: its shutdown ends every stdio consumer and producer in the process by the
+//! The suites that take `request_reply`, `transactions` and `owned_transactions` are left out:
+//! neither transport implements those capabilities. The stdio form runs its suites in process
+//! only: a real stdio shutdown ends every stdio consumer and producer in the process by the
 //! client's design, so one suite would take the rest of the binary's tests down with it. Its
 //! round trip is covered over a real pipe in `integration_sea.rs`.
 
@@ -20,9 +20,12 @@
 mod common;
 
 use ruststream::Name;
+use ruststream::conformance::harness::InProcessBroker;
 use ruststream::conformance::{capabilities, harness};
-use ruststream_sea_file::testing::{FileTestBroker, StdioTestBroker};
 use ruststream_sea_file::{FileBroker, FileStream, StdioBroker};
+
+/// The path the in-process file broker is built with; nothing is opened at it.
+const IN_PROCESS_PATH: &str = "/var/lib/ruststream/conformance.ss";
 
 /// Nothing the broker or the descriptor contributes to a document may carry a password.
 ///
@@ -38,37 +41,35 @@ fn the_document_carries_no_credential() {
         &FileStream::new("orders"),
         "hunter2",
     );
-    // The stdio side is scanned on the real broker, which is what builds the description: the
-    // stand describes no server, as the file stand describes none.
     harness::describes_without_credentials(&StdioBroker::new(), &Name::new("lines"), "hunter2");
 }
 
 #[test]
-fn sea_test_broker_passes_conformance_suite() {
+fn file_broker_passes_conformance_suite_in_process() {
     common::rt().block_on(async {
-        harness::run_suite(FileTestBroker::new).await;
+        harness::run_suite(|| FileBroker::new(IN_PROCESS_PATH)).await;
     });
 }
 
-/// The stdio stand answers the routing contract the same way, because a service's own tests run
-/// on it: ordering, settlement, headers and the publish log are the transport's, not the stand's
-/// invention.
+/// The stdio broker answers the routing contract in process the same way, because a service's own
+/// tests run on it: ordering, settlement, headers and the publish log are the transport's.
 #[test]
-fn stdio_test_broker_passes_conformance_suite() {
+fn stdio_broker_passes_conformance_suite_in_process() {
     common::rt().block_on(async {
-        harness::run_suite(StdioTestBroker::new).await;
+        harness::run_suite(StdioBroker::new).await;
     });
 }
 
-/// The ladder on the stdio stand, opened through the bare stream key a pipeline stage writes.
-/// `redelivery_address` is not run here and cannot be: a pipe addresses none of its copies, which
-/// is what the stand exists to reproduce.
+/// The ladder on the stdio broker in process, opened through the bare stream key a pipeline stage
+/// writes. The suite publishes to the key it subscribed, which on a pipe reaches the service's own
+/// standard input only under loopback, so that is the broker it runs. `redelivery_address` is
+/// left out: a pipe addresses none of its copies.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
-fn stdio_test_broker_passes_lifecycle() {
+fn stdio_broker_passes_lifecycle_in_process() {
     common::rt().block_on(async {
         harness::lifecycle(
-            StdioTestBroker::new,
+            || InProcessBroker::new(StdioBroker::new().loopback()),
             |name| Name::new(name.to_owned()),
             |connected| connected.publisher(),
         )
@@ -94,15 +95,15 @@ fn file_broker_passes_lifecycle() {
     });
 }
 
-/// The same ladder in process, including the publisher that outlives the shutdown: a stand-in
-/// that kept accepting publishes through a dead handle would teach a service's tests that the
-/// aliasing case is harmless, which against a real file it is not.
+/// The same ladder in process, including the publisher that outlives the shutdown: an in-process
+/// transport that kept accepting publishes through a dead handle would teach a service's tests
+/// that the aliasing case is harmless, which against a real file it is not.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
-fn sea_test_broker_passes_lifecycle() {
+fn file_broker_passes_lifecycle_in_process() {
     common::rt().block_on(async {
         harness::lifecycle(
-            FileTestBroker::new,
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
             |name| FileStream::new(name),
             |connected| connected.publisher(),
         )
@@ -128,14 +129,15 @@ fn file_broker_passes_redelivery_address() {
     });
 }
 
-/// The same promise in process, because a service's own retry tests run here: a stand-in that
-/// reported an address nothing arrived at would pass a registration the file refuses.
+/// The same promise in process, because a service's own retry tests run here: an in-process
+/// transport that reported an address nothing arrived at would pass a registration the file
+/// refuses.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
-fn sea_test_broker_passes_redelivery_address() {
+fn file_broker_passes_redelivery_address_in_process() {
     common::rt().block_on(async {
         harness::redelivery_address(
-            FileTestBroker::new,
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
             |name| FileStream::new(name),
             |connected| connected.publisher(),
         )
@@ -165,10 +167,10 @@ fn file_broker_passes_batch_suite() {
 /// under the harness sees what it would see against a file.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
-fn sea_test_broker_passes_batch_suite() {
+fn file_broker_passes_batch_suite_in_process() {
     common::rt().block_on(async {
         capabilities::batches(
-            FileTestBroker::new,
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
             |name| FileStream::new(name),
             |connected| connected.publisher(),
         )
@@ -191,16 +193,16 @@ fn file_broker_passes_seeking_suite() {
     });
 }
 
-/// The seeking contract in process, on the retained log the stand-in exists to reproduce: pinned
-/// captured positions, a seek forward skipping what is queued, and live delivery afterwards. This
-/// is the capability a service is most likely to write tests around, so the stand-in owes it the
-/// same answers a file gives.
+/// The seeking contract in process, on the retained log in memory: pinned captured positions, a
+/// seek forward skipping what is queued, and live delivery afterwards. This is the capability a
+/// service is most likely to write tests around, so the in-process file owes it the same answers
+/// a file gives.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[test]
-fn sea_test_broker_passes_seeking_suite() {
+fn file_broker_passes_seeking_suite_in_process() {
     common::rt().block_on(async {
         capabilities::seeking(
-            FileTestBroker::new,
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
             |name| FileStream::new(name),
             |connected| connected.publisher(),
         )

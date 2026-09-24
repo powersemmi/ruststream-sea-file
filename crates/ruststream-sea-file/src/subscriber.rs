@@ -17,6 +17,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::Stream;
+#[cfg(feature = "testing")]
+use futures::future::Either;
 use ruststream::{
     AckError, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage, Positioned,
     Seekable, Seeker, Subscriber,
@@ -27,6 +29,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
+#[cfg(feature = "testing")]
+use crate::in_process::{FileQueue, LogSeeker};
 use crate::message::{FilePosition, SeaMessage};
 
 /// How many undelivered messages may sit between the driver and the consumer.
@@ -83,13 +87,23 @@ impl FileSubscriber {
         let stream: Arc<str> = Arc::from(stream);
         Self {
             stream: Arc::clone(&stream),
-            inner: BufferedSubscriber::new(Deliveries {
+            inner: BufferedSubscriber::new(Deliveries::Driver(Driven {
                 stream,
                 rx: out_rx,
                 cmd: cmd_tx,
                 epoch,
-            })
+            }))
             .max_wait(BATCH_MAX_WAIT),
+        }
+    }
+
+    /// A subscription on the in-process transport, which needs no driver task: a seek is applied
+    /// inside the subscription's own poll.
+    #[cfg(feature = "testing")]
+    pub(crate) fn in_process(queue: FileQueue) -> Self {
+        Self {
+            stream: Arc::clone(queue.stream()),
+            inner: BufferedSubscriber::new(Deliveries::InProcess(queue)).max_wait(BATCH_MAX_WAIT),
         }
     }
 }
@@ -124,23 +138,92 @@ impl Seekable for FileSubscriber {
     }
 }
 
-/// The driver task's deliveries, before batching: one message per poll, in publish order.
-struct Deliveries {
+/// A subscription's deliveries, before batching: one message per poll, in the file's order.
+///
+/// Without the `testing` feature there is one variant, so the type is the driver's channel itself
+/// and every `match` on it is irrefutable: a production build carries no second transport and no
+/// branch to it.
+enum Deliveries {
+    /// The driver task's channel, fed from the stream file.
+    Driver(Driven),
+    /// The in-process transport's queue.
+    #[cfg(feature = "testing")]
+    InProcess(FileQueue),
+}
+
+// The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
+// deliveries exactly the size of the driver's channel they wrap.
+#[cfg(not(feature = "testing"))]
+const _: () = assert!(size_of::<Deliveries>() == size_of::<Driven>());
+
+impl Subscriber for Deliveries {
+    type Message = FileMessage;
+    type Error = SeaFileError;
+
+    #[cfg(not(feature = "testing"))]
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+        let Self::Driver(driven) = self;
+        driven.stream()
+    }
+
+    #[cfg(feature = "testing")]
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+        match self {
+            Self::Driver(driven) => Either::Left(driven.stream()),
+            Self::InProcess(queue) => Either::Right(in_process_stream(queue)),
+        }
+    }
+}
+
+impl Seekable for Deliveries {
+    type Seeker = FileSeeker;
+
+    fn seeker(&self) -> FileSeeker {
+        match self {
+            Self::Driver(driven) => driven.seeker(),
+            #[cfg(feature = "testing")]
+            Self::InProcess(queue) => {
+                FileSeeker::in_process(Arc::clone(queue.stream()), queue.seeker())
+            }
+        }
+    }
+}
+
+/// The in-process queue's deliveries, each carrying the subscription's seeker the way a file's do.
+#[cfg(feature = "testing")]
+fn in_process_stream(
+    queue: &mut FileQueue,
+) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+    let seeker = Arc::new(FileSeeker::in_process(
+        Arc::clone(queue.stream()),
+        queue.seeker(),
+    ));
+    futures::stream::poll_fn(move |cx| {
+        queue.poll_next(cx).map(|next| {
+            next.map(|message| {
+                Ok(FileMessage {
+                    message,
+                    seeker: Arc::clone(&seeker),
+                })
+            })
+        })
+    })
+}
+
+/// The driver task's deliveries: one message per poll, in publish order.
+struct Driven {
     stream: Arc<str>,
     rx: mpsc::Receiver<Stamped>,
     cmd: mpsc::UnboundedSender<SeekCmd>,
     epoch: Arc<AtomicU64>,
 }
 
-impl Subscriber for Deliveries {
-    type Message = FileMessage;
-    type Error = SeaFileError;
-
+impl Driven {
     fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
         // Minted once per opened stream, before the closure takes the receiver: every delivery
         // then carries a reference-counted clone, so the per-delivery context that reads the
         // seek handle by key allocates nothing.
-        let seeker = Arc::new(Seekable::seeker(&*self));
+        let seeker = Arc::new(self.seeker());
         // Poll the channel in place rather than wrapping it in an owning stream, so `stream`
         // can be called again after the returned stream is dropped (the runtime and the
         // conformance helpers re-enter it per call). Items queued under an older generation
@@ -164,10 +247,6 @@ impl Subscriber for Deliveries {
             }
         })
     }
-}
-
-impl Seekable for Deliveries {
-    type Seeker = FileSeeker;
 
     fn seeker(&self) -> FileSeeker {
         FileSeeker {
@@ -253,10 +332,9 @@ enum SeekBackend {
         cmd: mpsc::UnboundedSender<SeekCmd>,
         epoch: Arc<AtomicU64>,
     },
-    /// The in-process retained log of the `testing` transport, repositioned inside the
-    /// subscriber's own poll.
+    /// The in-process transport's log, repositioned inside the subscription's own poll.
     #[cfg(feature = "testing")]
-    Log(crate::testing::LogSeeker),
+    Log(LogSeeker),
 }
 
 /// Repositions a [`FileSubscriber`] while its stream runs; minted by
@@ -271,9 +349,9 @@ pub struct FileSeeker {
 }
 
 impl FileSeeker {
-    /// The seeker of an in-process subscription on the `testing` transport.
+    /// The seeker of an in-process subscription.
     #[cfg(feature = "testing")]
-    pub(crate) fn in_process(stream: Arc<str>, log: crate::testing::LogSeeker) -> Self {
+    pub(crate) fn in_process(stream: Arc<str>, log: LogSeeker) -> Self {
         Self {
             stream,
             backend: SeekBackend::Log(log),
