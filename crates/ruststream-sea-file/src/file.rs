@@ -448,6 +448,9 @@ impl ConnectedFileBroker {
         } else {
             let mut options = FileConsumerOptions::new(ConsumerMode::RealTime);
             options.set_auto_stream_reset(AutoStreamReset::Latest);
+            // Stated rather than left to the client's default: a live subscription waits for the
+            // writes that follow the end of the file instead of finishing there.
+            options.set_live_streaming(true);
             let consumer = self
                 .core
                 .streamer
