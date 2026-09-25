@@ -69,11 +69,6 @@ impl Registry {
         self.subscriptions.remove(&id).is_some()
     }
 
-    /// The stream key of an open subscription.
-    pub(crate) fn key(&self, id: SubscriptionId) -> Option<&str> {
-        self.subscriptions.get(&id).map(|sub| sub.key.as_str())
-    }
-
     /// Sends `message` to every open subscription on `key`, counting each send in flight.
     pub(crate) fn fan_out(
         &self,

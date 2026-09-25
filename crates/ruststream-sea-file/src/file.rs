@@ -18,6 +18,10 @@
 //! [`end_with_eos`](FileBroker::end_with_eos) or at the end of the file when there is none.
 //! Replay is the one reading mode a position cannot express.
 //!
+//! A replay that reached the end can still be moved. A seek from a handler repositions it, the
+//! end it reported is discarded with the old position, and the replay goes on from the new one.
+//! A live subscription cannot be moved after the end-of-stream mark: the seek is refused.
+//!
 //! # Positions and seeking
 //!
 //! Where a subscription begins is the `start_at(..)` clause, and where a running handler moves it
@@ -35,9 +39,10 @@
 //! so the next message a handler sees comes from the new position.
 //!
 //! Seek to a position the stream has reached. A sequence past the last one written, and an
-//! instant later than every message the file holds, are both refused, and the subscription ends
+//! instant later than every message the file holds, are both refused. A live subscription ends
 //! with the refusal rather than staying where it was: the transport reads forward looking for the
-//! message and runs out of file. A captured position, the beginning and the tip are always safe.
+//! message and runs out of file. A replay stays where it was, and what it had read is still
+//! delivered. A captured position, the beginning and the tip are always safe.
 //!
 //! A handler reads two keys, as parameters of the `Ctx` extractor, and names no context type:
 //! [`Position`](crate::Position) is this delivery's place in the file, and
