@@ -13,8 +13,8 @@ use std::time::Duration;
 use futures::{FutureExt, StreamExt};
 use ruststream::testing::InProcess;
 use ruststream::{
-    ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Positioned, Publisher, Subscribe,
-    Subscriber,
+    ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Positioned, Publisher, Seekable,
+    Seeker, Subscribe, Subscriber,
 };
 use ruststream_sea_file::{
     FileBroker, FilePosition, FileStream, SEQUENCE_HEADER, SeaFileError, StdioBroker,
@@ -154,6 +154,143 @@ async fn a_replay_completes_at_the_end_of_the_file_in_process() {
         ],
     );
     connected.shutdown().await.expect("shutdown");
+}
+
+/// A replay that has read the whole file can still be moved, as on a file: the seek replays the
+/// log again from the position it names.
+#[tokio::test]
+async fn a_seek_after_a_replay_ended_replays_again_in_process() {
+    let connected = FileBroker::new(PATH)
+        .connect_in_process()
+        .await
+        .expect("connects");
+    let publisher = connected.publisher();
+    for body in [b"one".as_slice(), b"two".as_slice()] {
+        publisher
+            .publish(OutgoingMessage::new("orders", body), None)
+            .await
+            .expect("publish");
+    }
+
+    let mut replay = connected
+        .subscribe_stream(FileStream::new("orders").replay())
+        .await
+        .expect("replay opens");
+    let seeker = replay.seeker();
+    let mut stream = pin!(replay.stream());
+    let mut read = Vec::new();
+    while let Some(next) = tokio::time::timeout(REPLAY_BOUND, stream.next())
+        .await
+        .expect("the replay ends at the end of the file rather than waiting")
+    {
+        read.push(next.expect("delivery is ok").payload().to_vec());
+    }
+    assert_eq!(read, [b"one".to_vec(), b"two".to_vec()]);
+
+    seeker
+        .seek(FilePosition::sequence(2))
+        .await
+        .expect("a replay that reached the end can be moved");
+    let again = tokio::time::timeout(REPLAY_BOUND, stream.next())
+        .await
+        .expect("the replay moves on")
+        .expect("the replay delivers again")
+        .expect("delivery is ok");
+    assert_eq!(again.payload(), b"two".as_slice());
+    let end = tokio::time::timeout(REPLAY_BOUND, stream.next())
+        .await
+        .expect("the replay ends again rather than waiting");
+    assert!(end.is_none(), "got {end:?}");
+    connected.shutdown().await.expect("shutdown");
+}
+
+/// A refused seek leaves a replay where it was, as the file's reader does: what it had not yet
+/// delivered still comes, then the end.
+#[tokio::test]
+async fn a_refused_seek_leaves_a_replay_where_it_was_in_process() {
+    let connected = FileBroker::new(PATH)
+        .connect_in_process()
+        .await
+        .expect("connects");
+    let publisher = connected.publisher();
+    for body in [b"one".as_slice(), b"two".as_slice()] {
+        publisher
+            .publish(OutgoingMessage::new("orders", body), None)
+            .await
+            .expect("publish");
+    }
+
+    let mut replay = connected
+        .subscribe_stream(FileStream::new("orders").replay())
+        .await
+        .expect("replay opens");
+    let seeker = replay.seeker();
+    let mut stream = pin!(replay.stream());
+    let first = stream
+        .next()
+        .await
+        .expect("the replay delivers")
+        .expect("delivery is ok");
+    assert_eq!(first.payload(), b"one".as_slice());
+
+    seeker
+        .seek(FilePosition::sequence(9))
+        .await
+        .expect_err("no message carries that sequence");
+    let second = tokio::time::timeout(REPLAY_BOUND, stream.next())
+        .await
+        .expect("the replay moves on")
+        .expect("the replay goes on after a refused seek")
+        .expect("delivery is ok");
+    assert_eq!(second.payload(), b"two".as_slice());
+    let end = tokio::time::timeout(REPLAY_BOUND, stream.next())
+        .await
+        .expect("the replay ends rather than waiting");
+    assert!(end.is_none(), "got {end:?}");
+    connected.shutdown().await.expect("shutdown");
+}
+
+/// A live subscription that read the end-of-stream mark cannot be moved: on a file the client's
+/// consumer ends with the stream it tailed, so the seek is refused rather than replayed.
+#[tokio::test]
+async fn a_seek_after_the_end_of_stream_mark_is_refused_in_process() {
+    let connected = FileBroker::new(PATH)
+        .end_with_eos()
+        .connect_in_process()
+        .await
+        .expect("connects");
+    let mut tail = connected
+        .subscribe_stream(FileStream::new("orders"))
+        .await
+        .expect("subscription opens");
+    let seeker = tail.seeker();
+    connected
+        .publisher()
+        .publish(OutgoingMessage::new("orders", b"one".as_slice()), None)
+        .await
+        .expect("publish");
+    connected.shutdown().await.expect("shutdown");
+
+    let refused = seeker
+        .seek(FilePosition::beginning())
+        .await
+        .expect_err("a subscription that ended at the mark cannot be moved");
+    assert!(
+        matches!(refused, SeaFileError::Seek { ref stream, .. } if stream == "orders"),
+        "got {refused:?}",
+    );
+    let mut stream = pin!(tail.stream());
+    let delivered = stream
+        .next()
+        .now_or_never()
+        .expect("the queued message is ready")
+        .expect("the stream is open")
+        .expect("delivery is ok");
+    assert_eq!(delivered.payload(), b"one".as_slice());
+    assert!(
+        matches!(stream.next().now_or_never(), Some(None)),
+        "the mark ends the subscription after what was queued",
+    );
 }
 
 /// A live subscription ends at the end-of-stream mark the broker's shutdown writes, and only
