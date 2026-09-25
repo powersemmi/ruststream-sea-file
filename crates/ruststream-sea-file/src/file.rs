@@ -210,7 +210,7 @@ use sea_streamer_file::{
 use sea_streamer_types::{
     ConsumerMode, ConsumerOptions as _, Producer as _, StreamErr, StreamKey, Streamer as _,
 };
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, RwLock};
 
 use crate::error::{SeaFileError, box_err};
 use crate::stream::FileStream;
@@ -221,7 +221,14 @@ use crate::wire;
 
 pub(crate) struct Core {
     pub(crate) streamer: FileStreamer,
-    pub(crate) producer: FileProducer,
+    /// Taken out and dropped by `shutdown`, never later.
+    ///
+    /// Why the lock: the client counts producer handles per path, on one process-wide task, and
+    /// applies a dropped handle to whichever writer holds the path when the drop is processed. A
+    /// handle this connection dropped after its writer ended would end the writer of the next
+    /// connection over the same path. Publishers share the connection, so `shutdown` takes the
+    /// handle out under the write lock, once the publishes in flight are done with it.
+    pub(crate) producer: RwLock<Option<FileProducer>>,
     pub(crate) path: String,
     pub(crate) closed: AtomicBool,
 }
@@ -378,7 +385,7 @@ impl Broker for FileBroker {
                 }
                 Ok::<_, SeaFileError>(Arc::new(Core {
                     streamer,
-                    producer,
+                    producer: RwLock::new(Some(producer)),
                     path: self.path.clone(),
                     closed: AtomicBool::new(false),
                 }))
@@ -464,10 +471,23 @@ impl ConnectedBroker for ConnectedFileBroker {
 
     async fn shutdown(self) -> Result<(), Self::Error> {
         self.core.closed.store(true, Ordering::Release);
+        // The write lock waits for the publishes in flight, so every handle they cloned is dropped
+        // before the writer ends. A connection another clone of this broker already shut down
+        // holds no handle and has nothing left to end.
+        let Some(producer) = self.core.producer.write().await.take() else {
+            return Ok(());
+        };
         // Ends the file's shared producers (writing the end-of-stream mark when configured)
         // and flushes to disk. An already-ended producer is benign teardown noise: another
         // broker over the same file finished first.
-        match self.core.streamer.clone().disconnect().await {
+        let ended = self.core.streamer.clone().disconnect().await;
+        // The handle is dropped after the writer ended, so the end-of-stream mark is written; its
+        // drop reaches the client's task as a request of its own. The second end is answered by
+        // that task only after it processed the drop, against a path no writer holds any more, so
+        // `shutdown` returns once nothing of this connection can reach a later one over the file.
+        drop(producer);
+        let _settled = self.core.streamer.clone().disconnect().await;
+        match ended {
             Ok(()) | Err(StreamErr::Backend(FileErr::ProducerEnded)) => Ok(()),
             Err(e) => Err(SeaFileError::Connect {
                 target: self.core.path.clone(),
@@ -526,29 +546,33 @@ impl Publisher for FilePublisher {
     ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
-        let producer = &core.producer;
         let key = StreamKey::new(msg.name())
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", msg.name())))?;
         let payload = wire::encode(msg.headers(), msg.payload(), false);
-        producer
-            .send_to(&key, payload.as_slice())
-            .map_err(|e| SeaFileError::Publish {
-                stream: msg.name().to_owned(),
-                source: box_err(e),
-            })?
-            .await
-            .map_err(|e| SeaFileError::Publish {
-                stream: msg.name().to_owned(),
-                source: box_err(e),
-            })?;
-        // Flush per publish: the sink buffers, and live subscribers (and external tails)
-        // observe the file, not the buffer. A clone shares the same sink.
-        let mut flusher = producer.clone();
-        flusher.flush().await.map_err(|e| SeaFileError::Publish {
+        let held = core.producer.read().await;
+        // Empty when `shutdown` ran between the open check and the lock.
+        let producer = held.as_ref().ok_or(SeaFileError::NotConnected)?;
+        let appended = append(producer, &key, &payload).await;
+        drop(held);
+        appended.map_err(|e| SeaFileError::Publish {
             stream: msg.name().to_owned(),
             source: box_err(e),
         })
     }
+}
+
+/// Appends one message and flushes it to the file.
+///
+/// The flush is per publish: the sink buffers, and live subscribers (and external tails) observe
+/// the file, not the buffer. A clone shares the same sink.
+async fn append(
+    producer: &FileProducer,
+    key: &StreamKey,
+    payload: &[u8],
+) -> Result<(), StreamErr<FileErr>> {
+    producer.send_to(key, payload)?.await?;
+    let mut flusher = producer.clone();
+    flusher.flush().await
 }
 
 /// The publish policy for [`FilePublisher`].
