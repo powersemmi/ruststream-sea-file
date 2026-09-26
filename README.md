@@ -37,7 +37,7 @@ There is no server anywhere in this crate: a broker is a `.ss` stream file on di
 - **Delayed retries through a deferred copy.** With no settlement to lean on, `HandlerOutcome::retry_after(delay)` works the one way it can: once the delay is over the runtime republishes the message under the stream key the subscription reads. A file registration needs nothing at its mount site for that. Standard output reaches the next process in the pipeline and never this one's standard input, so a stdio registration names the destination itself - `.out_retry(Publish).to("jobs.retry")` or a transform that names one per delivery - and one that names neither refuses to start instead of losing every delayed message. `max_attempts(n)` and `dead_letter(key)` right after `include` cap the circulation and say where a spent delivery goes.
 - **No per-message settings.** An append to a stream file and a line on standard output take a stream key and a payload and nothing else, so this crate adds no step to the publish builder and a handler body that publishes keeps the framework prelude and the plain `Out<impl Publisher, Marker>` bound.
 - **A document of the two transports** (feature `asyncapi`). Each broker is one AsyncAPI server: `file` with the path of the stream file, `stdio` with its protocol name, neither with a host. A `FileStream` channel reports the stream key it reads, under the `x-ruststream-file` extension - the specification lists no binding for a file transport and its protocol keys are a closed list.
-- **In-process test brokers** (feature `testing`). `FileTestBroker` serves the file transport's routing over a retained, positioned log in memory, so a service that reads positions or seeks mounts on it unedited. `StdioTestBroker` stands in for the pipeline transport and answers what a pipe answers: no address for a retry copy, no seeking, and the publish side records what the service wrote to standard output. Both run under the framework's `TestApp` harness.
+- **The production app under test** (feature `testing`). The framework's `TestApp` runs the service's own app with `FileBroker` and `StdioBroker` in process: a stream file kept in memory, with the file's numbering, replay and seeking, and a pipe whose standard input the test feeds. The same test runs against a real stream file with `TestApp::start_live`.
 
 ## Install
 
@@ -48,7 +48,7 @@ ruststream-sea-file = "0.7"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-# The in-process broker the test below runs on, and a runtime to run it under.
+# The brokers' in-process mode the test below runs on, and a runtime to run it under.
 ruststream-sea-file = { version = "0.7", features = ["testing"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
@@ -61,7 +61,7 @@ The file transport is not supported on Windows (an upstream constraint of the fi
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, Serialize, Deserialize)]
 struct Order {
     id: u64,
 }
@@ -94,46 +94,32 @@ Each transport has a prelude of its own, and it is the mount site's vocabulary: 
 
 ## Test it
 
-Each transport has a stand of its own: `FileTestBroker` for stream files, with the same routing, the same positions and the same seeker over a log in memory, and `StdioTestBroker` for pipelines, which addresses no retry copies and does not seek, exactly as a pipe does not. A service mounts on its own stand unedited, and a stdio registration the pipe would refuse is refused here too. `TestApp` starts the app, publishes into it, and drives the reaction to a standstill before the assertions read it:
+The app `main` runs, handed to the harness unchanged: `TestApp::start` connects `FileBroker` in process, with no file, and the test addresses it by that type.
 
 ```rust
 use ruststream::testing::TestApp;
-use ruststream_sea_file::testing::FileTestBroker;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_order_is_confirmed() -> Result<(), Box<dyn std::error::Error>> {
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(FileTestBroker::new(), |b| {
-            b.include(confirm).out_reply(Publish);
-        });
-    let tb = TestApp::start(app).await?;
+let tb = TestApp::start(app()).await?;
 
-    tb.publish("orders", &Order { id: 1 }).await?;
+// `publish` returns once the handlers it woke have settled.
+tb.broker::<FileBroker>()
+    .message(&Order { id: 1 })
+    .to("orders")
+    .publish()
+    .await?;
 
-    tb.broker::<FileTestBroker>()
-        .subscriber("orders")
-        .assert_called_once();
-    tb.broker::<FileTestBroker>()
-        .published::<Confirmation>("confirmations")
-        .assert_called_once()
-        .with(&Confirmation { id: 1 });
-    Ok(())
-}
+tb.broker::<FileBroker>()
+    .subscriber("orders")
+    .assert_called_once();
+tb.broker::<FileBroker>()
+    .published::<Confirmation>("confirmations")
+    .assert_called_once()
+    .with(&Confirmation { id: 1 });
 ```
 
-A stdio service swaps the type and names the destination its copies go to, the way it names it in production:
+In process a stream file is a log in memory with the file's numbering, replay, seeking and end-of-stream mark, and a pipe is standard input the test feeds and standard output the service writes. Both read the broker's own settings and refuse what the real transport refuses. A stdio service is addressed as `tb.broker::<StdioBroker>()`, and what it wrote to standard output is read back with `published::<T>(key)`.
 
-```rust
-use ruststream_sea_file::stdio::prelude::*;
-use ruststream_sea_file::testing::StdioTestBroker;
-
-let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
-    .with_broker(StdioTestBroker::new(), |b| {
-        b.include(work).out_retry(Publish).to("jobs.retry");
-    });
-```
-
-What a stand leaves out is what only a real transport can answer: the end-of-stream mark, the header envelope, `AckError::Unsupported`, durability across a restart. Those are covered by the suite that runs against stream files and pipes, and `just test` exercises it on temp files, needing no external broker.
+`TestApp::start_live(app())` runs the same test against a real stream file (`just test-brokers`), which is where the bytes of a `.ss` file, durability across a restart and the line format of a shell pipeline are exercised.
 
 ## Layout
 

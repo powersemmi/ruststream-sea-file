@@ -5,13 +5,13 @@ mod batching;
 mod context;
 mod error;
 pub mod file;
+#[cfg(feature = "testing")]
+mod in_process;
 mod message;
 pub mod prelude;
 pub mod stdio;
 mod stream;
 mod subscriber;
-#[cfg(feature = "testing")]
-pub mod testing;
 mod wire;
 
 pub use context::{FileBatchContext, FileContext, Position, SeekHandle};

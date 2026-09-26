@@ -30,7 +30,7 @@ docs.rs 上：
 
 - :material-file-document-outline: **[流文件](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html)** - 描述符、重放、位置与定位、批、发布、延迟的重新投递。
 - :material-console: **[管道](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html)** - 行格式、延迟副本去往何处、把输出接回输入。
-- :material-test-tube: **[测试](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html)** - 每种传输的进程内替身。
+- :material-test-tube: **[测试](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#testing)** - 在 `TestApp` 下运行生产应用，进程内或基于真实文件。
 - :material-book-open-variant: **[RustStream 文档](https://powersemmi.github.io/ruststream/)** - 框架本身：安装、教程和 Broker 列表。
 - :material-language-rust: **[API 参考](https://docs.rs/ruststream-sea-file)** - 该 crate 在 docs.rs 上的 rustdoc。
 

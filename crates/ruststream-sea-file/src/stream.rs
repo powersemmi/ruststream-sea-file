@@ -6,13 +6,9 @@ use std::future::{Future, ready};
 use ruststream::asyncapi::{Binding, Bindings};
 use ruststream::runtime::IntoSource;
 use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource};
-#[cfg(feature = "testing")]
-use ruststream::{Seekable, Seeker};
 #[cfg(feature = "asyncapi")]
 use serde::Serialize;
 
-#[cfg(feature = "testing")]
-use crate::FilePosition;
 use crate::error::SeaFileError;
 use crate::file::ConnectedFileBroker;
 use crate::subscriber::FileSubscriber;
@@ -168,52 +164,6 @@ impl RedeliveryAddressed<ConnectedFileBroker> for FileStream {
         _connected: &ConnectedFileBroker,
     ) -> impl Future<Output = Result<RedeliveryAddress, SeaFileError>> {
         // The descriptor already knows the answer; nothing is asked of the connection.
-        ready(Ok(self.redelivery_address_value()))
-    }
-}
-
-/// The descriptor resolves against the in-process transport too, so a service written on
-/// `FileStream` mounts on [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
-///
-/// [`replay`](FileStream::replay) opens at the start of the retained log rather than at its tail.
-/// Nothing in process writes an end-of-stream mark, so the subscription does not complete the way
-/// a finished file's does; that part of replay is verified against real files.
-#[cfg(feature = "testing")]
-impl SubscriptionSource<crate::testing::ConnectedFileTestBroker> for FileStream {
-    type Subscriber = crate::testing::FileTestSubscriber;
-    // The stand-in's answer is the file's, so a registration that starts against one starts
-    // against the other.
-    type Copies = AddressedCopies;
-
-    fn name(&self) -> &str {
-        self.stream()
-    }
-
-    async fn subscribe(
-        self,
-        connected: &crate::testing::ConnectedFileTestBroker,
-    ) -> Result<Self::Subscriber, SeaFileError> {
-        self.validate()?;
-        let subscriber = connected.open(self.stream())?;
-        if self.replay {
-            let seeker = Seekable::seeker(&subscriber);
-            Seeker::seek(&seeker, FilePosition::Beginning).await?;
-        }
-        Ok(subscriber)
-    }
-
-    #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self) -> Bindings {
-        self.channel_extension()
-    }
-}
-
-#[cfg(feature = "testing")]
-impl RedeliveryAddressed<crate::testing::ConnectedFileTestBroker> for FileStream {
-    fn redelivery_address(
-        &self,
-        _connected: &crate::testing::ConnectedFileTestBroker,
-    ) -> impl Future<Output = Result<RedeliveryAddress, SeaFileError>> {
         ready(Ok(self.redelivery_address_value()))
     }
 }

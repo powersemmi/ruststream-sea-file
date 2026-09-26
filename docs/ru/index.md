@@ -34,7 +34,7 @@ docs.rs:
 
 - :material-file-document-outline: **[Файл потока](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html)** - дескрипторы, воспроизведение, позиции и перемотка, пакеты, публикация, отложенная повторная доставка.
 - :material-console: **[Конвейер](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html)** - формат строки, куда уходит отложенная копия, замыкание вывода на ввод.
-- :material-test-tube: **[Тестирование](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html)** - внутрипроцессный стенд для каждого транспорта.
+- :material-test-tube: **[Тестирование](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#testing)** - рабочее приложение под `TestApp`: внутри процесса или на настоящем файле.
 - :material-book-open-variant: **[Документация RustStream](https://powersemmi.github.io/ruststream/)** - сам фреймворк: установка, учебник, список брокеров.
 - :material-language-rust: **[Справочник API](https://docs.rs/ruststream-sea-file)** - rustdoc крейта на docs.rs.
 
