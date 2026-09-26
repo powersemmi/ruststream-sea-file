@@ -33,11 +33,15 @@ struct Job {
     id: u64,
 }
 
-/// The example binary `cargo test` built beside this test.
+/// The example binary the current build made beside this test.
 ///
 /// Examples land next to the test binaries: under their plain name when the artifact and build
-/// directories are the same, and under a content hash when they are split. Both spellings are
-/// searched, so the test finds the stage wherever the build put it.
+/// directories are the same, and under a content hash when they are split. Every spelling is a
+/// candidate, and the newest one is the build of this run: a build directory kept between runs
+/// (another toolchain, a cached target directory) also holds older builds of the example, which
+/// may not read what this test sends. A `cargo test --examples` run also builds each example as a
+/// test harness, which answers any argument with the test runner's report; that build is passed
+/// over.
 fn example_binary(name: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary has a path");
     let dir = exe
@@ -45,27 +49,43 @@ fn example_binary(name: &str) -> PathBuf {
         .and_then(Path::parent)
         .expect("the test binary sits inside the profile directory")
         .join("examples");
-    let plain = dir.join(name);
-    if plain.is_file() {
-        return plain;
-    }
     std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("the examples directory {} must exist: {e}", dir.display()))
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| {
+        .filter(|path| {
             path.extension().is_none()
                 && path
                     .file_name()
                     .and_then(|file| file.to_str())
-                    .is_some_and(|file| file.starts_with(&format!("{name}-")))
+                    .is_some_and(|file| file == name || file.starts_with(&format!("{name}-")))
+                && !is_test_harness(path)
         })
+        .filter_map(|path| {
+            let built = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok()?;
+            Some((built, path))
+        })
+        .max_by_key(|(built, _)| *built)
+        .map(|(_, path)| path)
         .unwrap_or_else(|| {
             panic!(
                 "the `{name}` example must be built beside the tests, in {}",
                 dir.display(),
             )
         })
+}
+
+/// Whether `binary` is a test-harness build: libtest names its thread setting in every binary it
+/// links into, and the example proper never links it.
+fn is_test_harness(binary: &Path) -> bool {
+    let marker = b"RUST_TEST_THREADS";
+    std::fs::read(binary).is_ok_and(|bytes| {
+        bytes
+            .windows(marker.len())
+            .any(|window| window == marker.as_slice())
+    })
 }
 
 /// One line in the client's format: the meta fields, then the payload.
