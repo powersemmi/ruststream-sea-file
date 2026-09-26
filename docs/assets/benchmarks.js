@@ -126,14 +126,14 @@
       row.appendChild(text("td", side(scenario.raw, scenario.unit, lang)));
       row.appendChild(text("td", side(scenario.adapter, scenario.unit, lang)));
       row.appendChild(text("td", side(scenario.framework, scenario.unit, lang)));
-      row.appendChild(
-        text(
-          "td",
-          typeof scenario.adapter_overhead_percent === "number"
-            ? percent(scenario.adapter_overhead_percent)
-            : "-",
-        ),
-      );
+      // The honesty rule for the adapter column too, on the verdict the run wrote for it.
+      let adapter = "-";
+      if (scenario.adapter_verdict === "indistinguishable") {
+        adapter = labels.indistinguishable;
+      } else if (typeof scenario.adapter_overhead_percent === "number") {
+        adapter = percent(scenario.adapter_overhead_percent);
+      }
+      row.appendChild(text("td", adapter));
       row.appendChild(text("td", overhead(scenario, labels)));
     }
     return element;
@@ -188,6 +188,14 @@
       results.crate + " " + results.crate_version + ", ruststream " + results.core_version,
     );
     row(labels.measured, results.measured_at);
+    const coded = results.code_measured;
+    if (coded) {
+      row(
+        labels.codeMeasured,
+        results.crate + " " + coded.crate_version + ", ruststream " + coded.core_version + ", " +
+          coded.measured_at,
+      );
+    }
     return element;
   }
 
