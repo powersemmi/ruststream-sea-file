@@ -17,9 +17,9 @@
 
 ## 数字 { #the-numbers }
 
-三个交错轮次中的最佳值，括号里是最差的一轮。越大越好。
+三个交错轮次中的最佳值，括号里是中位的一轮。越大越好。
 
-<div id="benchmark-results" data-benchmark-results="../../benchmarks/results.json" data-benchmark-labels='{"loading": "正在加载公布的结果...", "scenario": "场景", "raw": "裸客户端", "adapter": "这个 crate", "framework": "RustStream 服务", "adapterOverhead": "crate 开销", "overhead": "框架开销", "indistinguishable": "无法区分", "brokerBound": "受存储限制", "machine": "机器", "os": "操作系统", "broker": "Broker", "storage": "存储", "build": "构建", "versions": "版本", "measured": "测量于", "unavailable": "读不到结果。它们公布在 {url}。", "unknownSchema": "公布的结果声明的 schema 是 {schema}，这一页不渲染它。"}'></div>
+<div id="benchmark-results" data-benchmark-results="../../benchmarks/results.json" data-benchmark-labels='{"loading": "正在加载公布的结果...", "scenario": "场景", "raw": "裸客户端", "adapter": "这个 crate", "framework": "RustStream 服务", "adapterOverhead": "crate 开销", "overhead": "框架开销", "indistinguishable": "无法区分", "brokerBound": "受存储限制", "machine": "机器", "os": "操作系统", "broker": "Broker", "storage": "存储", "build": "构建", "versions": "版本", "measured": "测量于", "codeMeasured": "代码开销测量于", "instructions": "每条消息的指令数", "allocations": "每条消息的内存分配次数", "cold": "冷启动（指令 / 分配）", "unavailable": "读不到结果。它们公布在 {url}。", "unknownSchema": "公布的结果声明的 schema 是 {schema}，这一页不渲染它。"}'></div>
 
 表格由浏览器从上一次运行写下的文档读出，所以这一页上没有任何会过期的副本。
 
@@ -41,6 +41,32 @@
 同一次运行的机器可读形式在
 [`benchmarks/results.json`](https://powersemmi.github.io/ruststream-sea-file/latest/benchmarks/results.json)，
 框架的站点用它拼出跨 Broker 的汇总表。
+
+## crate 自身的代码 { #the-crates-own-code }
+
+<div id="benchmark-code"></div>
+
+第二张表是每条消息的开销，是数出来的，不是计时得来的：指令数由 callgrind 统计，内存分配次数由 DHAT
+统计。每个场景都是用户会写的那种服务，跑在 `FileBroker` 上，使用一个自己的流文件，订阅从文件开头
+读起。
+
+消息是在服务启动之后、开始消费之前追加进文件的，由 `sea-streamer-file` 客户端在另一个线程里完成，
+这部分工作不计入。计入的是服务线程上的一切：框架、这个 crate，以及客户端在这个线程上运行的那一部分，
+也就是读取和解码文件的任务。客户端的写入在填充线程上进行，真正的文件读写在 tokio 的阻塞线程上进行，
+所以回复那一行计入的是写入之前的发布路径，而不是追加本身。回复会落进订阅正在读的同一个文件，读取方在
+读向下一条订单的途中要跳过它，这部分读取也计入这一行。
+
+指令数和分配次数都是稳态下每条消息的值：1000 次投递的运行和 2000 次投递的运行之间的斜率。最后一列
+是启动服务并处理第一次投递一次性付出的开销：打开文件、连接和订阅。这些数字是绝对值，框架自身的开销
+也算在内；框架单独的开销由核心库在它的
+[基准测试页面](https://powersemmi.github.io/ruststream/latest/zh/benchmarks/)上公布。
+
+同一个二进制文件跑五次，每条消息的各项数字相差都不到百分之零点五，只有回复的内存分配次数例外：它在每条
+消息 70 到 74 次之间浮动，取决于服务等待写入线程的频繁程度。一次运行的总指令数最多浮动百分之二点七，出在
+C 库的内存分配器里，以及关闭不满批次的那个时限上。`just bench-code` 在分配次数超过场景声明的下限时失败，
+这个下限是见到的最大计数再加上一个不小于浮动幅度的余量，所以回复那一行的下限能抓到每次投递多出两次分配，
+而抓不到多出一次；加上 `--baseline=main` 时，指令数多出百分之六以上也算失败。改变开销的合并请求要附上
+自己的数字。
 
 ## 机器 { #the-machine }
 
@@ -82,6 +108,14 @@ just bench
 ```
 
 这条 recipe 把运行指向 `target/` 下的一个目录，让每个场景跑完三个循环，删掉流文件，然后把测到的
-结果写回 `docs/benchmarks/results.json`。它要花一刻钟左右，会往这个目录里写入几十 GB，并且需要
+结果写回 `docs/benchmarks/results.json`。它要花几分钟，会往这个目录里写入几十 GB，并且需要
 整台机器。消息条数不是固定的：一次试探运行会把它定下来，使得每一次被测量的运行都不短于五秒，上限
 是两百万条消息，大约一个 GiB 的流文件；再往上，一次运行测的就是设备而不是这个 crate 了。
+
+```bash
+just bench-code
+```
+
+这条 recipe 在 valgrind 下、用目标目录里的流文件统计代码表，并重写同一份文档里的 `code` 部分。它不到
+一分钟就能跑完，也不需要启动环境，只要有 valgrind 和基准测试运行器：
+`cargo install --locked gungraun-runner --version =0.19.4`。

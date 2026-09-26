@@ -52,9 +52,10 @@
 //! up to the file-size ceiling in [`MAX_MESSAGES`].
 //!
 //! Rounds are interleaved - raw, adapter, framework, raw, adapter, framework - and each loop
-//! reports its best round: noise only ever slows a run down, so the fastest round is the closest
-//! to the undisturbed cost. Blocking one loop and then the next would charge every drift of the
-//! machine to whichever ran last.
+//! reports its best, median and worst round. The best is the headline: noise only ever slows a
+//! run down, so the fastest round is the closest to the undisturbed cost. The distance between
+//! the best and the worst is the noise a difference has to clear. Blocking one loop and then the
+//! next would charge every drift of the machine to whichever ran last.
 //!
 //! # What the numbers do not say
 //!
@@ -138,7 +139,7 @@ const MAX_MESSAGES: usize = 2_000_000;
 /// so a window that reached the last body would be racing that. The slack keeps every loop far
 /// from it.
 const TAIL_SLACK: usize = 8_192;
-/// Rounds run. The best of them is reported.
+/// Rounds run. Each loop reports its best, median and worst round.
 const ROUNDS: usize = 3;
 /// Worker threads every loop is driven on.
 const WORKERS: usize = 4;
@@ -827,22 +828,33 @@ impl Scenario {
     }
 }
 
-/// Best and worst of the rounds.
+/// Best, median and worst of the rounds.
 ///
 /// Noise on the machine only ever slows a run down, so the fastest round is the closest to the
-/// undisturbed cost, and the slowest says how far from quiet the machine was.
+/// undisturbed cost, the median is the typical one, and the slowest says how far from quiet the
+/// machine was.
 #[derive(Clone, Copy, Debug)]
 struct Stats {
     best: f64,
+    median: f64,
     worst: f64,
 }
 
 impl Stats {
     fn of(rates: &[f64]) -> Self {
         assert!(!rates.is_empty(), "no round was run");
+        let mut sorted = rates.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        let middle = sorted.len() / 2;
+        let median = if sorted.len() % 2 == 1 {
+            sorted[middle]
+        } else {
+            f64::midpoint(sorted[middle - 1], sorted[middle])
+        };
         Self {
-            best: rates.iter().copied().fold(f64::MIN, f64::max),
-            worst: rates.iter().copied().fold(f64::MAX, f64::min),
+            best: sorted[sorted.len() - 1],
+            median,
+            worst: sorted[0],
         }
     }
 
@@ -861,6 +873,7 @@ struct Measured {
     framework: Stats,
     overhead_percent: f64,
     adapter_overhead_percent: f64,
+    adapter_verdict: &'static str,
     verdict: &'static str,
     broker_bound: bool,
     file_bytes: u64,
@@ -920,6 +933,7 @@ async fn measure(
     let adapter = Stats::of(&adapters);
     let framework = Stats::of(&frameworks);
     let difference = (raw.best - framework.best).abs();
+    let adapter_difference = (raw.best - adapter.best).abs();
     // What the transport charges for a message, against what a message cost. Half or more of it
     // and the row is a lower bound on the cost of dispatch rather than a measurement of it.
     let storage = scenario.appends_per_delivery() * trip.as_secs_f64();
@@ -932,6 +946,11 @@ async fn measure(
         framework,
         overhead_percent: (raw.best - framework.best) / raw.best * 100.0,
         adapter_overhead_percent: (raw.best - adapter.best) / raw.best * 100.0,
+        adapter_verdict: if adapter_difference < raw.spread().max(adapter.spread()) {
+            "indistinguishable"
+        } else {
+            "measured"
+        },
         verdict: if difference < raw.spread().max(framework.spread()) {
             "indistinguishable"
         } else {
@@ -954,10 +973,11 @@ fn document(measured: &[Measured], dir: &Path, trip: Duration) -> String {
                 "      \"unit\": \"msg/s\",\n",
                 "      \"messages\": {messages},\n",
                 "      \"pairs\": {rounds},\n",
-                "      \"raw\": {{ \"best\": {raw_best:.0}, \"worst\": {raw_worst:.0} }},\n",
-                "      \"adapter\": {{ \"best\": {ad_best:.0}, \"worst\": {ad_worst:.0} }},\n",
-                "      \"framework\": {{ \"best\": {fw_best:.0}, \"worst\": {fw_worst:.0} }},\n",
+                "      \"raw\": {{ \"best\": {raw_best:.0}, \"median\": {raw_median:.0}, \"worst\": {raw_worst:.0} }},\n",
+                "      \"adapter\": {{ \"best\": {ad_best:.0}, \"median\": {ad_median:.0}, \"worst\": {ad_worst:.0} }},\n",
+                "      \"framework\": {{ \"best\": {fw_best:.0}, \"median\": {fw_median:.0}, \"worst\": {fw_worst:.0} }},\n",
                 "      \"adapter_overhead_percent\": {adapter_overhead:.1},\n",
+                "      \"adapter_verdict\": \"{adapter_verdict}\",\n",
                 "      \"overhead_percent\": {overhead:.1},\n",
                 "      \"verdict\": \"{verdict}\",\n",
                 "      \"broker_bound\": {broker_bound}\n",
@@ -967,12 +987,16 @@ fn document(measured: &[Measured], dir: &Path, trip: Duration) -> String {
             messages = row.messages,
             rounds = row.rounds,
             raw_best = row.raw.best,
+            raw_median = row.raw.median,
             raw_worst = row.raw.worst,
             ad_best = row.adapter.best,
+            ad_median = row.adapter.median,
             ad_worst = row.adapter.worst,
             fw_best = row.framework.best,
+            fw_median = row.framework.median,
             fw_worst = row.framework.worst,
             adapter_overhead = row.adapter_overhead_percent,
+            adapter_verdict = row.adapter_verdict,
             overhead = row.overhead_percent,
             verdict = row.verdict,
             broker_bound = row.broker_bound,

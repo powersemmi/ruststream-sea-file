@@ -57,6 +57,22 @@ bench *ARGS:
         cargo bench -p ruststream-sea-file-bench --bench paired {{ ARGS }}
     python3 scripts/bench_results.py target/bench-paired.json docs/benchmarks/results.json
 
+# What a message costs on the service's thread, counted under valgrind: instructions through
+# callgrind and allocations through DHAT, each scenario a service on FileBroker over a stream file
+# of its own in the target directory. There is no stand to start - on this broker the local
+# machine is the transport - and the counts do not depend on how busy the machine is; it takes
+# under a minute. The page it feeds is the code table of docs/benchmarks.md. RUSTFLAGS is cleared
+# because valgrind aborts on the instructions a recent CPU advertises. Needs valgrind and the
+# runner the benches pin: cargo install --locked gungraun-runner --version =0.19.4
+# Extra arguments reach the runner: `just bench-code --save-baseline=main` records a baseline,
+# `just bench-code --baseline=main` compares against it.
+bench-code *ARGS:
+    mkdir -p target
+    RUSTFLAGS="" cargo bench -p ruststream-sea-file-bench \
+        --bench consume --bench reply --bench batch \
+        -- --output-format=json {{ ARGS }} > target/bench-code.json
+    python3 scripts/bench_results.py --code target/bench-code.json docs/benchmarks/results.json
+
 fmt:
     cargo fmt --all
 
