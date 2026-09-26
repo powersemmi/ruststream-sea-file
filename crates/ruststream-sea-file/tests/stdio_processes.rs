@@ -68,13 +68,15 @@ fn example_binary(name: &str) -> PathBuf {
             Some((built, path))
         })
         .max_by_key(|(built, _)| *built)
-        .map(|(_, path)| path)
-        .unwrap_or_else(|| {
-            panic!(
-                "the `{name}` example must be built beside the tests, in {}",
-                dir.display(),
-            )
-        })
+        .map_or_else(
+            || {
+                panic!(
+                    "the `{name}` example must be built beside the tests, in {}",
+                    dir.display(),
+                )
+            },
+            |(_, path)| path,
+        )
 }
 
 /// Whether `binary` is a test-harness build: libtest names its thread setting in every binary it
