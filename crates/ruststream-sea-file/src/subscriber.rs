@@ -25,6 +25,7 @@ use ruststream::{
 };
 use sea_streamer_file::{FileConsumer, FileErr, MessageSource, SeekTarget, is_end_of_stream};
 use sea_streamer_types::{Consumer as _, ShardId, SharedMessage, StreamErr, StreamKey, Timestamp};
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::batching::BATCH_MAX_WAIT;
@@ -38,10 +39,6 @@ const CHANNEL_CAPACITY: usize = 64;
 
 pub(crate) struct SeekCmd {
     position: FilePosition,
-    /// The generation this reposition opens. The driver starts stamping deliveries with it only
-    /// once the reposition has run, so everything read at the previous position keeps the
-    /// previous generation and is discarded on the way out.
-    epoch: u64,
     done: oneshot::Sender<Result<(), SeaFileError>>,
 }
 
@@ -55,7 +52,8 @@ pub(crate) struct Stamped {
 /// Dropping the subscriber stops the driver task. The stream also ends on its own when the file
 /// does: a replay reaches the end of what was retained, and a live subscription reaches the
 /// end-of-stream mark a writer left with
-/// [`end_with_eos`](crate::FileBroker::end_with_eos).
+/// [`end_with_eos`](crate::FileBroker::end_with_eos). A replay that ended can still be moved by
+/// its seeker until the subscriber is dropped, and its stream then delivers again.
 pub struct FileSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
@@ -79,11 +77,17 @@ impl FileSubscriber {
         &self.stream
     }
 
-    pub(crate) fn spawn(stream: String, reader: Reader) -> Self {
+    pub(crate) fn spawn(stream: String, reader: impl Source) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
-        tokio::spawn(drive(reader, out_tx, cmd_rx, stream.clone()));
+        tokio::spawn(drive(
+            reader,
+            out_tx,
+            cmd_rx,
+            Arc::clone(&epoch),
+            stream.clone(),
+        ));
         let stream: Arc<str> = Arc::from(stream);
         Self {
             stream: Arc::clone(&stream),
@@ -253,7 +257,6 @@ impl Driven {
             stream: Arc::clone(&self.stream),
             backend: SeekBackend::Driver {
                 cmd: self.cmd.clone(),
-                epoch: Arc::clone(&self.epoch),
             },
         }
     }
@@ -328,10 +331,7 @@ impl IncomingMessage for FileMessage {
 #[derive(Clone)]
 enum SeekBackend {
     /// The stream file's driver task, which owns the client consumer.
-    Driver {
-        cmd: mpsc::UnboundedSender<SeekCmd>,
-        epoch: Arc<AtomicU64>,
-    },
+    Driver { cmd: mpsc::UnboundedSender<SeekCmd> },
     /// The in-process transport's log, repositioned inside the subscription's own poll.
     #[cfg(feature = "testing")]
     Log(LogSeeker),
@@ -386,18 +386,10 @@ impl Seeker for FileSeeker {
 
     async fn seek(&self, to: FilePosition) -> Result<(), SeaFileError> {
         match &self.backend {
-            SeekBackend::Driver { cmd, epoch } => {
-                // Opening the new generation here is what makes the reader discard everything
-                // from the old position: deliveries already queued, and any the driver reads
-                // between this bump and the reposition it is about to run.
-                let opened = epoch.fetch_add(1, Ordering::Release) + 1;
+            SeekBackend::Driver { cmd } => {
                 let (done, wait) = oneshot::channel();
-                cmd.send(SeekCmd {
-                    position: to,
-                    epoch: opened,
-                    done,
-                })
-                .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
+                cmd.send(SeekCmd { position: to, done })
+                    .map_err(|_| self.dead("the subscription's driver task has shut down"))?;
                 wait.await
                     .map_err(|_| self.dead("the subscription's driver task has shut down"))?
             }
@@ -429,8 +421,23 @@ pub(crate) enum Reader {
     },
 }
 
-impl Reader {
+/// What the driver task reads a subscription through and repositions: the stream file's
+/// [`Reader`] in a service, a scripted log in this module's tests.
+pub(crate) trait Source: Send + 'static {
     /// The next message of the subscription's stream key.
+    fn next(&mut self) -> impl Future<Output = Result<SharedMessage, StreamErr<FileErr>>> + Send;
+
+    /// Moves the subscription; not cancel-safe, so it runs to completion on the driver task.
+    fn reposition(
+        &mut self,
+        target: SeekTarget,
+    ) -> impl Future<Output = Result<(), FileErr>> + Send;
+
+    /// Whether a seek can still move the reader once it reported the end of the stream.
+    fn repositions_after_end(&self) -> bool;
+}
+
+impl Source for Reader {
     async fn next(&mut self) -> Result<SharedMessage, StreamErr<FileErr>> {
         match self {
             Self::Tail(consumer) => consumer.next().await,
@@ -447,12 +454,17 @@ impl Reader {
         }
     }
 
-    /// Moves the subscription; not cancel-safe, so it runs to completion on the driver task.
     async fn reposition(&mut self, target: SeekTarget) -> Result<(), FileErr> {
         match self {
             Self::Tail(consumer) => consumer.seek_to(target).await,
             Self::Replay { source, key } => source.seek(key, &SHARD, target).await,
         }
+    }
+
+    fn repositions_after_end(&self) -> bool {
+        // The client's consumer task ends with the stream it tails; the file itself stays
+        // readable from anywhere.
+        matches!(self, Self::Replay { .. })
     }
 }
 
@@ -465,98 +477,330 @@ fn is_clean_end(err: &StreamErr<FileErr>) -> bool {
     )
 }
 
+/// What the driver does once a read's outcome is delivered.
+enum After {
+    /// Reads on.
+    Read,
+    /// The stream ended cleanly: nothing is read until a seek moves the reader again.
+    Idle,
+    /// The stream ended or the read failed, and the reader cannot move again: the driver stops.
+    Stop,
+}
+
+/// The delivery one outcome of the reader's `next` produces, and what the driver does after it.
+fn delivery(
+    next: Result<SharedMessage, StreamErr<FileErr>>,
+    reader: &impl Source,
+    stream: &str,
+) -> (Option<Result<SeaMessage, SeaFileError>>, After) {
+    match next {
+        Ok(message) => (Some(Ok(SeaMessage::new(&message))), After::Read),
+        // A stream that ended is not a failure. Both endings arrive here: the writer's
+        // end-of-stream mark, which is the only thing that ends a live subscription, and the end
+        // of the retained file, which ends a replay.
+        Err(err) if is_clean_end(&err) => {
+            let after = if reader.repositions_after_end() {
+                After::Idle
+            } else {
+                After::Stop
+            };
+            (None, after)
+        }
+        Err(err) => (
+            Some(Err(SeaFileError::Receive {
+                stream: stream.to_owned(),
+                source: box_err(err),
+            })),
+            After::Stop,
+        ),
+    }
+}
+
 async fn drive(
-    mut reader: Reader,
+    mut reader: impl Source,
     out: mpsc::Sender<Stamped>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
+    epoch: Arc<AtomicU64>,
     stream: String,
 ) {
-    // The generation the reader is actually positioned in. It advances when a reposition has
-    // run, never when one is merely requested, so a delivery read at the old position cannot be
-    // stamped with the generation the request opened and pass the reader's filter.
-    let mut applied = 0;
-    loop {
-        tokio::select! {
+    // The generation the reader is positioned in, published through `epoch` to the subscription's
+    // filter. Only this task advances it, and only once a reposition has run.
+    let mut generation = 0;
+    // Set once the stream ended. The driver then serves seeks only, and the subscription stays
+    // repositionable until it is dropped.
+    let mut idle = false;
+    'read: loop {
+        let next = tokio::select! {
             biased;
             cmd = cmd_rx.recv() => {
-                let Some(SeekCmd { position, epoch: opened, done }) = cmd else { break };
-                let target = match position {
-                    FilePosition::Beginning => SeekTarget::Beginning,
-                    FilePosition::End => SeekTarget::End,
-                    FilePosition::Sequence(sequence) => SeekTarget::SeqNo(sequence),
-                    FilePosition::Timestamp(millis) => {
-                        let nanos = i128::from(millis) * 1_000_000;
-                        match Timestamp::from_unix_timestamp_nanos(nanos) {
-                            Ok(timestamp) => SeekTarget::Timestamp(timestamp),
-                            Err(err) => {
-                                applied = opened;
-                                let _ = done.send(Err(SeaFileError::Invalid(format!(
-                                    "'{millis}' is not a valid timestamp: {err}"
-                                ))));
-                                continue;
-                            }
-                        }
-                    }
-                };
-                // The client's seek is not cancel-safe: it runs here to completion, never
-                // inside a racing select arm. A read it interrupted is discarded with the old
-                // position.
-                let result = reader.reposition(target).await;
-                // The generation the request opened starts here, whether or not the reposition
-                // succeeded: a failed one leaves the subscription where it was, and what it
-                // reads next is current again rather than discarded for ever.
-                applied = opened;
-                let _ = done.send(result.map_err(|e| SeaFileError::Seek {
-                    stream: stream.clone(),
-                    source: box_err(e),
-                }));
+                let Some(cmd) = cmd else { break };
+                if serve(&mut reader, cmd, &mut generation, &epoch, &stream).await {
+                    idle = false;
+                }
+                continue;
             }
             () = out.closed() => break,
-            next = reader.next() => {
-                if !forward(next, &out, &stream, applied).await {
-                    break;
+            next = reader.next(), if !idle => next,
+        };
+        let (item, after) = delivery(next, &reader, &stream);
+        let permit = match out.try_reserve() {
+            Ok(permit) => permit,
+            Err(TrySendError::Closed(())) => break,
+            // The subscription is behind. The handler that stopped draining the channel may be
+            // the one waiting on a seek, so seeks are served while the driver waits for room.
+            Err(TrySendError::Full(())) => loop {
+                tokio::select! {
+                    biased;
+                    cmd = cmd_rx.recv() => {
+                        let Some(cmd) = cmd else { break 'read };
+                        if serve(&mut reader, cmd, &mut generation, &epoch, &stream).await {
+                            // What was read belongs to the old position and goes with it.
+                            idle = false;
+                            continue 'read;
+                        }
+                    }
+                    permit = out.reserve() => match permit {
+                        Ok(permit) => break permit,
+                        Err(_) => break 'read,
+                    },
                 }
-            }
+            },
+        };
+        permit.send(Stamped {
+            epoch: generation,
+            item,
+        });
+        match after {
+            After::Read => {}
+            After::Idle => idle = true,
+            After::Stop => break,
         }
     }
 }
 
-/// Forwards one outcome of the client's `next` into the delivery channel, stamped with the
-/// generation it was read under.
+/// Runs one seek on the reader and answers it; `true` when the reader moved.
 ///
-/// Returns `false` when the driver has nothing left to do: the stream ended, the read failed, or
-/// nothing is listening any more.
-async fn forward(
-    next: Result<SharedMessage, StreamErr<FileErr>>,
-    out: &mpsc::Sender<Stamped>,
+/// A reader that moved opens a new generation: everything read before it, queued for the handler
+/// or still held by the driver, is discarded on the way out. A refused seek leaves the reader and
+/// every queued delivery where they were.
+async fn serve(
+    reader: &mut impl Source,
+    SeekCmd { position, done }: SeekCmd,
+    generation: &mut u64,
+    epoch: &AtomicU64,
     stream: &str,
-    epoch: u64,
 ) -> bool {
-    let receive_error = |err| Stamped {
-        epoch,
-        item: Some(Err(SeaFileError::Receive {
-            stream: stream.to_owned(),
-            source: box_err(err),
-        })),
+    let target = match position {
+        FilePosition::Beginning => SeekTarget::Beginning,
+        FilePosition::End => SeekTarget::End,
+        FilePosition::Sequence(sequence) => SeekTarget::SeqNo(sequence),
+        FilePosition::Timestamp(millis) => {
+            let nanos = i128::from(millis) * 1_000_000;
+            match Timestamp::from_unix_timestamp_nanos(nanos) {
+                Ok(timestamp) => SeekTarget::Timestamp(timestamp),
+                Err(err) => {
+                    let _ = done.send(Err(SeaFileError::Invalid(format!(
+                        "'{millis}' is not a valid timestamp: {err}"
+                    ))));
+                    return false;
+                }
+            }
+        }
     };
-    match next {
-        Ok(message) => {
-            let item = Stamped {
-                epoch,
-                item: Some(Ok(SeaMessage::new(&message))),
+    // The client's seek is not cancel-safe: it runs here to completion, never inside a racing
+    // select arm.
+    let result = reader.reposition(target).await;
+    let moved = result.is_ok();
+    if moved {
+        // Published before the answer (Release, paired with the filter's Acquire load), so once
+        // the seek returns, nothing read at the old position reaches the handler.
+        *generation += 1;
+        epoch.store(*generation, Ordering::Release);
+    }
+    let _ = done.send(result.map_err(|e| SeaFileError::Seek {
+        stream: stream.to_owned(),
+        source: box_err(e),
+    }));
+    moved
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::ready;
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use sea_streamer_file::SeekErr;
+    use sea_streamer_types::{MessageHeader, SeqNo};
+
+    use super::*;
+    use crate::wire;
+
+    /// Longer than anything the driver waits for on its own: on the paused clock it elapses only
+    /// once the runtime has nothing left to run, so reaching it means the seek can never finish.
+    const STUCK: Duration = Duration::from_secs(60);
+
+    /// A stream key's log held in memory, read the way a replay reads a file: every message in
+    /// order, then the end of the file. A read is always ready, so the driver fills the delivery
+    /// channel without yielding and parks only where it waits for room.
+    struct Log {
+        messages: Vec<SharedMessage>,
+        next: usize,
+    }
+
+    impl Log {
+        fn of(count: u8) -> Self {
+            let key = StreamKey::new("orders").expect("the key is valid");
+            let messages = (1..=count)
+                .map(|body| {
+                    let bytes = wire::encode(&HeaderMap::new(), &[body], false);
+                    let length = bytes.len();
+                    SharedMessage::new(
+                        MessageHeader::new(
+                            key.clone(),
+                            SHARD,
+                            SeqNo::from(body),
+                            Timestamp::now_utc(),
+                        ),
+                        bytes,
+                        0,
+                        length,
+                    )
+                })
+                .collect();
+            Self { messages, next: 0 }
+        }
+    }
+
+    impl Source for Log {
+        fn next(&mut self) -> impl Future<Output = Result<SharedMessage, StreamErr<FileErr>>> {
+            let message = self.messages.get(self.next).cloned();
+            if message.is_some() {
+                self.next += 1;
+            }
+            ready(message.ok_or(StreamErr::Backend(FileErr::NotEnoughBytes)))
+        }
+
+        fn reposition(&mut self, target: SeekTarget) -> impl Future<Output = Result<(), FileErr>> {
+            let next = match target {
+                SeekTarget::Beginning => 0,
+                SeekTarget::End => self.messages.len(),
+                // Past the last message, as the file refuses it: the reader stays where it was.
+                SeekTarget::SeqNo(sequence) if sequence > self.messages.len() as u64 => {
+                    return ready(Err(FileErr::SeekErr(SeekErr::OutOfBound)));
+                }
+                SeekTarget::SeqNo(sequence) => {
+                    usize::try_from(sequence.saturating_sub(1)).expect("the sequence fits")
+                }
+                SeekTarget::Timestamp(_) => unreachable!("these tests seek by sequence"),
             };
-            out.send(item).await.is_ok()
+            self.next = next;
+            ready(Ok(()))
         }
-        Err(err) if is_clean_end(&err) => {
-            // A stream that ended is not a failure. Both endings arrive here: the writer's
-            // end-of-stream mark, which is the only thing that ends a live subscription, and the
-            // end of the retained file, which ends a replay.
-            let _ = out.send(Stamped { epoch, item: None }).await;
-            false
+
+        fn repositions_after_end(&self) -> bool {
+            true
         }
-        Err(err) => {
-            let _ = out.send(receive_error(err)).await;
-            false
+    }
+
+    /// What the subscription delivers next: the body of a message, or `None` at its end.
+    async fn next_body<S>(stream: &mut S) -> Option<u8>
+    where
+        S: Stream<Item = Result<FileMessage, SeaFileError>> + Unpin,
+    {
+        tokio::time::timeout(STUCK, stream.next())
+            .await
+            .expect("the subscription moves on")
+            .map(|next| next.expect("the delivery is ok").payload()[0])
+    }
+
+    /// A handler seeking while more messages are queued than the delivery channel holds: the
+    /// driver is parked on the full channel, and the seek must still reach it.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_completes_while_the_delivery_channel_is_full() {
+        let backlog = u8::try_from(CHANNEL_CAPACITY * 2).expect("the backlog fits");
+        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(backlog));
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+        // Lets the driver run until it parks: the channel is full and a read waits for room.
+        tokio::task::yield_now().await;
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(100)))
+            .await
+            .expect("a seek completes while the delivery channel is full")
+            .expect("the seek succeeds");
+
+        for expected in 100..=backlog {
+            assert_eq!(next_body(&mut stream).await, Some(expected));
         }
+        assert_eq!(next_body(&mut stream).await, None, "the replay ends");
+    }
+
+    /// A handler seeking once the replay has read to the end of the file, while the end it
+    /// reported is still queued behind the last message: the end belongs to the old position,
+    /// and the replay goes on from the new one.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_after_the_replay_reached_the_end_replays_again() {
+        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(3));
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        for expected in 1..=3 {
+            assert_eq!(next_body(&mut stream).await, Some(expected));
+        }
+        // Lets the driver read past the last message and report the end.
+        tokio::task::yield_now().await;
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::beginning()))
+            .await
+            .expect("the seek completes")
+            .expect("a seek after the end of the file succeeds");
+
+        for expected in 1..=3 {
+            assert_eq!(next_body(&mut stream).await, Some(expected));
+        }
+        assert_eq!(next_body(&mut stream).await, None, "the replay ends again");
+    }
+
+    /// A seek after the subscription already yielded its end: the subscription is still open, so
+    /// the seek moves it and its stream delivers again.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_after_the_stream_ended_reopens_it() {
+        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(2));
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+        assert_eq!(next_body(&mut stream).await, Some(2));
+        assert_eq!(next_body(&mut stream).await, None);
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(2)))
+            .await
+            .expect("the seek completes")
+            .expect("a seek after the stream ended succeeds");
+
+        assert_eq!(next_body(&mut stream).await, Some(2));
+        assert_eq!(next_body(&mut stream).await, None);
+    }
+
+    /// A refused seek leaves the subscription where it was: what was already read and queued
+    /// for the handler is still delivered, then the rest of the file.
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_seek_keeps_what_was_queued() {
+        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(5));
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+        // Lets the driver queue the rest of the file and its end.
+        tokio::task::yield_now().await;
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(9)))
+            .await
+            .expect("the seek completes")
+            .expect_err("no message carries that sequence");
+
+        for expected in 2..=5 {
+            assert_eq!(next_body(&mut stream).await, Some(expected));
+        }
+        assert_eq!(next_body(&mut stream).await, None);
     }
 }
