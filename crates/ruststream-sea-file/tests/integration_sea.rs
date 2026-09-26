@@ -475,6 +475,79 @@ fn existing_only_refuses_a_missing_file_and_opens_one_that_is_there() {
     });
 }
 
+/// A broker that shut down leaves nothing behind that reaches the next connection over its file.
+///
+/// A publisher the first connection handed out outlives its shutdown, and the service drops it
+/// only after a new connection opened the same path, as a service that reconnects does. Dropping
+/// it must not end the writer the new connection appends through.
+#[test]
+fn a_reconnect_survives_the_publishers_of_the_connection_before_it() {
+    common::on_a_file(async {
+        let path = common::tmp_path("reconnect");
+
+        let first = FileBroker::new(&path).connect().await.expect("file opens");
+        let stale = first.publisher();
+        stale
+            .publish(OutgoingMessage::new("orders", [1u8].as_slice()), None)
+            .await
+            .expect("publish succeeds");
+        first.shutdown().await.expect("shutdown succeeds");
+
+        let second = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("file reopens");
+        drop(stale);
+        // The file client settles every producer handle on one process-wide task, in order, and a
+        // broker's shutdown waits on that task. Once a broker over another file has shut down,
+        // whatever dropping the stale publisher set off has taken effect.
+        let other_path = common::tmp_path("reconnect-other");
+        let other = FileBroker::new(&other_path)
+            .connect()
+            .await
+            .expect("file opens");
+        other.shutdown().await.expect("shutdown succeeds");
+
+        tokio::time::timeout(
+            RECV_TIMEOUT,
+            second
+                .publisher()
+                .publish(OutgoingMessage::new("orders", [2u8].as_slice()), None),
+        )
+        .await
+        .expect("a publish on the new connection must complete")
+        .expect("a publish on the new connection succeeds");
+
+        let mut subscriber = second
+            .subscribe_stream(FileStream::new("orders"))
+            .await
+            .expect("subscription opens");
+        let seeker = subscriber.seeker();
+        let mut stream = pin!(subscriber.stream());
+        seeker
+            .seek(FilePosition::beginning())
+            .await
+            .expect("seeking to the start of the file succeeds");
+        for expected in [1u8, 2] {
+            let message = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("a delivery must arrive")
+                .expect("the stream must stay open")
+                .expect("the delivery must be ok");
+            assert_eq!(
+                message.payload(),
+                [expected].as_slice(),
+                "both connections' messages are in the file, in order",
+            );
+        }
+
+        second.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&other_path);
+    });
+}
+
 /// The beacon interval the broker was configured with, read back out of the file the broker
 /// wrote: the format keeps it in the header, and it is what a reader seeks by.
 ///
