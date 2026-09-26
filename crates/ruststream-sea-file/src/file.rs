@@ -227,6 +227,7 @@ use sea_streamer_file::{
 use sea_streamer_types::{
     ConsumerMode, ConsumerOptions as _, Producer as _, StreamErr, StreamKey, Streamer as _,
 };
+use tokio::runtime::Handle;
 use tokio::sync::{OnceCell, RwLock};
 
 use crate::error::{SeaFileError, box_err};
@@ -256,6 +257,10 @@ pub(crate) struct Disk {
     /// connection over the same path. Publishers share the connection, so `shutdown` takes the
     /// handle out under the write lock, once the publishes in flight are done with it.
     pub(crate) producer: RwLock<Option<FileProducer>>,
+    /// The runtime `connect` ran on. Every task of this connection runs there: the subscription
+    /// drivers this crate starts, and the readers the client starts when a consumer opens, so a
+    /// subscription opened from another runtime does not stop when that runtime does.
+    pub(crate) runtime: Handle,
 }
 
 /// What a connected broker and every handle paired off it speak over: the stream file, or, under
@@ -427,6 +432,7 @@ impl Broker for FileBroker {
                     link: Link::File(Disk {
                         streamer,
                         producer: RwLock::new(Some(producer)),
+                        runtime: Handle::current(),
                     }),
                     path: self.path.clone(),
                     closed: AtomicBool::new(false),
@@ -537,14 +543,16 @@ impl ConnectedFileBroker {
         // is the framework's start_at / Seek surface. Replay is the one mode a seek cannot
         // express: it reads the retained file from the start and completes the stream at its end,
         // and it reads the file itself - see `Reader::Replay` for why.
+        let stream = descriptor.stream().to_owned();
+        let subscribe_err = |source| SeaFileError::Subscribe {
+            stream: stream.clone(),
+            source,
+        };
         let reader = if descriptor.replay_value() {
-            let source =
-                MessageSource::new(FileId::new(self.core.path.clone()), StreamMode::Replay)
-                    .await
-                    .map_err(|e| SeaFileError::Subscribe {
-                        stream: descriptor.stream().to_owned(),
-                        source: box_err(e),
-                    })?;
+            let file_id = FileId::new(self.core.path.clone());
+            let source = MessageSource::new(file_id, StreamMode::Replay)
+                .await
+                .map_err(|e| subscribe_err(box_err(e)))?;
             Reader::Replay {
                 source: Box::new(source),
                 key,
@@ -555,20 +563,19 @@ impl ConnectedFileBroker {
             // Stated rather than left to the client's default: a live subscription waits for the
             // writes that follow the end of the file instead of finishing there.
             options.set_live_streaming(true);
+            // The client starts the consumer's reader tasks on the runtime that opens it, so the
+            // opening runs on the connection's runtime: once per subscription, off the delivery
+            // path.
+            let streamer = disk.streamer.clone();
             let consumer = disk
-                .streamer
-                .create_consumer(&[key], options)
+                .runtime
+                .spawn(async move { streamer.create_consumer(&[key], options).await })
                 .await
-                .map_err(|e| SeaFileError::Subscribe {
-                    stream: descriptor.stream().to_owned(),
-                    source: box_err(e),
-                })?;
+                .map_err(|e| subscribe_err(box_err(e)))?
+                .map_err(|e| subscribe_err(box_err(e)))?;
             Reader::Tail(consumer)
         };
-        Ok(FileSubscriber::spawn(
-            descriptor.stream().to_owned(),
-            reader,
-        ))
+        Ok(FileSubscriber::spawn(&disk.runtime, stream, reader))
     }
 }
 

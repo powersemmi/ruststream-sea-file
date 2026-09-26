@@ -102,6 +102,7 @@ use sea_streamer_types::{
     Consumer as _, ConsumerMode, ConsumerOptions as _, Producer as _, StreamKey, Streamer as _,
     StreamerUri,
 };
+use tokio::runtime::Handle;
 use tokio::sync::{OnceCell, mpsc};
 
 use crate::batching::BATCH_MAX_WAIT;
@@ -127,15 +128,22 @@ pub(crate) struct StdioCore {
 /// `match` on it is irrefutable: a production build carries no second transport and no branch to
 /// it.
 pub(crate) enum StdioLink {
-    Stdio(StdioStreamer),
+    Stdio(Pipes),
     #[cfg(feature = "testing")]
     InProcess(Arc<MemoryPipe>),
 }
 
+/// The process's own pipes as the client opened them, and the runtime `connect` ran on: the
+/// reader task of every subscription runs there, whichever runtime opens it.
+pub(crate) struct Pipes {
+    streamer: StdioStreamer,
+    runtime: Handle,
+}
+
 // The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
-// link exactly the size of the streamer it wraps.
+// link exactly the size of the pipes it wraps.
 #[cfg(not(feature = "testing"))]
-const _: () = assert!(size_of::<StdioLink>() == size_of::<StdioStreamer>());
+const _: () = assert!(size_of::<StdioLink>() == size_of::<Pipes>());
 
 impl StdioCore {
     fn ensure_open(&self) -> Result<(), SeaFileError> {
@@ -213,7 +221,10 @@ impl Broker for StdioBroker {
                         source: box_err(e),
                     })?;
                 Ok::<_, SeaFileError>(Arc::new(StdioCore {
-                    link: StdioLink::Stdio(streamer),
+                    link: StdioLink::Stdio(Pipes {
+                        streamer,
+                        runtime: Handle::current(),
+                    }),
                     closed: AtomicBool::new(false),
                     #[cfg(feature = "testing")]
                     loopback: self.loopback,
@@ -290,7 +301,7 @@ impl ConnectedBroker for ConnectedStdioBroker {
     async fn shutdown(self) -> Result<(), Self::Error> {
         self.core.closed.store(true, Ordering::Release);
         let streamer = match &self.core.link {
-            StdioLink::Stdio(streamer) => streamer,
+            StdioLink::Stdio(pipes) => &pipes.streamer,
             // The in-memory pipe belongs to this broker alone, so its shutdown reaches no other.
             #[cfg(feature = "testing")]
             StdioLink::InProcess(_) => return Ok(()),
@@ -328,8 +339,8 @@ impl Subscribe for ConnectedStdioBroker {
         self.core.ensure_open()?;
         let key =
             StreamKey::new(name).map_err(|e| SeaFileError::Invalid(format!("'{name}': {e}")))?;
-        let streamer = match &self.core.link {
-            StdioLink::Stdio(streamer) => streamer,
+        let pipes = match &self.core.link {
+            StdioLink::Stdio(pipes) => pipes,
             #[cfg(feature = "testing")]
             StdioLink::InProcess(pipe) => {
                 return Ok(StdioSubscriber {
@@ -341,7 +352,8 @@ impl Subscribe for ConnectedStdioBroker {
                 });
             }
         };
-        let consumer = streamer
+        let consumer = pipes
+            .streamer
             .create_consumer(
                 &[key],
                 sea_streamer_stdio::StdioConsumerOptions::new(ConsumerMode::RealTime),
@@ -354,7 +366,7 @@ impl Subscribe for ConnectedStdioBroker {
 
         let (tx, rx) = mpsc::channel(64);
         let stream_name = name.to_owned();
-        tokio::spawn(async move {
+        pipes.runtime.spawn(async move {
             loop {
                 tokio::select! {
                     () = tx.closed() => break,
@@ -576,7 +588,7 @@ impl Publisher for StdioPublisher {
             ));
         }
         let streamer = match &core.link {
-            StdioLink::Stdio(streamer) => streamer,
+            StdioLink::Stdio(pipes) => &pipes.streamer,
             #[cfg(feature = "testing")]
             StdioLink::InProcess(pipe) => {
                 let key = StreamKey::new(msg.name())
