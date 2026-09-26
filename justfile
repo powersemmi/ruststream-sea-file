@@ -35,7 +35,8 @@ test-brokers:
     cargo build --workspace --all-features --examples
     cargo test --workspace --all-features \
         --test integration_sea --test conformance_sea --test file_positions \
-        --test file_retry --test stdio_processes --test stdio_retry --test both_modes
+        --test file_retry --test stdio_processes --test stdio_retry --test both_modes \
+        --test connect_runtime --test connect_runtime_stdio
 
 # What this crate costs over the sea-streamer-file client it wraps, and what the runtime costs on
 # top: every scenario runs three times over - the client driven directly, this crate's own consumer
