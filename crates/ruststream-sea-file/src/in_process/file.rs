@@ -34,6 +34,8 @@ struct FileInner {
     streams: HashMap<String, Vec<SharedMessage>>,
     /// Set once the broker's shutdown wrote the end-of-stream mark.
     marked: bool,
+    /// Set by the broker's shutdown; every seek is refused from then on.
+    closed: bool,
 }
 
 impl std::fmt::Debug for MemoryFile {
@@ -119,10 +121,11 @@ impl MemoryFile {
 
     /// What the broker's shutdown does to the file: when the broker writes one, the end-of-stream
     /// mark ends every subscription. Without it a live subscription goes on waiting, as it does
-    /// on a file.
+    /// on a file. Either way a seek is refused from then on, as the file's driver refuses it.
     pub(crate) fn finish(&self) {
+        let mut inner = self.lock();
+        inner.closed = true;
         if self.end_with_eos {
-            let mut inner = self.lock();
             inner.marked = true;
             inner.registry.end_all();
         }
@@ -147,6 +150,9 @@ impl MemoryFile {
             source: Box::from(why),
         };
         let mut inner = self.lock();
+        if inner.closed {
+            return Err(refused("the broker has shut down"));
+        }
         // A replay that read the whole file is still open to a seek, as the file's own reader is.
         if control.ended() {
             return Err(refused("the subscription has been closed"));
@@ -294,10 +300,10 @@ impl LogSeeker {
     ///
     /// # Errors
     ///
-    /// Returns [`SeaFileError::Seek`] once the subscription is closed, once a live subscription
-    /// read the end-of-stream mark, and when the position names nothing the log holds (which ends
-    /// a live subscription and leaves a replay where it was), and [`SeaFileError::Invalid`] for an
-    /// instant no timestamp can hold.
+    /// Returns [`SeaFileError::Seek`] once the broker has shut down, once the subscription is
+    /// closed, once a live subscription read the end-of-stream mark, and when the position names
+    /// nothing the log holds (which ends a live subscription and leaves a replay where it was),
+    /// and [`SeaFileError::Invalid`] for an instant no timestamp can hold.
     pub(crate) fn request(&self, to: FilePosition) -> Result<(), SeaFileError> {
         self.file
             .request_seek(self.id, &self.stream, to, &self.control, self.replay)

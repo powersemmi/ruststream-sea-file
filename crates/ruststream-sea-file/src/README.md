@@ -98,12 +98,16 @@ The client's payloads are plain bytes with no header space, so headers travel in
 itself, and only when a message has any. A message published without headers is written verbatim,
 so a file recorded that way stays readable as a plain payload stream by any `sea-streamer`
 consumer, and a file written by another tool stays readable here. The one exception is a payload
-that itself begins with `rs1:`, which is enveloped so that no reader takes it for an envelope. A message with headers is
-written as `rs1:` followed by base64 of a length-prefixed header block and the payload; the form
-is text-safe because the stdio transport is line-oriented UTF-8. The stdio publisher also
-envelopes a payload that has no headers when a line would not carry it as it is: one that is not
-UTF-8, holds a newline, or begins or ends with whitespace. So binary, multi-line and padded
-payloads survive a shell pipeline intact.
+that itself begins with `rs1:` or `rs2:`, which is enveloped so that no reader takes it for an
+envelope. A message with headers is written as a prefix followed by base64 of a length-prefixed
+header block and the payload; the form is text-safe because the stdio transport is line-oriented
+UTF-8. Header values are carried byte for byte, binary ones included. The block is `name: value`
+lines under `rs1:` whenever every header reads back unchanged from a line, which keeps the
+message readable by earlier releases of this crate; a message with a value that is not UTF-8,
+holds a line break, or begins or ends with whitespace is written under `rs2:`, with each name
+and value length-prefixed. The stdio publisher also envelopes a payload that has no headers when a
+line would not carry it as it is: one that is not UTF-8, holds a newline, or begins or ends with
+whitespace. So binary, multi-line and padded payloads survive a shell pipeline intact.
 
 Every delivery carries its sequence number in the [`SEQUENCE_HEADER`] header.
 
