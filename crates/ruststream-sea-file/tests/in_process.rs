@@ -366,7 +366,7 @@ async fn each_transport_numbers_its_messages_as_its_client_does() {
 }
 
 /// A header crosses the in-process file in the envelope a stream file writes, so a value comes
-/// back the way the file gives it back: trimmed, and as text.
+/// back the way the file gives it back: byte for byte, padding included.
 #[tokio::test]
 async fn a_header_crosses_the_envelope_the_file_writes() {
     let connected = FileBroker::new(PATH)
@@ -389,7 +389,7 @@ async fn a_header_crosses_the_envelope_the_file_writes() {
         .await
         .expect("delivery")
         .expect("delivery is ok");
-    assert_eq!(delivered.headers().get_str("x-tenant"), Some("acme"));
+    assert_eq!(delivered.headers().get_str("x-tenant"), Some("  acme  "));
     connected.shutdown().await.expect("shutdown");
 }
 

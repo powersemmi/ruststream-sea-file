@@ -575,7 +575,13 @@ impl ConnectedFileBroker {
                 .map_err(|e| subscribe_err(box_err(e)))?;
             Reader::Tail(consumer)
         };
-        Ok(FileSubscriber::spawn(&disk.runtime, stream, reader))
+        let core = Arc::clone(&self.core);
+        Ok(FileSubscriber::spawn(
+            &disk.runtime,
+            stream,
+            reader,
+            move || core.closed.load(Ordering::Acquire),
+        ))
     }
 }
 

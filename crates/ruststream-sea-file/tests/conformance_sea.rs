@@ -93,6 +93,23 @@ fn stdio_broker_passes_conformance_suite_in_process() {
 // (`Fn(&str) -> _` / `Fn(&B) -> _`), so a bare method path - which binds one concrete lifetime -
 // would not type-check.
 
+/// The ladder on the stdio broker in process, opened through the bare stream key a pipeline stage
+/// writes. The suite publishes to the key it subscribed, which on a pipe reaches the service's own
+/// standard input only under loopback, so that is the broker it runs. `redelivery_address` is
+/// left out: a pipe addresses none of its copies.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn stdio_broker_passes_lifecycle_in_process() {
+    common::rt().block_on(async {
+        harness::lifecycle(
+            || InProcessBroker::new(StdioBroker::new().loopback()),
+            |name| Name::new(name.to_owned()),
+            |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
 /// The batch contract on the stdio transport in process: a pipe batches on the client the way a
 /// file does, so a batch handler under the harness sees the size the mount site asked for.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
@@ -102,6 +119,40 @@ fn stdio_broker_passes_batch_suite_in_process() {
         capabilities::batches(
             || InProcessBroker::new(StdioBroker::new().loopback()),
             |name| Name::new(name.to_owned()),
+            |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
+/// The ladder against a real stream file. It opens with the message-shape check: every header
+/// comes back byte for byte, a non-UTF-8 value included.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_lifecycle() {
+    common::on_a_file(async {
+        let path = common::tmp_path("lifecycle");
+        let file = path.clone();
+        harness::lifecycle(
+            move || FileBroker::new(file.clone()),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The same ladder in process, including the publisher that outlives the shutdown: an in-process
+/// transport that kept accepting publishes through a dead handle would teach a service's tests
+/// that the aliasing case is harmless, which against a real file it is not.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_lifecycle_in_process() {
+    common::rt().block_on(async {
+        harness::lifecycle(
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
+            |name| FileStream::new(name),
             |connected| connected.publisher(),
         )
         .await;
@@ -290,6 +341,40 @@ fn file_broker_passes_batch_seeking_suite() {
 fn file_broker_passes_batch_seeking_suite_in_process() {
     common::rt().block_on(async {
         capabilities::batch_seeking(
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
+/// The seeking contract against a real stream file: pinned captured positions, a seek forward
+/// skipping what is queued, a seek from a runtime that stops right after, and a seek through a
+/// seeker that outlived the shutdown, which must be refused.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_seeking_suite() {
+    common::on_a_file(async {
+        let path = common::tmp_path("seeking");
+        capabilities::seeking(
+            || FileBroker::new(path.clone()),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The seeking contract in process, on the retained log in memory. This is the capability a
+/// service is most likely to write tests around, so the in-process file owes it the same answers
+/// a file gives.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_seeking_suite_in_process() {
+    common::rt().block_on(async {
+        capabilities::seeking(
             || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
             |name| FileStream::new(name),
             |connected| connected.publisher(),
