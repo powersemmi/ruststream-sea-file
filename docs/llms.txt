@@ -18,7 +18,7 @@ This site holds the entry pages. The crate's guides are its module overviews on 
 - [Operations](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#operations): platform limits, beacon interval, end-of-stream marks and file growth
 - [The stream file](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html): subscribing, positions and seeking, batches, publishing, delayed redelivery and the broker's settings
 - [The pipeline](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html): the line format, subscribing on standard input, publishing and where a deferred copy goes
-- [Testing](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/testing/index.html): the in-process stand for each transport, behind the `testing` feature
+- [Testing](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html#testing): the production app under `TestApp`, both brokers in process behind the `testing` feature or against a real stream file
 - [Prelude](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/prelude/index.html): the one glob for a service that spans both forms
 
 ## Optional

@@ -77,7 +77,7 @@ that broker opened: the transport is process-wide by the client's design.
 | Capability | Answer |
 | --- | --- |
 | `Subscribe` | Both. A stream key is a subscription, so `#[subscriber("key")]` needs no descriptor. |
-| `Positioned` | Both. Every delivery reports the sequence it sits at, counted from one per stream key. |
+| `Positioned` | Both. Every delivery reports the sequence it sits at, per stream key: from one on a stream file, from zero on a pipe, as each client counts. |
 | `Seekable` | The stream file only. Standard input keeps no log to move within, so a handler that reads [`SeekHandle`] does not compile against [`StdioBroker`]. |
 | `BatchSubscriber` | Both, assembled on the client: neither client reads more than one entry at a time. |
 | `Partitioned` | Neither. A stream file is one ordered log and the client writes every message to shard zero. |
@@ -98,12 +98,16 @@ The client's payloads are plain bytes with no header space, so headers travel in
 itself, and only when a message has any. A message published without headers is written verbatim,
 so a file recorded that way stays readable as a plain payload stream by any `sea-streamer`
 consumer, and a file written by another tool stays readable here. The one exception is a payload
-that itself begins with `rs1:`, which is enveloped so that no reader takes it for an envelope. A message with headers is
-written as `rs1:` followed by base64 of a length-prefixed header block and the payload; the form
-is text-safe because the stdio transport is line-oriented UTF-8. The stdio publisher also
-envelopes a payload that has no headers when a line would not carry it as it is: one that is not
-UTF-8, holds a newline, or begins or ends with whitespace. So binary, multi-line and padded
-payloads survive a shell pipeline intact.
+that itself begins with `rs1:` or `rs2:`, which is enveloped so that no reader takes it for an
+envelope. A message with headers is written as a prefix followed by base64 of a length-prefixed
+header block and the payload; the form is text-safe because the stdio transport is line-oriented
+UTF-8. Header values are carried byte for byte, binary ones included. The block is `name: value`
+lines under `rs1:` whenever every header reads back unchanged from a line, which keeps the
+message readable by earlier releases of this crate; a message with a value that is not UTF-8,
+holds a line break, or begins or ends with whitespace is written under `rs2:`, with each name
+and value length-prefixed. The stdio publisher also envelopes a payload that has no headers when a
+line would not carry it as it is: one that is not UTF-8, holds a newline, or begins or ends with
+whitespace. So binary, multi-line and padded payloads survive a shell pipeline intact.
 
 Every delivery carries its sequence number in the [`SEQUENCE_HEADER`] header.
 
@@ -132,6 +136,97 @@ mount site resolved: a reply's stream key, an `Out` slot's, the dead-letter one.
 both ends of the file, so a channel is described the same way whether the service reads it or
 appends to it. A stdio publish describes nothing, the way a stdio subscription does.
 
+# Testing
+
+A test hands the harness the app `main` runs. `TestApp::start` connects each broker in process,
+with no file and no pipe, and the test addresses the broker by its own type:
+
+```
+# #[cfg(feature = "testing")]
+# mod demo {
+use ruststream::testing::TestApp;
+use ruststream_sea_file::file::prelude::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize, Outgoing, PartialEq)]
+#[outgoing(name = "orders")]
+struct Order {
+    id: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Outgoing, PartialEq)]
+#[outgoing(name = "receipts")]
+struct Receipt {
+    order: u64,
+}
+
+#[subscriber(FileStream::new("orders"), publish)]
+async fn confirm(order: &Order) -> Receipt {
+    Receipt { order: order.id }
+}
+
+/// The app `main` runs, and the one the tests hand the harness.
+pub fn app() -> impl App {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/orders.ss"), |b| {
+            b.include(confirm);
+        })
+}
+
+pub async fn confirms_an_order() -> Result<(), Box<dyn std::error::Error>> {
+    let tb = TestApp::start(app()).await?;
+    tb.broker::<FileBroker>()
+        .message(&Order { id: 1 })
+        .publish()
+        .await?;
+
+    tb.broker::<FileBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .with(&Order { id: 1 });
+    tb.broker::<FileBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with(&Receipt { order: 1 });
+    tb.shutdown().await?;
+    Ok(())
+}
+# }
+# #[cfg(feature = "testing")]
+# fn main() {
+#     tokio::runtime::Builder::new_multi_thread()
+#         .enable_all()
+#         .build()
+#         .unwrap()
+#         .block_on(demo::confirms_an_order())
+#         .unwrap();
+# }
+# #[cfg(not(feature = "testing"))]
+# fn main() {}
+```
+
+The mode is the `testing` feature of this crate, enabled in the service's `[dev-dependencies]`.
+In process, a stream file is a log in memory. It is new and empty for each broker value, and the
+broker's clones share it, as they share the file they connect. It keeps what the file keeps: each
+stream key numbered from one, a live subscription that starts at the tip, a replay that completes
+at the end of the log, positions and seeking with the file's refusals, and the end-of-stream mark
+of [`end_with_eos`](FileBroker::end_with_eos). A test that needs a recorded log connects a clone
+of the service's broker and publishes to it before the service starts.
+
+A pipe in process is standard input the test feeds and standard output the service writes. A line
+the service writes is recorded under its stream key, and it reaches the service's own
+subscriptions only under [`loopback`](StdioBroker::loopback), as on a real pipe. So a stdio test
+reads what the service wrote with `published::<T>(key)`.
+
+Both refuse what the real transport refuses: a stream key the client does not take, an empty line
+on a pipe, a beacon interval that is not a multiple of 1024. A header crosses the same envelope a
+file or a line carries.
+
+`TestApp::start_live(app())` runs the same test against a real stream file. The real transport is
+where the bytes of a `.ss` file, its beacons, durability across a restart and the line format of a
+shell pipeline are exercised. Two brokers opened on one path share a file on disk and do not share
+it in process, and a stdio shutdown in process ends only that broker's pipe.
+
 # Operations
 
 There is no authentication, no TLS and no connection setting to tune: the transport is a local
@@ -140,9 +235,9 @@ file or the process's own pipes. What is worth knowing before shipping:
 * The file transport does not build on Windows, an upstream constraint of the file client.
 * [`beacon_interval`](FileBroker::beacon_interval) must be a positive multiple of 1024 bytes;
   denser beacons make seeking finer-grained and the file larger.
-* [`end_with_eos`](FileBroker::end_with_eos) is what finishes a file a reader will replay.
-  Without the mark the reader has to find the end itself, and may report the end before it has
-  delivered everything the file holds.
+* [`end_with_eos`](FileBroker::end_with_eos) marks a file finished. A live subscription ends
+  only on that mark. A replay ends on it or at the end of the file, after delivering every
+  message before it.
 * A stream file grows without bound. Retention, rotation and disk budget are the operator's.
 * The stdio publisher rejects a message with no payload and no headers with
   [`SeaFileError::Invalid`], because the client's line format silently drops empty lines.
@@ -152,7 +247,7 @@ file or the process's own pipes. What is worth knowing before shipping:
 * [`mod@file`]: the stream file - descriptors, replay, positions and seeking, batches,
   publishing, delayed redelivery.
 * [`stdio`]: the pipeline - the line format, where a deferred copy goes, loopback.
-* [`testing`]: the in-process stand for each transport, behind the `testing` feature.
+* [Testing](#testing): the production app under `TestApp`, in process or against a real file.
 * [`prelude`]: the one glob for a service that spans both forms.
 
 The framework concepts every broker shares are on docs.rs:
@@ -174,6 +269,6 @@ tutorial and the list of brokers are on the site:
 
 Both are off by default; the crate needs neither to run a service.
 
-* `testing`: the in-process stands in [`testing`], for unit tests on the framework's `TestApp`
-  harness.
+* `testing`: the in-process mode of both brokers, which the framework's `TestApp` harness
+  connects in place of the file and the pipe.
 * `asyncapi`: what a [`FileStream`] subscription contributes to the generated document.
