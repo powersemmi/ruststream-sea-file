@@ -9,13 +9,11 @@ use std::time::Duration;
 
 use futures::StreamExt;
 #[cfg(feature = "testing")]
-use ruststream::testing::TestableBroker;
+use ruststream::testing::{InProcess, TestableBroker};
 use ruststream::{
     AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
     OutgoingMessage, Positioned, Publisher, Seekable, Seeker, Subscribe, Subscriber,
 };
-#[cfg(feature = "testing")]
-use ruststream_sea_file::testing::FileTestBroker;
 use ruststream_sea_file::{
     FileBroker, FilePosition, FileStream, SEQUENCE_HEADER, SeaFileError, StdioBroker,
 };
@@ -123,9 +121,69 @@ fn a_finished_file_replays_and_completes() {
     });
 }
 
+/// Bodies the unmarked replay records: past the thousand messages the file client reads ahead of
+/// its consumer, and not a multiple of it, so the end of the file falls inside a read-ahead
+/// window that is still full.
+const UNMARKED_REPLAY: usize = 1_537;
+
+/// A replay of a file with no end-of-stream mark finds the end by running out of file, and
+/// delivers every message the file holds before it reports that end.
+#[test]
+fn a_replay_delivers_the_whole_file_before_it_ends() {
+    common::on_a_file(async {
+        let path = common::tmp_path("replay-unmarked");
+
+        {
+            let connected = FileBroker::new(&path).connect().await.expect("file opens");
+            let publisher = connected.publisher();
+            for i in 0..UNMARKED_REPLAY {
+                let body = u32::try_from(i).expect("the count fits").to_be_bytes();
+                publisher
+                    .publish(OutgoingMessage::new("orders", body.as_slice()), None)
+                    .await
+                    .expect("publish succeeds");
+            }
+            connected.shutdown().await.expect("shutdown succeeds");
+        }
+
+        let connected = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("file reopens");
+        let mut subscriber = connected
+            .subscribe_stream(FileStream::new("orders").replay())
+            .await
+            .expect("replay opens");
+        let mut handled = 0_usize;
+        {
+            let mut stream = pin!(subscriber.stream());
+            while let Some(next) = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("the replay moves on")
+            {
+                let message = next.expect("delivery is ok");
+                let expected = u32::try_from(handled)
+                    .expect("the count fits")
+                    .to_be_bytes();
+                assert_eq!(message.payload(), expected.as_slice(), "in publish order");
+                handled += 1;
+            }
+        }
+        assert_eq!(
+            handled, UNMARKED_REPLAY,
+            "the replay ended before it delivered the whole file"
+        );
+
+        drop(subscriber);
+        connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
 /// The in-process transport answers settlement the way a stream file answers it. Both are read
-/// here in one test, because the value of the answer is that the two agree: a stand-in that
-/// claimed a settlement would make a handler's retry look effective under test and lose the
+/// here in one test, because the value of the answer is that the two agree: an in-process
+/// transport that claimed a settlement would make a handler's retry look effective under test and lose the
 /// message against a file.
 #[cfg(feature = "testing")]
 #[test]
@@ -139,8 +197,8 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
             .await
             .expect("publish succeeds");
 
-        let in_process = FileTestBroker::new()
-            .connect()
+        let in_process = FileBroker::new(&path)
+            .connect_in_process()
             .await
             .expect("transport connects");
         let mut from_transport = in_process
@@ -170,7 +228,7 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
         assert!(matches!(stubbed.ack().await, Err(AckError::Unsupported)));
 
         // The requeue too: neither transport takes a message back, so a handler asking for one
-        // is refused on both rather than served by the stand-in alone.
+        // is refused on both rather than served in process alone.
         file.publisher()
             .publish(OutgoingMessage::new("orders", b"two".as_slice()), None)
             .await
@@ -205,9 +263,8 @@ fn the_in_process_transport_settles_the_way_a_stream_file_does() {
 }
 
 /// The in-process transport positions the way a stream file positions, read side by side for the
-/// reason settlement is: a stand that numbered its log differently, or that let a service resume
-/// from a position the file has not reached, would pass a test the file refuses - and a resume
-/// that works under test and fails in production is the whole cost of keeping a stand.
+/// reason settlement is: an in-process log numbered differently, or one that let a service resume
+/// from a position the file has not reached, would pass a test the file refuses.
 #[cfg(feature = "testing")]
 #[test]
 fn the_in_process_transport_positions_the_way_a_stream_file_does() {
@@ -220,8 +277,8 @@ fn the_in_process_transport_positions_the_way_a_stream_file_does() {
             .await
             .expect("publish succeeds");
 
-        let in_process = FileTestBroker::new()
-            .connect()
+        let in_process = FileBroker::new(&path)
+            .connect_in_process()
             .await
             .expect("transport connects");
         let mut from_transport = in_process
@@ -261,18 +318,18 @@ fn the_in_process_transport_positions_the_way_a_stream_file_does() {
         assert_eq!(
             first.position(),
             FilePosition::sequence(1),
-            "the stand numbers a stream key from one, as the file does",
+            "the in-process file numbers a stream key from one, as the file does",
         );
         stubbed_seeker
             .seek(past_the_end)
             .await
-            .expect_err("the stand refuses what the file refuses");
+            .expect_err("the in-process file refuses what the file refuses");
         let ended = tokio::time::timeout(RECV_TIMEOUT, stubbed.next())
             .await
             .expect("the end arrives rather than hanging");
         assert!(
             ended.is_none(),
-            "the stand ends the subscription a refused seek left behind, got {ended:?}",
+            "the in-process file ends the subscription a refused seek left behind, got {ended:?}",
         );
 
         file.shutdown().await.expect("shutdown succeeds");
@@ -418,6 +475,79 @@ fn existing_only_refuses_a_missing_file_and_opens_one_that_is_there() {
     });
 }
 
+/// A broker that shut down leaves nothing behind that reaches the next connection over its file.
+///
+/// A publisher the first connection handed out outlives its shutdown, and the service drops it
+/// only after a new connection opened the same path, as a service that reconnects does. Dropping
+/// it must not end the writer the new connection appends through.
+#[test]
+fn a_reconnect_survives_the_publishers_of_the_connection_before_it() {
+    common::on_a_file(async {
+        let path = common::tmp_path("reconnect");
+
+        let first = FileBroker::new(&path).connect().await.expect("file opens");
+        let stale = first.publisher();
+        stale
+            .publish(OutgoingMessage::new("orders", [1u8].as_slice()), None)
+            .await
+            .expect("publish succeeds");
+        first.shutdown().await.expect("shutdown succeeds");
+
+        let second = FileBroker::new(&path)
+            .existing_only()
+            .connect()
+            .await
+            .expect("file reopens");
+        drop(stale);
+        // The file client settles every producer handle on one process-wide task, in order, and a
+        // broker's shutdown waits on that task. Once a broker over another file has shut down,
+        // whatever dropping the stale publisher set off has taken effect.
+        let other_path = common::tmp_path("reconnect-other");
+        let other = FileBroker::new(&other_path)
+            .connect()
+            .await
+            .expect("file opens");
+        other.shutdown().await.expect("shutdown succeeds");
+
+        tokio::time::timeout(
+            RECV_TIMEOUT,
+            second
+                .publisher()
+                .publish(OutgoingMessage::new("orders", [2u8].as_slice()), None),
+        )
+        .await
+        .expect("a publish on the new connection must complete")
+        .expect("a publish on the new connection succeeds");
+
+        let mut subscriber = second
+            .subscribe_stream(FileStream::new("orders"))
+            .await
+            .expect("subscription opens");
+        let seeker = subscriber.seeker();
+        let mut stream = pin!(subscriber.stream());
+        seeker
+            .seek(FilePosition::beginning())
+            .await
+            .expect("seeking to the start of the file succeeds");
+        for expected in [1u8, 2] {
+            let message = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+                .await
+                .expect("a delivery must arrive")
+                .expect("the stream must stay open")
+                .expect("the delivery must be ok");
+            assert_eq!(
+                message.payload(),
+                [expected].as_slice(),
+                "both connections' messages are in the file, in order",
+            );
+        }
+
+        second.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&other_path);
+    });
+}
+
 /// The beacon interval the broker was configured with, read back out of the file the broker
 /// wrote: the format keeps it in the header, and it is what a reader seeks by.
 ///
@@ -508,6 +638,8 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
                 .expect("delivery is ok");
             // The stdio line format is text; the envelope carried the binary payload through it.
             assert_eq!(message.payload(), raw.as_slice());
+            // The client numbers the lines of a stream key from zero, unlike a stream file.
+            assert_eq!(message.headers().get_str(SEQUENCE_HEADER), Some("0"));
             // A pipe keeps no retained log, so neither settlement is pretended: what a handler
             // asks for here is refused rather than silently dropped.
             assert!(matches!(message.ack().await, Err(AckError::Unsupported)));
