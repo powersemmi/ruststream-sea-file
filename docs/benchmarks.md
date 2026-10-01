@@ -21,9 +21,9 @@ this page publishes what it produced here.
 
 ## The numbers
 
-The best of three interleaved rounds, with the slowest round in parentheses. Higher is better.
+The best of three interleaved rounds, with the median round in parentheses. Higher is better.
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading the published results...", "scenario": "Scenario", "raw": "Raw client", "adapter": "This crate", "framework": "RustStream service", "adapterOverhead": "Crate overhead", "overhead": "Framework overhead", "indistinguishable": "indistinguishable", "brokerBound": "storage-bound", "machine": "Machine", "os": "OS", "broker": "Broker", "storage": "Storage", "build": "Build", "versions": "Versions", "measured": "Measured", "unavailable": "No results could be read. They are published at {url}.", "unknownSchema": "The published results declare schema {schema}, which this page does not render."}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading the published results...", "scenario": "Scenario", "raw": "Raw client", "adapter": "This crate", "framework": "RustStream service", "adapterOverhead": "Crate overhead", "overhead": "Framework overhead", "indistinguishable": "indistinguishable", "brokerBound": "storage-bound", "machine": "Machine", "os": "OS", "broker": "Broker", "storage": "Storage", "build": "Build", "versions": "Versions", "measured": "Measured", "codeMeasured": "Code costs measured", "instructions": "Instructions per message", "allocations": "Allocations per message", "cold": "Cold start (instructions / allocations)", "unavailable": "No results could be read. They are published at {url}.", "unknownSchema": "The published results declare schema {schema}, which this page does not render."}'></div>
 
 The table is read in your browser from the document the last run wrote, so nothing on this page is
 a copy that could have gone stale.
@@ -51,6 +51,37 @@ measured, so none is published.
 The machine-readable form of the same run, which the framework's site reads to build its
 cross-broker table, is at
 [`benchmarks/results.json`](https://powersemmi.github.io/ruststream-sea-file/latest/benchmarks/results.json).
+
+## The crate's own code
+
+<div id="benchmark-code"></div>
+
+The second table is what a message costs, counted rather than timed: instructions under callgrind
+and allocations under DHAT. Each scenario is the service a user writes, on `FileBroker` over a
+stream file of its own, with the subscription reading the file from its beginning.
+
+The messages are appended after the service has started and before it drains them, by the
+`sea-streamer-file` client on a thread of its own, and that work is not counted. What is counted is
+everything on the service's thread: the framework, this crate, and the part of the client that runs
+there, the tasks that read and decode the file. The client's writer runs on the filling thread, and
+the reads and writes themselves on tokio's blocking threads, so a reply's row holds the publish path
+up to the writer rather than the append itself. A reply lands in the file the subscription reads,
+and the reader passes over it on the way to the next order; the row counts that reading too.
+
+Instructions and allocations are per message in the steady state: the slope between a run of 1000
+deliveries and a run of 2000. The last column is what starting the service and taking the first
+delivery cost once: opening the file, the connect and the subscription. The numbers are absolute,
+the framework's own cost included; the core publishes that cost alone on its
+[benchmarks page](https://powersemmi.github.io/ruststream/latest/benchmarks/).
+
+Five runs of one binary gave the same per-message figures within half a percent, except a reply's
+allocations: they moved between 70 and 74 per message with how often the service waited on the
+writer's thread. A run's total moves by up to 2.7 percent of instructions, in the C library's
+allocator and in the deadline that closes a partial batch. `just bench-code` fails on an allocation
+above the floor a scenario declares - the highest count seen plus a margin at least as wide as the
+spread, so the reply's floor catches two extra allocations per delivery rather than one - and with
+`--baseline=main` on more than six percent more instructions. A pull request that changes the cost
+cites its numbers.
 
 ## The machine
 
@@ -99,7 +130,15 @@ just bench
 
 The recipe points the runs at a directory under `target/`, runs every scenario through all three
 loops, removes the stream files and rewrites `docs/benchmarks/results.json` with what it measured.
-It takes about a quarter of an hour, it writes tens of gigabytes through that directory, and it
+It takes a few minutes, it writes tens of gigabytes through that directory, and it
 wants the machine to itself. The message count is not fixed: a probe run sets it so that every
 measured run lasts at least five seconds, up to a ceiling of two million messages - about a gibibyte
 of stream file - past which a run would be measuring the device rather than this crate.
+
+```bash
+just bench-code
+```
+
+The recipe counts the code table under valgrind, on stream files in the target directory, and
+rewrites the `code` section of the same document. It takes under a minute and needs no stand, only
+valgrind and the benchmark runner: `cargo install --locked gungraun-runner --version =0.19.4`.

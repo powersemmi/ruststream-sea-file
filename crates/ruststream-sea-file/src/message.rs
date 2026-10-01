@@ -6,6 +6,8 @@ use bytes::Bytes;
 use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Str};
 use sea_streamer_types::{Buffer as _, Message as _, SharedMessage};
 
+#[cfg(feature = "testing")]
+use crate::in_process::Release;
 use crate::wire;
 
 /// Header exposing the message's sequence number within its stream.
@@ -80,7 +82,16 @@ pub struct SeaMessage {
     headers: HeaderMap,
     stream: String,
     sequence: u64,
+    /// Tells the test harness this delivery is done when it is dropped: the in-process transport
+    /// counts its deliveries in flight. The field is there only with the `testing` feature.
+    #[cfg(feature = "testing")]
+    release: Option<Release>,
 }
+
+// The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
+// delivery exactly the fields a delivery off a file or a pipe needs.
+#[cfg(not(feature = "testing"))]
+const _: () = assert!(size_of::<SeaMessage>() == size_of::<(Bytes, HeaderMap, String, u64)>());
 
 impl std::fmt::Debug for SeaMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -102,7 +113,16 @@ impl SeaMessage {
             headers,
             stream: message.stream_key().name().to_owned(),
             sequence,
+            #[cfg(feature = "testing")]
+            release: None,
         }
+    }
+
+    /// The same delivery, counted in flight by the harness until it is dropped.
+    #[cfg(feature = "testing")]
+    pub(crate) fn released_by(mut self, release: Option<Release>) -> Self {
+        self.release = release;
+        self
     }
 
     /// The stream key this message was published to.
