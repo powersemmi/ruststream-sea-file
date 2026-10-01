@@ -62,7 +62,7 @@ ruststream-sea-file = { version = "0.7", features = ["testing"] }
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, Serialize, Deserialize)]
 struct Order {
     id: u64,
 }
@@ -95,30 +95,29 @@ transport has its own prelude (`file`, `stdio`).
 
 ## Test it
 
-`TestApp` runs the handlers against an in-process stream file, with nothing on disk.
+`TestApp` runs the service's own app with `FileBroker` in process, with no file.
 
 ```rust
 use ruststream::testing::TestApp;
-use ruststream_sea_file::testing::FileTestBroker;
 
-let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-    .with_broker(FileTestBroker::new(), |b| {
-        b.include(confirm).out_reply(Publish);
-    });
-let tb = TestApp::start(app).await?;
+let tb = TestApp::start(app()).await?;
 
-tb.publish("orders", &Order { id: 1 }).await?;
+tb.broker::<FileBroker>()
+    .message(&Order { id: 1 })
+    .to("orders")
+    .publish()
+    .await?;
 
-tb.broker::<FileTestBroker>()
+tb.broker::<FileBroker>()
     .subscriber("orders")
     .assert_called_once();
-tb.broker::<FileTestBroker>()
+tb.broker::<FileBroker>()
     .published::<Confirmation>("confirmations")
     .assert_called_once()
     .with(&Confirmation { id: 1 });
 ```
 
-`StdioTestBroker` does the same for a pipeline service.
+`TestApp::start_live(app())` runs the same test against a real stream file.
 
 ## Documentation
 
