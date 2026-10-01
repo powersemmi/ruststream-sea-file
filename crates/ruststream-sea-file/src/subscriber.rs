@@ -25,6 +25,7 @@ use ruststream::{
 };
 use sea_streamer_file::{FileConsumer, FileErr, MessageSource, SeekTarget, is_end_of_stream};
 use sea_streamer_types::{Consumer as _, ShardId, SharedMessage, StreamErr, StreamKey, Timestamp};
+use tokio::runtime::Handle;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 
@@ -77,16 +78,25 @@ impl FileSubscriber {
         &self.stream
     }
 
-    pub(crate) fn spawn(stream: String, reader: impl Source) -> Self {
+    /// Starts the driver on `runtime`, the one the broker connected on, whichever runtime opens
+    /// the subscription. `closed` answers whether that connection has shut down, which refuses
+    /// every seek from then on.
+    pub(crate) fn spawn(
+        runtime: &Handle,
+        stream: String,
+        reader: impl Source,
+        closed: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let epoch = Arc::new(AtomicU64::new(0));
-        tokio::spawn(drive(
+        runtime.spawn(drive(
             reader,
             out_tx,
             cmd_rx,
             Arc::clone(&epoch),
             stream.clone(),
+            closed,
         ));
         let stream: Arc<str> = Arc::from(stream);
         Self {
@@ -340,6 +350,8 @@ enum SeekBackend {
 /// Repositions a [`FileSubscriber`] while its stream runs; minted by
 /// [`Seekable::seeker`](ruststream::Seekable::seeker), and carried to handlers by the
 /// [`SeekHandle`](crate::SeekHandle) context key.
+///
+/// A seek through a handle that outlived the broker's shutdown returns an error.
 #[derive(Clone)]
 pub struct FileSeeker {
     // Arc rather than String: the per-delivery context clones the handle, and the clone must
@@ -522,6 +534,7 @@ async fn drive(
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     epoch: Arc<AtomicU64>,
     stream: String,
+    closed: impl Fn() -> bool + Send + Sync,
 ) {
     // The generation the reader is positioned in, published through `epoch` to the subscription's
     // filter. Only this task advances it, and only once a reposition has run.
@@ -534,7 +547,7 @@ async fn drive(
             biased;
             cmd = cmd_rx.recv() => {
                 let Some(cmd) = cmd else { break };
-                if serve(&mut reader, cmd, &mut generation, &epoch, &stream).await {
+                if serve(&mut reader, cmd, &mut generation, &epoch, &stream, &closed).await {
                     idle = false;
                 }
                 continue;
@@ -553,7 +566,7 @@ async fn drive(
                     biased;
                     cmd = cmd_rx.recv() => {
                         let Some(cmd) = cmd else { break 'read };
-                        if serve(&mut reader, cmd, &mut generation, &epoch, &stream).await {
+                        if serve(&mut reader, cmd, &mut generation, &epoch, &stream, &closed).await {
                             // What was read belongs to the old position and goes with it.
                             idle = false;
                             continue 'read;
@@ -582,14 +595,23 @@ async fn drive(
 ///
 /// A reader that moved opens a new generation: everything read before it, queued for the handler
 /// or still held by the driver, is discarded on the way out. A refused seek leaves the reader and
-/// every queued delivery where they were.
+/// every queued delivery where they were. Once the connection has shut down every seek is
+/// refused: a seeker that outlived the broker must not report a reposition.
 async fn serve(
     reader: &mut impl Source,
     SeekCmd { position, done }: SeekCmd,
     generation: &mut u64,
     epoch: &AtomicU64,
     stream: &str,
+    closed: impl Fn() -> bool + Send + Sync,
 ) -> bool {
+    if closed() {
+        let _ = done.send(Err(SeaFileError::Seek {
+            stream: stream.to_owned(),
+            source: Box::from("the broker has shut down"),
+        }));
+        return false;
+    }
     let target = match position {
         FilePosition::Beginning => SeekTarget::Beginning,
         FilePosition::End => SeekTarget::End,
@@ -719,7 +741,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_seek_completes_while_the_delivery_channel_is_full() {
         let backlog = u8::try_from(CHANNEL_CAPACITY * 2).expect("the backlog fits");
-        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(backlog));
+        let mut subscriber = FileSubscriber::spawn(
+            &Handle::current(),
+            "orders".to_owned(),
+            Log::of(backlog),
+            || false,
+        );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));
@@ -742,7 +769,10 @@ mod tests {
     /// and the replay goes on from the new one.
     #[tokio::test(start_paused = true)]
     async fn a_seek_after_the_replay_reached_the_end_replays_again() {
-        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(3));
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
+                false
+            });
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         for expected in 1..=3 {
@@ -766,7 +796,10 @@ mod tests {
     /// the seek moves it and its stream delivers again.
     #[tokio::test(start_paused = true)]
     async fn a_seek_after_the_stream_ended_reopens_it() {
-        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(2));
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(2), || {
+                false
+            });
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));
@@ -786,7 +819,10 @@ mod tests {
     /// for the handler is still delivered, then the rest of the file.
     #[tokio::test(start_paused = true)]
     async fn a_refused_seek_keeps_what_was_queued() {
-        let mut subscriber = FileSubscriber::spawn("orders".to_owned(), Log::of(5));
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(5), || {
+                false
+            });
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));
