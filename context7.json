@@ -9,6 +9,6 @@
     "Cap circulating retries with `.max_attempts(n)` and `.dead_letter(\"key\")` right after `include`; the count is the framework's retry-count header, because neither transport counts its own redeliveries.",
     "Take batches with a `&[T]` handler and `.batch(n)` at the mount site; both clients read one entry at a time, so a batch is assembled on the client and a partial one goes out 10 ms after its first delivery.",
     "Do not rely on acknowledgement: `ack` and `nack` report `AckError::Unsupported` on both transports, so a service resumes by storing a `FilePosition` and reopening with `start_at(..)`, or by replaying the file.",
-    "Unit-test handlers with `ruststream::testing::TestApp` against `FileTestBroker` or `StdioTestBroker` behind the `testing` feature, keeping the descriptor and the policy the service ships with; there is no harness-only policy to swap in."
+    "Test the production app: with feature `testing`, hand the builder `main` runs to `ruststream::testing::TestApp::start`, which connects `FileBroker` and `StdioBroker` in process, and address each as `tb.broker::<FileBroker>()` or `tb.broker::<StdioBroker>()`; `TestApp::start_live` runs the same test against a real stream file."
   ]
 }

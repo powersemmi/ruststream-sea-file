@@ -3,7 +3,7 @@
   "crate": "ruststream-sea-file",
   "crate_version": "0.7.0",
   "core_version": "0.7.0-rc.9",
-  "measured_at": "2026-09-21",
+  "measured_at": "2026-09-23",
   "environment": {
     "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
     "architecture": "x86_64",
@@ -14,58 +14,108 @@
     "os": "Linux 7.2.6-x64v3-xanmod1-1",
     "broker": "none: the transport is a stream file on this machine's filesystem",
     "filesystem": "btrfs on /dev/nvme1n1p1",
-    "file_size": "0.60 GiB per run at its largest",
+    "file_size": "0.72 GiB per run at its largest",
     "page_cache": "warm: every run writes its stream file immediately before reading it back, so the figures are the filesystem's rather than the device's",
-    "round_trip": "19.2 us per durable append",
+    "round_trip": "19.8 us per durable append",
     "rustc": "1.98.1",
     "profile": "bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)",
     "features": "ruststream-sea-file default (none), ruststream macros,json",
-    "rustflags": "none (the recipe clears RUSTFLAGS, so the numbers are not tied to this CPU)"
+    "rustflags": "none (the recipe clears RUSTFLAGS, so the numbers are not tied to this CPU)",
+    "valgrind": "3.25.1"
   },
   "scenarios": [
     {
       "name": "replay of a recorded stream file, 512 B JSON",
       "unit": "msg/s",
-      "messages": 1131819,
+      "messages": 1350224,
       "pairs": 3,
       "raw": {
-        "best": 188288,
-        "worst": 187269
+        "best": 191899,
+        "median": 190249,
+        "worst": 190184
       },
       "adapter": {
-        "best": 254529,
-        "worst": 249248
+        "best": 255830,
+        "median": 249370,
+        "worst": 246703
       },
       "framework": {
-        "best": 283929,
-        "worst": 279931
+        "best": 301434,
+        "median": 280841,
+        "worst": 275638
       },
-      "adapter_overhead_percent": -35.2,
-      "overhead_percent": -50.8,
+      "adapter_overhead_percent": -33.3,
+      "adapter_verdict": "measured",
+      "overhead_percent": -57.1,
       "verdict": "measured",
       "broker_bound": false
     },
     {
       "name": "live tail of a file being appended to, 512 B JSON",
       "unit": "msg/s",
-      "messages": 381042,
+      "messages": 386877,
       "pairs": 3,
       "raw": {
-        "best": 60368,
-        "worst": 57965
+        "best": 62128,
+        "median": 61968,
+        "worst": 61830
       },
       "adapter": {
-        "best": 57926,
-        "worst": 57705
+        "best": 62050,
+        "median": 61532,
+        "worst": 60636
       },
       "framework": {
-        "best": 56003,
-        "worst": 55091
+        "best": 61087,
+        "median": 59252,
+        "worst": 58833
       },
-      "adapter_overhead_percent": 4.0,
-      "overhead_percent": 7.2,
-      "verdict": "measured",
+      "adapter_overhead_percent": 0.1,
+      "adapter_verdict": "indistinguishable",
+      "overhead_percent": 1.7,
+      "verdict": "indistinguishable",
       "broker_bound": true
+    }
+  ],
+  "code": [
+    {
+      "name": "consume, JSON decode into a small struct",
+      "messages": 1000,
+      "framework": {
+        "instructions": 54988.8,
+        "allocations": 32.5
+      },
+      "cold": {
+        "instructions": 216069,
+        "allocations": 235
+      },
+      "gated": true
+    },
+    {
+      "name": "reply, appended to the same file by this crate's publisher",
+      "messages": 1000,
+      "framework": {
+        "instructions": 85411.3,
+        "allocations": 70.2
+      },
+      "cold": {
+        "instructions": 220086,
+        "allocations": 246
+      },
+      "gated": true
+    },
+    {
+      "name": "consume in batches of 64, assembled on the client",
+      "messages": 1000,
+      "framework": {
+        "instructions": 54919.3,
+        "allocations": 32.5
+      },
+      "cold": {
+        "instructions": 240361,
+        "allocations": 246
+      },
+      "gated": true
     }
   ]
 }
