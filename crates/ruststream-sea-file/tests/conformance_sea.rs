@@ -349,6 +349,40 @@ fn file_broker_passes_batch_seeking_suite_in_process() {
     });
 }
 
+/// The seeking contract against a real stream file: pinned captured positions, a seek forward
+/// skipping what is queued, a seek from a runtime that stops right after, and a seek through a
+/// seeker that outlived the shutdown, which must be refused.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_seeking_suite() {
+    common::on_a_file(async {
+        let path = common::tmp_path("seeking");
+        capabilities::seeking(
+            || FileBroker::new(path.clone()),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The seeking contract in process, on the retained log in memory. This is the capability a
+/// service is most likely to write tests around, so the in-process file owes it the same answers
+/// a file gives.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_passes_seeking_suite_in_process() {
+    common::rt().block_on(async {
+        capabilities::seeking(
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
+            |name| FileStream::new(name),
+            |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
 /// A seek to a sequence the stream key has not written is refused: the file reads forward for the
 /// message and runs out, and the subscription does not move on to somewhere else.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
