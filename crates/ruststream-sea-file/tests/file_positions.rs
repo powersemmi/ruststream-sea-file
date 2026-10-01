@@ -20,7 +20,7 @@ use ruststream::{
     Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, Positioned, Publisher, Seekable,
     Seeker, Subscriber,
 };
-use ruststream_sea_file::{FileBroker, FilePosition, FileStream, SeaFileError};
+use ruststream_sea_file::{FileBroker, FilePosition, FileStream, FileSubscriber, SeaFileError};
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -349,6 +349,122 @@ fn a_timestamp_outside_the_representable_range_is_refused() {
             .await
             .expect("publish succeeds");
         assert_eq!(next_payload(&mut stream, "after a refused seek").await.0, 9);
+
+        connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// Opens a replay of `path`'s `orders` key over a fresh connection.
+async fn replay(path: &str) -> (ruststream_sea_file::ConnectedFileBroker, FileSubscriber) {
+    let connected = FileBroker::new(path)
+        .existing_only()
+        .connect()
+        .await
+        .expect("file reopens");
+    let subscriber = connected
+        .subscribe_stream(FileStream::new("orders").replay())
+        .await
+        .expect("replay opens");
+    (connected, subscriber)
+}
+
+/// The end of a replay, or a failure naming what was being waited for.
+async fn replay_end<S>(stream: &mut S, what: &str)
+where
+    S: futures::Stream<Item = Result<ruststream_sea_file::FileMessage, SeaFileError>> + Unpin,
+{
+    let end = tokio::time::timeout(RECV_TIMEOUT, stream.next())
+        .await
+        .unwrap_or_else(|_| panic!("{what}: the replay must end"));
+    assert!(end.is_none(), "{what}: the replay ends, got {end:?}");
+}
+
+/// A replay that has read the whole file is still a subscription: a seek moves it back, and the
+/// file is delivered again from there.
+#[test]
+fn a_seek_after_a_replay_ended_replays_from_the_new_position() {
+    common::on_a_file(async {
+        let path = common::tmp_path("replay-ended");
+        record(&path, "orders", 1..=3).await;
+
+        let (connected, mut subscriber) = replay(&path).await;
+        let seeker = subscriber.seeker();
+        let mut stream = pin!(subscriber.stream());
+        for expected in 1..=3u8 {
+            assert_eq!(next_payload(&mut stream, "first pass").await.0, expected);
+        }
+        replay_end(&mut stream, "first pass").await;
+
+        seeker
+            .seek(FilePosition::sequence(2))
+            .await
+            .expect("seeking a replay that reached the end succeeds");
+        for expected in 2..=3u8 {
+            assert_eq!(next_payload(&mut stream, "second pass").await.0, expected);
+        }
+        replay_end(&mut stream, "second pass").await;
+
+        connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// A refused seek leaves a replay where it was: what it had already read is still delivered, and
+/// the rest of the file after it.
+#[test]
+fn a_refused_seek_leaves_a_replay_where_it_was() {
+    common::on_a_file(async {
+        let path = common::tmp_path("replay-refused");
+        record(&path, "orders", 1..=3).await;
+
+        let (connected, mut subscriber) = replay(&path).await;
+        let seeker = subscriber.seeker();
+        let mut stream = pin!(subscriber.stream());
+        assert_eq!(next_payload(&mut stream, "before the seek").await.0, 1);
+
+        seeker
+            .seek(FilePosition::sequence(99))
+            .await
+            .expect_err("no message carries that sequence");
+        for expected in 2..=3u8 {
+            assert_eq!(
+                next_payload(&mut stream, "after the seek").await.0,
+                expected
+            );
+        }
+        replay_end(&mut stream, "after the seek").await;
+
+        connected.shutdown().await.expect("shutdown succeeds");
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// More messages than the subscription buffers: a handler that seeks while the rest of the file
+/// waits for room still moves the subscription.
+#[test]
+fn a_seek_moves_a_subscription_with_a_backlog_larger_than_its_buffer() {
+    const BACKLOG: u8 = 200;
+    common::on_a_file(async {
+        let path = common::tmp_path("backlog");
+        record(&path, "orders", 1..=BACKLOG).await;
+
+        let (connected, mut subscriber) = replay(&path).await;
+        let seeker = subscriber.seeker();
+        let mut stream = pin!(subscriber.stream());
+        assert_eq!(next_payload(&mut stream, "before the seek").await.0, 1);
+
+        tokio::time::timeout(RECV_TIMEOUT, seeker.seek(FilePosition::sequence(150)))
+            .await
+            .expect("a seek under a backlog completes")
+            .expect("the seek succeeds");
+        for expected in 150..=BACKLOG {
+            assert_eq!(
+                next_payload(&mut stream, "after the seek").await.0,
+                expected
+            );
+        }
+        replay_end(&mut stream, "after the seek").await;
 
         connected.shutdown().await.expect("shutdown succeeds");
         let _ = std::fs::remove_file(&path);

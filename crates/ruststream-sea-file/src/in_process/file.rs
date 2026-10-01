@@ -32,6 +32,10 @@ struct FileInner {
     /// Every message the file holds, per stream key, in the order it was written. A message's
     /// sequence is its place in its key's list, counted from one, the way the file counts it.
     streams: HashMap<String, Vec<SharedMessage>>,
+    /// Set once the broker's shutdown wrote the end-of-stream mark.
+    marked: bool,
+    /// Set by the broker's shutdown; every seek is refused from then on.
+    closed: bool,
 }
 
 impl std::fmt::Debug for MemoryFile {
@@ -117,10 +121,13 @@ impl MemoryFile {
 
     /// What the broker's shutdown does to the file: when the broker writes one, the end-of-stream
     /// mark ends every subscription. Without it a live subscription goes on waiting, as it does
-    /// on a file.
+    /// on a file. Either way a seek is refused from then on, as the file's driver refuses it.
     pub(crate) fn finish(&self) {
+        let mut inner = self.lock();
+        inner.closed = true;
         if self.end_with_eos {
-            self.lock().registry.end_all();
+            inner.marked = true;
+            inner.registry.end_all();
         }
     }
 
@@ -136,26 +143,37 @@ impl MemoryFile {
         stream: &str,
         to: FilePosition,
         control: &SeekControl,
+        replay: bool,
     ) -> Result<(), SeaFileError> {
         let refused = |why: &str| SeaFileError::Seek {
             stream: stream.to_owned(),
             source: Box::from(why),
         };
         let mut inner = self.lock();
-        let Some(key) = inner.registry.key(id) else {
+        if inner.closed {
+            return Err(refused("the broker has shut down"));
+        }
+        // A replay that read the whole file is still open to a seek, as the file's own reader is.
+        if control.ended() {
             return Err(refused("the subscription has been closed"));
-        };
+        }
+        // On a file, the client's consumer ends with the stream it tails.
+        if !replay && inner.marked {
+            return Err(refused("the stream ended at its end-of-stream mark"));
+        }
         let entries = inner
             .streams
-            .get(key)
+            .get(stream)
             .map(Vec::as_slice)
             .unwrap_or_default();
         let target = match resolve(entries, to) {
             Ok(target) => target,
             Err(Unresolved::Invalid(why)) => return Err(SeaFileError::Invalid(why)),
+            // A replay reads the file itself, and that reader stays where it was.
+            Err(Unresolved::Refused(why)) if replay => return Err(refused(why)),
             Err(Unresolved::Refused(why)) => {
-                // The file client's reader does not survive a refused seek: it reports the refusal
-                // and then the end of the stream, so this subscription ends the same way.
+                // The file client's consumer does not survive a refused seek: it reports the
+                // refusal and then the end of the stream, so this subscription ends the same way.
                 inner.registry.close(id);
                 drop(inner);
                 control.ended.store(true, Ordering::Release);
@@ -235,7 +253,8 @@ struct SeekControl {
     /// Deliveries stamped below this sequence are stale copies from before a seek, and are
     /// dropped by the polling side.
     watermark: AtomicU64,
-    /// Set when a seek was refused, which ends the subscription.
+    /// Set when a seek was refused, which ends the subscription, and when the subscription is
+    /// dropped.
     ended: AtomicBool,
     /// Wakes the subscription's stream after `pending` or `ended` is set.
     waker: AtomicWaker,
@@ -273,6 +292,7 @@ pub(crate) struct LogSeeker {
     id: SubscriptionId,
     stream: Arc<str>,
     control: Arc<SeekControl>,
+    replay: bool,
 }
 
 impl LogSeeker {
@@ -280,12 +300,13 @@ impl LogSeeker {
     ///
     /// # Errors
     ///
-    /// Returns [`SeaFileError::Seek`] once the subscription is closed or when the position names
-    /// nothing the log holds (which ends the subscription), and [`SeaFileError::Invalid`] for an
-    /// instant no timestamp can hold.
+    /// Returns [`SeaFileError::Seek`] once the broker has shut down, once the subscription is
+    /// closed, once a live subscription read the end-of-stream mark, and when the position names
+    /// nothing the log holds (which ends a live subscription and leaves a replay where it was),
+    /// and [`SeaFileError::Invalid`] for an instant no timestamp can hold.
     pub(crate) fn request(&self, to: FilePosition) -> Result<(), SeaFileError> {
         self.file
-            .request_seek(self.id, &self.stream, to, &self.control)
+            .request_seek(self.id, &self.stream, to, &self.control, self.replay)
     }
 }
 
@@ -315,6 +336,7 @@ impl FileQueue {
             id: self.id,
             stream: Arc::clone(&self.stream),
             control: Arc::clone(&self.seek),
+            replay: self.replay,
         }
     }
 
@@ -392,6 +414,7 @@ impl FileQueue {
 
 impl Drop for FileQueue {
     fn drop(&mut self) {
+        self.seek.ended.store(true, Ordering::Release);
         self.file.unsubscribe(self.id);
         release_queued(&mut self.rx, self.file.coordinator());
     }

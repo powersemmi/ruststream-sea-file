@@ -62,4 +62,7 @@ tokio = { workspace = true, features = [
     # standard input and output.
     "process",
     "io-util",
+    # The driver's unit tests run on a paused clock, so a seek that never completes fails at
+    # once instead of waiting out a real timeout.
+    "test-util",
 ] }
