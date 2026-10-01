@@ -10,35 +10,43 @@
 //!
 //! ```
 //! use ruststream_sea_file::prelude::*;
-//! use serde::Deserialize;
+//! use serde::{Deserialize, Serialize};
 //!
 //! #[derive(Debug, Deserialize)]
 //! struct Order {
 //!     id: u64,
 //! }
 //!
-//! #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
-//! async fn record(order: &Order) -> HandlerOutcome {
-//!     println!("recorded order {}", order.id);
-//!     HandlerOutcome::ack()
+//! #[derive(Debug, Outgoing, Serialize)]
+//! struct Receipt {
+//!     order: u64,
 //! }
 //!
-//! #[subscriber("orders")]
-//! async fn tee(order: &Order) -> HandlerOutcome {
-//!     println!("teed order {}", order.id);
-//!     HandlerOutcome::ack()
+//! #[subscriber(
+//!     FileStream::new("orders"),
+//!     start_at(FilePosition::beginning()),
+//!     publish("receipts")
+//! )]
+//! async fn record(order: &Order) -> Receipt {
+//!     Receipt { order: order.id }
+//! }
+//!
+//! #[subscriber("orders", publish("receipts"))]
+//! async fn tee(order: &Order) -> Receipt {
+//!     Receipt { order: order.id }
 //! }
 //!
 //! #[ruststream::app]
 //! fn app() -> impl App {
 //!     RustStream::new(AppInfo::new("orders", "0.1.0"))
 //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-//!             b.after_startup(FilePublish, async move |_publisher| Ok::<_, std::io::Error>(()));
-//!             b.include(record);
+//!             b.include(record).out_reply(FilePublish);
 //!         })
 //!         .with_broker(StdioBroker::new(), |b| {
-//!             b.after_startup(StdioPublish, async move |_publisher| Ok::<_, std::io::Error>(()));
-//!             b.include(tee).out_retry(StdioPublish).to("lines.retry");
+//!             b.include(tee)
+//!                 .out_reply(StdioPublish)
+//!                 .out_retry(StdioPublish)
+//!                 .to("orders.retry");
 //!         })
 //! }
 //! ```

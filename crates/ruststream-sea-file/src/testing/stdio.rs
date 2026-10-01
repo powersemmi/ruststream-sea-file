@@ -32,10 +32,52 @@ use crate::testing::subscriber::{FileTestMessage, FileTestSubscriber};
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::testing::StdioTestBroker;
+/// use std::error::Error;
 ///
-/// let broker = StdioTestBroker::new();
-/// # let _ = broker;
+/// use ruststream::testing::TestApp;
+/// use ruststream_sea_file::stdio::prelude::*;
+/// use ruststream_sea_file::testing::StdioTestBroker;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Debug, Outgoing, Serialize, Deserialize)]
+/// struct Line {
+///     text: String,
+/// }
+///
+/// #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
+/// #[outgoing(name = "upper")]
+/// struct Upper {
+///     text: String,
+/// }
+///
+/// #[subscriber("lines", publish)]
+/// async fn shout(line: &Line) -> Upper {
+///     Upper { text: line.text.to_uppercase() }
+/// }
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn Error>> {
+/// let app = RustStream::new(AppInfo::new("shout", "0.1.0"))
+///     .with_broker(StdioTestBroker::new(), |b| {
+///         b.include(shout)
+///             .out_reply(Publish)
+///             .out_retry(Publish)
+///             .to("lines.retry");
+///     });
+/// let tb = TestApp::start(app).await?;
+///
+/// tb.broker::<StdioTestBroker>()
+///     .message(&Line { text: "hello".into() })
+///     .to("lines")
+///     .publish()
+///     .await?;
+///
+/// tb.broker::<StdioTestBroker>()
+///     .published::<Upper>("upper")
+///     .assert_called_once()
+///     .with(&Upper { text: "HELLO".into() });
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Default)]
 #[must_use]

@@ -27,14 +27,30 @@ use crate::subscriber::FileSubscriber;
 ///
 /// Implements [`SubscriptionSource`], so it can sit inline in the `#[subscriber(..)]`
 /// decorator, and [`IntoSource`], so the manual path's `subscriber(..)` constructor takes it
-/// the way it takes a subject string:
+/// the way it takes a subject string. A replay of a recorded file:
 ///
 /// ```
-/// use ruststream_sea_file::FileStream;
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
 ///
-/// let live = FileStream::new("orders");
-/// let batch = FileStream::new("orders").replay();
-/// # let _ = (live, batch);
+/// #[derive(Debug, Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber(FileStream::new("orders").replay())]
+/// async fn audit(order: &Order) -> HandlerOutcome {
+///     println!("recorded order {}", order.id);
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("audit", "0.1.0"))
+///         .with_broker(FileBroker::new("/var/lib/orders.ss").existing_only(), |b| {
+///             b.include(audit);
+///         })
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
