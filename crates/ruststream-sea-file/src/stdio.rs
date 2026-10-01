@@ -76,17 +76,22 @@
 //! aid: an address that only held under it would break in the shape a service ships.
 
 use std::future::{Future, ready};
+use std::io;
 use std::num::NonZeroUsize;
+use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::Stream;
+use futures::{FutureExt as _, Stream};
 use ruststream::{
     BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
     Lend, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
     Subscriber,
 };
-use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
+use sea_streamer_stdio::{
+    StdioConnectOptions, StdioConsumer, StdioConsumerOptions, StdioProducer, StdioProducerOptions,
+    StdioResult, StdioStreamer,
+};
 use sea_streamer_types::{
     Consumer as _, ConsumerMode, ConsumerOptions as _, Producer as _, StreamKey, Streamer as _,
     StreamerUri,
@@ -97,6 +102,14 @@ use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
 use crate::message::SeaMessage;
 use crate::wire;
+
+/// Whether a subscription in this process has started the client's standard-input reader.
+///
+/// Why a static: the reader is the client's, and it is process-wide. The first consumer starts
+/// it, and it then holds standard input while it waits for a line, so only the subscription that
+/// starts it can hold standard input itself (see `open_consumer`); a later one would wait for
+/// the next line.
+static READER_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct StdioCore {
     pub(crate) streamer: StdioStreamer,
@@ -192,6 +205,31 @@ impl Broker for StdioBroker {
     }
 }
 
+/// Opens a consumer of `key` on standard input.
+///
+/// The client starts its reader inside the first consumer and only then registers that consumer,
+/// so a line already waiting on the pipe could be read in between and handed to no one: a stage
+/// started with its input ready lost its first line. The first subscription therefore holds
+/// standard input while the consumer is created, and the reader takes its first line only once
+/// the consumer is there. Creating a consumer completes without waiting, so standard input is
+/// held for that one poll and never across an await.
+async fn open_consumer(streamer: &StdioStreamer, key: StreamKey) -> StdioResult<StdioConsumer> {
+    let keys = [key];
+    let mut created =
+        pin!(streamer.create_consumer(&keys, StdioConsumerOptions::new(ConsumerMode::RealTime)));
+    if READER_STARTED.swap(true, Ordering::AcqRel) {
+        return created.await;
+    }
+    let first = {
+        let _input = io::stdin().lock();
+        created.as_mut().now_or_never()
+    };
+    match first {
+        Some(consumer) => consumer,
+        None => created.await,
+    }
+}
+
 impl DescribeServer for StdioBroker {
     fn describe_server(&self) -> ServerSpec {
         ServerSpec::in_process("stdio")
@@ -257,18 +295,13 @@ impl Subscribe for ConnectedStdioBroker {
         self.core.ensure_open()?;
         let key =
             StreamKey::new(name).map_err(|e| SeaFileError::Invalid(format!("'{name}': {e}")))?;
-        let consumer = self
-            .core
-            .streamer
-            .create_consumer(
-                &[key],
-                sea_streamer_stdio::StdioConsumerOptions::new(ConsumerMode::RealTime),
-            )
-            .await
-            .map_err(|e| SeaFileError::Subscribe {
-                stream: name.to_owned(),
-                source: box_err(e),
-            })?;
+        let consumer =
+            open_consumer(&self.core.streamer, key)
+                .await
+                .map_err(|e| SeaFileError::Subscribe {
+                    stream: name.to_owned(),
+                    source: box_err(e),
+                })?;
 
         let (tx, rx) = mpsc::channel(64);
         let stream_name = name.to_owned();
