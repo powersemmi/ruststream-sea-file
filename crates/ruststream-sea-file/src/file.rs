@@ -13,9 +13,14 @@
 //!
 //! [`replay`](FileStream::replay) reads the retained file from its start and completes the
 //! subscription at the end of the file instead of following live writes: that is how a recorded
-//! log is processed in one pass. Point it at a file whose writer called
-//! [`end_with_eos`](FileBroker::end_with_eos), so the end is written into the file rather than
-//! inferred from it. Replay is the one reading mode a position cannot express.
+//! log is processed in one pass. Every message the file holds is delivered before the
+//! subscription completes, at the end-of-stream mark a writer left with
+//! [`end_with_eos`](FileBroker::end_with_eos) or at the end of the file when there is none.
+//! Replay is the one reading mode a position cannot express.
+//!
+//! A replay that reached the end can still be moved. A seek from a handler repositions it, the
+//! end it reported is discarded with the old position, and the replay goes on from the new one.
+//! A live subscription cannot be moved after the end-of-stream mark: the seek is refused.
 //!
 //! # Positions and seeking
 //!
@@ -34,9 +39,10 @@
 //! so the next message a handler sees comes from the new position.
 //!
 //! Seek to a position the stream has reached. A sequence past the last one written, and an
-//! instant later than every message the file holds, are both refused, and the subscription ends
+//! instant later than every message the file holds, are both refused. A live subscription ends
 //! with the refusal rather than staying where it was: the transport reads forward looking for the
-//! message and runs out of file. A captured position, the beginning and the tip are always safe.
+//! message and runs out of file. A replay stays where it was, and what it had read is still
+//! delivered. A captured position, the beginning and the tip are always safe.
 //!
 //! A handler reads two keys, as parameters of the `Ctx` extractor, and names no context type:
 //! [`Position`](crate::Position) is this delivery's place in the file, and
@@ -192,39 +198,87 @@
 //! [`beacon_interval`](FileBroker::beacon_interval) sets how far apart the file's beacons sit, in
 //! bytes. A beacon summarises the streams written before it and is what makes the file seekable.
 
+// Without the `testing` feature a link has one variant, so a `match` on it has a single arm; the
+// matches stay so that the in-process arm has its place when the feature is on.
+#![cfg_attr(
+    not(feature = "testing"),
+    allow(clippy::infallible_destructuring_match)
+)]
+
 use std::fs;
 use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(feature = "testing")]
+use ruststream::RawMessage;
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi::Bindings;
+#[cfg(feature = "testing")]
+use ruststream::testing::{Coordinator, InProcess, TestableBroker};
 use ruststream::{
     AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Lend,
     OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
 };
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
-    FileProducerOptions, FileStreamer,
+    FileProducerOptions, FileStreamer, MessageSource, StreamMode,
 };
 use sea_streamer_types::{
     ConsumerMode, ConsumerOptions as _, Producer as _, StreamErr, StreamKey, Streamer as _,
 };
-use tokio::sync::OnceCell;
+use tokio::runtime::Handle;
+use tokio::sync::{OnceCell, RwLock};
 
 use crate::error::{SeaFileError, box_err};
+#[cfg(feature = "testing")]
+use crate::in_process::MemoryFile;
 use crate::stream::FileStream;
 #[cfg(feature = "asyncapi")]
 use crate::stream::channel_extension;
-use crate::subscriber::FileSubscriber;
+use crate::subscriber::{FileSubscriber, Reader};
 use crate::wire;
 
 pub(crate) struct Core {
-    pub(crate) streamer: FileStreamer,
-    pub(crate) producer: FileProducer,
+    pub(crate) link: Link,
     pub(crate) path: String,
     pub(crate) closed: AtomicBool,
 }
+
+/// The file's client handles: the streamer every consumer is created from and the producer every
+/// publish appends through.
+pub(crate) struct Disk {
+    pub(crate) streamer: FileStreamer,
+    /// Taken out and dropped by `shutdown`, never later.
+    ///
+    /// Why the lock: the client counts producer handles per path, on one process-wide task, and
+    /// applies a dropped handle to whichever writer holds the path when the drop is processed. A
+    /// handle this connection dropped after its writer ended would end the writer of the next
+    /// connection over the same path. Publishers share the connection, so `shutdown` takes the
+    /// handle out under the write lock, once the publishes in flight are done with it.
+    pub(crate) producer: RwLock<Option<FileProducer>>,
+    /// The runtime `connect` ran on. Every task of this connection runs there: the subscription
+    /// drivers this crate starts, and the readers the client starts when a consumer opens, so a
+    /// subscription opened from another runtime does not stop when that runtime does.
+    pub(crate) runtime: Handle,
+}
+
+/// What a connected broker and every handle paired off it speak over: the stream file, or, under
+/// the `testing` feature, the in-memory one the test harness connected instead.
+///
+/// Without the feature there is one variant, so the type is the client handles themselves and
+/// every `match` on it is irrefutable: a production build carries no second transport and no
+/// branch to it.
+pub(crate) enum Link {
+    File(Disk),
+    #[cfg(feature = "testing")]
+    InProcess(Arc<MemoryFile>),
+}
+
+// The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
+// link exactly the size of the client handles it wraps.
+#[cfg(not(feature = "testing"))]
+const _: () = assert!(size_of::<Link>() == size_of::<Disk>());
 
 impl Core {
     pub(crate) fn ensure_open(&self) -> Result<(), SeaFileError> {
@@ -295,10 +349,8 @@ impl FileBroker {
     /// Writes an end-of-stream mark when the broker shuts down, marking the file finished.
     ///
     /// A subscription that tails the file reads the mark and ends there, which is the only
-    /// thing that ends a live subscription; a replay reads a marked file to its end and
-    /// completes. Finish a file a reader will replay: without the mark the reader has to find
-    /// the end of the file for itself, and it may report the end before it has delivered
-    /// everything the file holds.
+    /// thing that ends a live subscription. A replay completes at the mark, or at the end of the
+    /// file when there is none, after delivering every message before it.
     pub fn end_with_eos(mut self) -> Self {
         self.end_with_eos = true;
         self
@@ -377,8 +429,11 @@ impl Broker for FileBroker {
                     flusher.flush().await.map_err(connect_err)?;
                 }
                 Ok::<_, SeaFileError>(Arc::new(Core {
-                    streamer,
-                    producer,
+                    link: Link::File(Disk {
+                        streamer,
+                        producer: RwLock::new(Some(producer)),
+                        runtime: Handle::current(),
+                    }),
                     path: self.path.clone(),
                     closed: AtomicBool::new(false),
                 }))
@@ -391,6 +446,51 @@ impl Broker for FileBroker {
         })
     }
 }
+
+/// The in-process mode: the connected form a test runs the production app against, over a stream
+/// file held in memory in place of the one at the path.
+///
+/// The file is new and empty, and every clone of this broker shares it, as clones share the file
+/// they connect. The settings are checked the way `connect` checks them, so a broker a service
+/// could not connect is not one a test can connect either: the path must form a file address, and
+/// the beacon interval must be a positive multiple of 1024. [`existing_only`](Self::existing_only)
+/// reads the in-memory file as the one the operator provisioned.
+#[cfg(feature = "testing")]
+impl InProcess for FileBroker {
+    async fn connect_in_process(self) -> Result<Self::Connected, Self::Error> {
+        let core = self
+            .cell
+            .get_or_try_init(async || {
+                if let Some(interval) = self.beacon_interval {
+                    FileConnectOptions::default()
+                        .set_beacon_interval(interval)
+                        .map_err(|e| {
+                            SeaFileError::Invalid(format!("invalid beacon interval: {e}"))
+                        })?;
+                }
+                FileId::new(self.path.clone())
+                    .to_streamer_uri()
+                    .map_err(|e| SeaFileError::Connect {
+                        target: self.path.clone(),
+                        source: box_err(e),
+                    })?;
+                Ok::<_, SeaFileError>(Arc::new(Core {
+                    link: Link::InProcess(MemoryFile::new(self.end_with_eos)),
+                    path: self.path.clone(),
+                    closed: AtomicBool::new(false),
+                }))
+            })
+            .await?
+            .clone();
+        Ok(ConnectedFileBroker {
+            core,
+            cell: self.cell,
+        })
+    }
+}
+
+#[cfg(feature = "testing")]
+ruststream::register_testable_broker!(FileBroker);
 
 impl DescribeServer for FileBroker {
     fn describe_server(&self) -> ServerSpec {
@@ -430,31 +530,58 @@ impl ConnectedFileBroker {
 
         let key = StreamKey::new(descriptor.stream())
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", descriptor.stream())))?;
-        let mut options = FileConsumerOptions::new(ConsumerMode::RealTime);
-        // A live subscription tails the file; where reading begins is the framework's
-        // start_at / Seek surface. Replay is the one mode a seek cannot express: it reads
-        // the retained file from the start and completes the stream at its end.
-        options.set_auto_stream_reset(if descriptor.replay_value() {
-            AutoStreamReset::Earliest
+        let disk = match &self.core.link {
+            Link::File(disk) => disk,
+            #[cfg(feature = "testing")]
+            Link::InProcess(file) => {
+                return Ok(FileSubscriber::in_process(
+                    file.subscribe(key.name(), descriptor.replay_value()),
+                ));
+            }
+        };
+        // A live subscription tails the file through the client's consumer; where reading begins
+        // is the framework's start_at / Seek surface. Replay is the one mode a seek cannot
+        // express: it reads the retained file from the start and completes the stream at its end,
+        // and it reads the file itself - see `Reader::Replay` for why.
+        let stream = descriptor.stream().to_owned();
+        let subscribe_err = |source| SeaFileError::Subscribe {
+            stream: stream.clone(),
+            source,
+        };
+        let reader = if descriptor.replay_value() {
+            let file_id = FileId::new(self.core.path.clone());
+            let source = MessageSource::new(file_id, StreamMode::Replay)
+                .await
+                .map_err(|e| subscribe_err(box_err(e)))?;
+            Reader::Replay {
+                source: Box::new(source),
+                key,
+            }
         } else {
-            AutoStreamReset::Latest
-        });
-        options.set_live_streaming(!descriptor.replay_value());
-        let consumer = self
-            .core
-            .streamer
-            .create_consumer(&[key], options)
-            .await
-            .map_err(|e| SeaFileError::Subscribe {
-                stream: descriptor.stream().to_owned(),
-                source: box_err(e),
-            })?;
+            let mut options = FileConsumerOptions::new(ConsumerMode::RealTime);
+            options.set_auto_stream_reset(AutoStreamReset::Latest);
+            // Stated rather than left to the client's default: a live subscription waits for the
+            // writes that follow the end of the file instead of finishing there.
+            options.set_live_streaming(true);
+            // The client starts the consumer's reader tasks on the runtime that opens it, so the
+            // opening runs on the connection's runtime: once per subscription, off the delivery
+            // path.
+            let streamer = disk.streamer.clone();
+            let consumer = disk
+                .runtime
+                .spawn(async move { streamer.create_consumer(&[key], options).await })
+                .await
+                .map_err(|e| subscribe_err(box_err(e)))?
+                .map_err(|e| subscribe_err(box_err(e)))?;
+            Reader::Tail(consumer)
+        };
+        let core = Arc::clone(&self.core);
         Ok(FileSubscriber::spawn(
-            descriptor.stream().to_owned(),
-            consumer,
-            descriptor.replay_value(),
-        )
-        .await)
+            &disk.runtime,
+            stream,
+            reader,
+            move || core.closed.load(Ordering::Acquire),
+        ))
     }
 }
 
@@ -464,10 +591,31 @@ impl ConnectedBroker for ConnectedFileBroker {
 
     async fn shutdown(self) -> Result<(), Self::Error> {
         self.core.closed.store(true, Ordering::Release);
+        let disk = match &self.core.link {
+            Link::File(disk) => disk,
+            #[cfg(feature = "testing")]
+            Link::InProcess(file) => {
+                file.finish();
+                return Ok(());
+            }
+        };
+        // The write lock waits for the publishes in flight, so every handle they cloned is dropped
+        // before the writer ends. A connection another clone of this broker already shut down
+        // holds no handle and has nothing left to end.
+        let Some(producer) = disk.producer.write().await.take() else {
+            return Ok(());
+        };
         // Ends the file's shared producers (writing the end-of-stream mark when configured)
         // and flushes to disk. An already-ended producer is benign teardown noise: another
         // broker over the same file finished first.
-        match self.core.streamer.clone().disconnect().await {
+        let ended = disk.streamer.clone().disconnect().await;
+        // The handle is dropped after the writer ended, so the end-of-stream mark is written; its
+        // drop reaches the client's task as a request of its own. The second end is answered by
+        // that task only after it processed the drop, against a path no writer holds any more, so
+        // `shutdown` returns once nothing of this connection can reach a later one over the file.
+        drop(producer);
+        let _settled = disk.streamer.clone().disconnect().await;
+        match ended {
             Ok(()) | Err(StreamErr::Backend(FileErr::ProducerEnded)) => Ok(()),
             Err(e) => Err(SeaFileError::Connect {
                 target: self.core.path.clone(),
@@ -526,29 +674,40 @@ impl Publisher for FilePublisher {
     ) -> Result<(), Self::Error> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
-        let producer = &core.producer;
         let key = StreamKey::new(msg.name())
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", msg.name())))?;
         let payload = wire::encode(msg.headers(), msg.payload(), false);
-        producer
-            .send_to(&key, payload.as_slice())
-            .map_err(|e| SeaFileError::Publish {
-                stream: msg.name().to_owned(),
-                source: box_err(e),
-            })?
-            .await
-            .map_err(|e| SeaFileError::Publish {
-                stream: msg.name().to_owned(),
-                source: box_err(e),
-            })?;
-        // Flush per publish: the sink buffers, and live subscribers (and external tails)
-        // observe the file, not the buffer. A clone shares the same sink.
-        let mut flusher = producer.clone();
-        flusher.flush().await.map_err(|e| SeaFileError::Publish {
+        let held = match &core.link {
+            Link::File(disk) => disk.producer.read().await,
+            #[cfg(feature = "testing")]
+            Link::InProcess(file) => {
+                file.append(key, payload);
+                return Ok(());
+            }
+        };
+        // Empty when `shutdown` ran between the open check and the lock.
+        let producer = held.as_ref().ok_or(SeaFileError::NotConnected)?;
+        let appended = append(producer, &key, &payload).await;
+        drop(held);
+        appended.map_err(|e| SeaFileError::Publish {
             stream: msg.name().to_owned(),
             source: box_err(e),
         })
     }
+}
+
+/// Appends one message and flushes it to the file.
+///
+/// The flush is per publish: the sink buffers, and live subscribers (and external tails) observe
+/// the file, not the buffer. A clone shares the same sink.
+async fn append(
+    producer: &FileProducer,
+    key: &StreamKey,
+    payload: &[u8],
+) -> Result<(), StreamErr<FileErr>> {
+    producer.send_to(key, payload)?.await?;
+    let mut flusher = producer.clone();
+    flusher.flush().await
 }
 
 /// The publish policy for [`FilePublisher`].
@@ -587,31 +746,55 @@ impl DefaultPublish for ConnectedFileBroker {
     type Policy = FilePublish;
 }
 
-/// The policy pairs against the in-process transport too, so a routes file that names it -
-/// `.out_reply(Publish)`, the way production writes it - mounts on
-/// [`FileTestBroker`](crate::testing::FileTestBroker) unchanged.
+/// The harness's view of the in-process transport: what it injects, what it reads back, and the
+/// coordinator it counts the in-flight deliveries with.
 ///
-/// A policy is pure declaration and this one carries no settings, so nothing is dropped in the
-/// translation; what differs is the live publisher it pairs into, which appends to the stand-in's
-/// retained log instead of writing a file. The file's own machinery - the header envelope, the
-/// per-publish flush - belongs to [`FilePublisher`] and is covered against real stream files, so a
-/// test here must not assert on the bytes a `.ss` file ends up holding.
+/// A message written under a stream key reaches every subscription reading that key, which is the
+/// equal-name rule the default [`routes`](TestableBroker::routes) answers. A replay reads it only
+/// while it is still short of the end of the file.
+///
+/// # Panics
+///
+/// `inject` and `published` panic on a broker connected with `connect`: the harness drives only
+/// the file `connect_in_process` produced. `inject` also panics on a stream key the file refuses.
 #[cfg(feature = "testing")]
-impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for FilePublish {
-    type Live = crate::testing::FileTestPublisher;
-
-    fn pair(
-        self,
-        connected: &crate::testing::ConnectedFileTestBroker,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.publisher()))
+impl TestableBroker for ConnectedFileBroker {
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        if let Link::InProcess(file) = &self.core.link {
+            file.install(coordinator);
+        }
     }
 
-    /// The stand-in describes a destination the way the file does, so a document built in a test
-    /// is the document the service ships.
-    #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self, channel: &str) -> Bindings {
-        channel_extension(channel)
+    fn inject(&self, message: OutgoingMessage<'_>) {
+        let file = self.memory_file("inject");
+        let key = StreamKey::new(message.name()).unwrap_or_else(|err| {
+            panic!(
+                "the injected message to {:?} is not one a stream file takes: {err}",
+                message.name()
+            )
+        });
+        file.append(
+            key,
+            wire::encode(message.headers(), message.payload(), false),
+        );
+    }
+
+    fn published(&self, name: &str) -> Vec<RawMessage> {
+        self.memory_file("published").published(name)
+    }
+}
+
+#[cfg(feature = "testing")]
+impl ConnectedFileBroker {
+    /// The in-memory file, which is all the harness drives.
+    fn memory_file(&self, what: &str) -> &MemoryFile {
+        match &self.core.link {
+            Link::InProcess(file) => file,
+            Link::File(_) => panic!(
+                "TestableBroker::{what} reached a broker connected with `connect`; the harness \
+                 drives the file `connect_in_process` produces"
+            ),
+        }
     }
 }
 

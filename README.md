@@ -39,7 +39,8 @@ from the framework; this crate is the transport.
 - **Batches** assembled on the client.
 - **Delayed retries** through a copy the runtime republishes, with retry caps and dead letters.
 - **AsyncAPI** for both transports, behind the `asyncapi` feature.
-- **Tests without files:** handlers run against an in-process stand of each transport.
+- **Tests without files:** `TestApp` runs the service's own app with `FileBroker` and
+  `StdioBroker` in process.
 
 The transport keeps no consumer positions, so acknowledgement reports `AckError::Unsupported`;
 a service resumes from a captured position. The file transport does not run on Windows.
@@ -117,7 +118,7 @@ tb.broker::<FileBroker>()
     .with(&Confirmation { id: 1 });
 ```
 
-`TestApp::start_live(app())` runs the same test against a real stream file.
+`TestApp::start_live(app())` runs the same test against a real stream file (`just test-brokers`).
 
 ## Documentation
 
