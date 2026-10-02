@@ -66,10 +66,45 @@ impl TestState {
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::testing::FileTestBroker;
+/// use std::error::Error;
 ///
-/// let broker = FileTestBroker::new();
-/// # let _ = broker;
+/// use ruststream::testing::TestApp;
+/// use ruststream_sea_file::file::prelude::*;
+/// use ruststream_sea_file::testing::FileTestBroker;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
+/// struct Job {
+///     id: u64,
+/// }
+///
+/// #[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
+/// async fn work(job: &Job, Ctx(at): Ctx<Position>) -> HandlerOutcome {
+///     println!("job {} sits at {at:?}", job.id);
+///     HandlerOutcome::ack()
+/// }
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn Error>> {
+/// let app = RustStream::new(AppInfo::new("jobs", "0.1.0"))
+///     .with_broker(FileTestBroker::new(), |b| {
+///         b.include(work);
+///     });
+/// let tb = TestApp::start(app).await?;
+///
+/// tb.broker::<FileTestBroker>()
+///     .message(&Job { id: 7 })
+///     .to("jobs")
+///     .publish()
+///     .await?;
+///
+/// tb.broker::<FileTestBroker>()
+///     .subscriber("jobs")
+///     .assert_called_once()
+///     .with(&Job { id: 7 })
+///     .settled(HandlerOutcome::ack());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Default)]
 #[must_use]

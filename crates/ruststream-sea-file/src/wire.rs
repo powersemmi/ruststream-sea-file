@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn headerless_payloads_pass_through() {
         let (headers, payload) = decode(&encode(&HeaderMap::new(), b"raw bytes", false));
-        assert!(headers.is_empty());
+        assert_eq!(headers, HeaderMap::new());
         assert_eq!(payload.as_ref(), b"raw bytes");
         assert_eq!(encode(&HeaderMap::new(), b"raw bytes", false), b"raw bytes");
     }
@@ -100,7 +100,7 @@ mod tests {
         let encoded = encode(&HeaderMap::new(), &raw, true);
         assert!(std::str::from_utf8(&encoded).is_ok());
         let (headers, payload) = decode(&encoded);
-        assert!(headers.is_empty());
+        assert_eq!(headers, HeaderMap::new());
         assert_eq!(payload.as_ref(), raw.as_slice());
     }
 }

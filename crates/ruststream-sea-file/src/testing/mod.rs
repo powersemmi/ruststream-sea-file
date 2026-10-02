@@ -16,6 +16,8 @@
 //! harness-only policy to swap in.
 //!
 //! ```
+//! use std::error::Error;
+//!
 //! use ruststream::testing::TestApp;
 //! use ruststream_sea_file::file::prelude::*;
 //! use ruststream_sea_file::testing::FileTestBroker;
@@ -37,24 +39,24 @@
 //! }
 //!
 //! # #[tokio::main]
-//! # async fn main() {
+//! # async fn main() -> Result<(), Box<dyn Error>> {
 //! let app = RustStream::new(AppInfo::new("jobs", "0.1.0"))
 //!     .with_broker(FileTestBroker::new(), |b| {
-//!         b.include(work);
+//!         b.include(work).out_reply(Publish);
 //!     });
-//! let tb = TestApp::start(app).await.expect("startup failed");
+//! let tb = TestApp::start(app).await?;
 //!
 //! tb.broker::<FileTestBroker>()
 //!     .message(&Job { id: 7 })
 //!     .to("jobs")
 //!     .publish()
-//!     .await
-//!     .expect("publish");
+//!     .await?;
 //!
 //! tb.broker::<FileTestBroker>()
 //!     .published::<Seen>("audit")
 //!     .assert_called_once()
 //!     .with(&Seen { id: 7 });
+//! # Ok(())
 //! # }
 //! ```
 //!

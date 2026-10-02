@@ -259,10 +259,27 @@ const PRIME_STREAM: &str = "ruststream-internal";
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::FileBroker;
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
 ///
-/// let broker = FileBroker::new("/var/lib/orders.ss");
-/// # let _ = broker;
+/// #[derive(Debug, Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
+/// async fn handle(order: &Order) -> HandlerOutcome {
+///     println!("got order {}", order.id);
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+///         .with_broker(FileBroker::new("/var/lib/orders.ss").end_with_eos(), |b| {
+///             b.include(handle);
+///         })
+/// }
 /// ```
 #[derive(Debug, Clone)]
 #[must_use]
@@ -556,10 +573,30 @@ impl Publisher for FilePublisher {
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::FilePublish;
+/// use std::io;
 ///
-/// let policy = FilePublish::default();
-/// # let _ = policy;
+/// use ruststream_sea_file::prelude::*;
+/// use serde::Serialize;
+///
+/// #[derive(Debug, Outgoing, Serialize)]
+/// struct Started {
+///     service: String,
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("recorder", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/recorder.ss"), |b| {
+///             b.after_startup(FilePublish, async move |publisher| -> io::Result<()> {
+///                 publisher
+///                     .message(&Started { service: "recorder".into() })
+///                     .to("lifecycle")
+///                     .publish()
+///                     .await
+///                     .map_err(io::Error::other)
+///             });
+///         })
+/// }
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 #[must_use]
@@ -624,10 +661,31 @@ impl PublishPolicy<crate::testing::ConnectedFileTestBroker> for FilePublish {
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::file::Publish;
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let policy = Publish::default();
-/// # let _ = policy;
+/// #[derive(Debug, Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Debug, Outgoing, Serialize)]
+/// struct Receipt {
+///     order: u64,
+/// }
+///
+/// #[subscriber(FileStream::new("orders"), publish("receipts"))]
+/// async fn confirm(order: &Order) -> Receipt {
+///     Receipt { order: order.id }
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
+///             b.include(confirm).out_reply(Publish);
+///         })
+/// }
 /// ```
 pub use FilePublish as Publish;
 
@@ -654,8 +712,8 @@ pub mod prelude {
     //!
     //! #[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
     //! async fn handle(order: &Order, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
-    //!     if order.id == 0 {
-    //!         let _ = seeker.seek(FilePosition::end()).await;
+    //!     if order.id == 0 && seeker.seek(FilePosition::end()).await.is_err() {
+    //!         return HandlerOutcome::retry();
     //!     }
     //!     HandlerOutcome::ack()
     //! }
