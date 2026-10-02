@@ -21,23 +21,29 @@
 
 ---
 
-`ruststream-sea-file` implements the RustStream broker contract over [`sea-streamer-file`](https://crates.io/crates/sea-streamer-file) and [`sea-streamer-stdio`](https://crates.io/crates/sea-streamer-stdio). Handlers, routers, codecs, and middleware come from the framework; this crate supplies the transport - and nothing broker-specific leaks back into the framework.
-
-There is no server anywhere in this crate: a broker is a `.ss` stream file on disk (durable, replayable, shared between processes) or the process's own standard input and output (a service as a stage of a shell pipeline). That makes it the zero-infrastructure entry point to the framework, and the reference implementation of the `Seekable` capability.
+`ruststream-sea-file` runs a RustStream service over a stream file or a shell pipeline, through
+[`sea-streamer-file`](https://crates.io/crates/sea-streamer-file) and
+[`sea-streamer-stdio`](https://crates.io/crates/sea-streamer-stdio). There is no server: a broker
+is a `.ss` file on disk, durable and replayable, or the process's own standard input and output.
+It is the zero-infrastructure way into the framework. Handlers, routing, codecs and middleware come
+from the framework; this crate is the transport.
 
 ## Features
 
-- **Lazy startup contract.** `FileBroker::new(path)` and `StdioBroker::new()` are synchronous and do no I/O; the runtime connects once at startup, so both compose with `#[ruststream::app]`. The file broker creates the file by default (`existing_only()` opts out), can finish it with an end-of-stream mark on shutdown (`end_with_eos()`), and tunes the density of its in-place index (`beacon_interval(bytes)`).
-- **Replayable subscriptions.** `FileStream::new(key)` follows the live tail; where reading begins is the framework's `start_at(..)` clause with a `FilePosition` (everything retained, a timestamp, a captured position). `.replay()` reads a finished file and completes the stream when it ends - one pass over a recorded log, rather than a subscription that waits for more.
-- **The `Seekable` capability.** `FileSubscriber` mints a `FileSeeker`; positions are `FilePosition::{beginning, end, sequence, timestamp}`. Captured positions (`Positioned::position`) carry the framework's pinned semantics: seeking to one redelivers exactly that message. A handler reaches both through the transport's context keys - `Ctx<Position>` for where this delivery sat, `Ctx<SeekHandle>` for the live subscription handle - and `start_at(..)` chooses where a subscription opens.
-- **Batches on both transports.** A `&[T]` handler mounts with `.batch(nonzero!(n))` and is handed at most that many messages at once. Neither client reads several entries at a time, so a batch is filled on this side of the wire, out of the framework's own buffer, and a partial one goes out on a short deadline; nothing at the mount site says which side filled it.
-- **Headers without breaking the file format.** A text-safe envelope is applied only when a message actually carries headers; payloads published without headers stay verbatim, so stream files remain readable by any `sea-streamer` consumer and existing files remain readable by this crate.
-- **Stdio pipelines.** `StdioBroker` turns stdin into subscriptions and stdout into the publisher: `producer | service | consumer` in a shell. Binary payloads survive the line-oriented transport through the same envelope. `loopback()` wires stdout back into stdin for self-contained tests.
-- **Acknowledgement is unsupported.** The transport keeps no consumer positions, so `ack` reports `AckError::Unsupported` instead of reporting success; resume explicitly from a captured `FilePosition`.
-- **Delayed retries through a deferred copy.** With no settlement to lean on, `HandlerOutcome::retry_after(delay)` works the one way it can: once the delay is over the runtime republishes the message under the stream key the subscription reads. A file registration needs nothing at its mount site for that. Standard output reaches the next process in the pipeline and never this one's standard input, so a stdio registration names the destination itself - `.out_retry(Publish).to("jobs.retry")` or a transform that names one per delivery - and one that names neither refuses to start instead of losing every delayed message. `max_attempts(n)` and `dead_letter(key)` right after `include` cap the circulation and say where a spent delivery goes.
-- **No per-message settings.** An append to a stream file and a line on standard output take a stream key and a payload and nothing else, so this crate adds no step to the publish builder and a handler body that publishes keeps the framework prelude and the plain `Out<impl Publisher, Marker>` bound.
-- **A document of the two transports** (feature `asyncapi`). Each broker is one AsyncAPI server: `file` with the path of the stream file, `stdio` with its protocol name, neither with a host. A `FileStream` channel reports the stream key it reads, under the `x-ruststream-file` extension - the specification lists no binding for a file transport and its protocol keys are a closed list.
-- **In-process test brokers** (feature `testing`). `FileTestBroker` serves the file transport's routing over a retained, positioned log in memory, so a service that reads positions or seeks mounts on it unedited. `StdioTestBroker` stands in for the pipeline transport and answers what a pipe answers: no address for a retry copy, no seeking, and the publish side records what the service wrote to standard output. Both run under the framework's `TestApp` harness.
+- **Stream files:** subscriptions follow the live tail, or replay a finished file once.
+- **Seeking:** start at the beginning, the end, a sequence or a timestamp, and a handler moves its
+  subscription while the service runs.
+- **Stdio pipelines:** `producer | service | consumer` in a shell, binary payloads included.
+- **Files other tools read:** a payload published without headers stays verbatim, so any
+  `sea-streamer` consumer reads the file.
+- **Batches** assembled on the client.
+- **Delayed retries** through a copy the runtime republishes, with retry caps and dead letters.
+- **AsyncAPI** for both transports, behind the `asyncapi` feature.
+- **Tests without files:** `TestApp` runs the service's own app with `FileBroker` and
+  `StdioBroker` in process.
+
+The transport keeps no consumer positions, so acknowledgement reports `AckError::Unsupported`;
+a service resumes from a captured position. The file transport does not run on Windows.
 
 ## Install
 
@@ -48,12 +54,8 @@ ruststream-sea-file = "0.7"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-# The in-process broker the test below runs on, and a runtime to run it under.
 ruststream-sea-file = { version = "0.7", features = ["testing"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
-
-The file transport is not supported on Windows (an upstream constraint of the file client).
 
 ## Write a service
 
@@ -61,7 +63,7 @@ The file transport is not supported on Windows (an upstream constraint of the fi
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Outgoing, Serialize, Deserialize)]
 struct Order {
     id: u64,
 }
@@ -84,76 +86,52 @@ async fn confirm(order: &Order) -> Confirmation {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .with_broker(FileBroker::new("/var/lib/svc/orders.ss"), |b| {
-            // The reply position of this registration, named with the transport's own policy.
             b.include(confirm).out_reply(Publish);
         })
 }
 ```
 
-Each transport has a prelude of its own, and it is the mount site's vocabulary: `file::prelude` and `stdio::prelude` each alias that form's policy to `Publish`, so the composition root names the concept and not the transport. A service that spans both globs `ruststream_sea_file::prelude`, where the policies keep their prefixed names (`FilePublish`, `StdioPublish`) because a bare one would be ambiguous there. A handler body needs neither glob: it imports `ruststream::prelude` and reaches for this crate's names only when it reads a position or seeks.
+`#[ruststream::app]` generates `main`, so the binary understands `run` and `asyncapi gen`. Each
+transport has its own prelude (`file`, `stdio`).
 
 ## Test it
 
-Each transport has a stand of its own: `FileTestBroker` for stream files, with the same routing, the same positions and the same seeker over a log in memory, and `StdioTestBroker` for pipelines, which addresses no retry copies and does not seek, exactly as a pipe does not. A service mounts on its own stand unedited, and a stdio registration the pipe would refuse is refused here too. `TestApp` starts the app, publishes into it, and drives the reaction to a standstill before the assertions read it:
+`TestApp` runs the service's own app with `FileBroker` in process, with no file.
 
 ```rust
 use ruststream::testing::TestApp;
-use ruststream_sea_file::testing::FileTestBroker;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_order_is_confirmed() -> Result<(), Box<dyn std::error::Error>> {
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(FileTestBroker::new(), |b| {
-            b.include(confirm).out_reply(Publish);
-        });
-    let tb = TestApp::start(app).await?;
+let tb = TestApp::start(app()).await?;
 
-    tb.publish("orders", &Order { id: 1 }).await?;
+tb.broker::<FileBroker>()
+    .message(&Order { id: 1 })
+    .to("orders")
+    .publish()
+    .await?;
 
-    tb.broker::<FileTestBroker>()
-        .subscriber("orders")
-        .assert_called_once();
-    tb.broker::<FileTestBroker>()
-        .published::<Confirmation>("confirmations")
-        .assert_called_once()
-        .with(&Confirmation { id: 1 });
-    Ok(())
-}
+tb.broker::<FileBroker>()
+    .subscriber("orders")
+    .assert_called_once();
+tb.broker::<FileBroker>()
+    .published::<Confirmation>("confirmations")
+    .assert_called_once()
+    .with(&Confirmation { id: 1 });
 ```
 
-A stdio service swaps the type and names the destination its copies go to, the way it names it in production:
+`TestApp::start_live(app())` runs the same test against a real stream file (`just test-brokers`).
 
-```rust
-use ruststream_sea_file::stdio::prelude::*;
-use ruststream_sea_file::testing::StdioTestBroker;
+## Documentation
 
-let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
-    .with_broker(StdioTestBroker::new(), |b| {
-        b.include(work).out_retry(Publish).to("jobs.retry");
-    });
-```
+- This crate: <https://docs.rs/ruststream-sea-file>
+- The framework: <https://powersemmi.github.io/ruststream/latest>
 
-What a stand leaves out is what only a real transport can answer: the end-of-stream mark, the header envelope, `AckError::Unsupported`, durability across a restart. Those are covered by the suite that runs against stream files and pipes, and `just test` exercises it on temp files, needing no external broker.
+## Minimum supported Rust version
 
-## Layout
-
-```
-ruststream-sea-file/
-├── crates/
-│   └── ruststream-sea-file/    the published crate
-│       └── examples/           runnable services on both transports
-├── docs/                       the documentation site
-├── .github/workflows/          CI (fmt, clippy, tests, security scans)
-└── justfile                    the local gates
-```
+The MSRV is **1.88**, edition 2024.
 
 ## Contributing
 
-```bash
-just check   # fmt, clippy, feature checks
-just test    # tests
-just ci      # the full local gate
-```
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

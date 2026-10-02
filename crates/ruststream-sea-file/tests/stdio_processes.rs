@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use ruststream::runtime::{AppInfo, RustStream};
 use ruststream_sea_file::stdio::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -31,13 +33,17 @@ struct Job {
     id: u64,
 }
 
-/// The example binary `cargo test` built beside this test.
+/// The example binary the current build made beside this test.
 ///
 /// The profile's `examples` directory is an ancestor of the test binary in both the `deps` layout
 /// and the build-dir layout, where the test binary sits under `build/<package>/<hash>/out`. In it
 /// an example has its plain name when the artifact and build directories are the same, and a
-/// content hash when they are split. Both spellings are searched in each ancestor, so the test
-/// finds the stage wherever the build put it.
+/// content hash when they are split. Each ancestor's `examples` directory is searched in turn,
+/// and in the first that holds the example every spelling is a candidate, the newest one being
+/// the build of this run: a build directory kept between runs (another toolchain, a cached
+/// target directory) also holds older builds of the example, which may not read what this test
+/// sends. A `cargo test --examples` run also builds each example as a test harness, which
+/// answers any argument with the test runner's report; that build is passed over.
 fn example_binary(name: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary has a path");
     exe.ancestors()
@@ -53,23 +59,40 @@ fn example_binary(name: &str) -> PathBuf {
         })
 }
 
-/// The `name` example in one `examples` directory, under its plain name or its hashed one.
+/// The newest build of the `name` example in one `examples` directory, under its plain name or a
+/// hashed one, leaving out test-harness builds.
 fn example_in(dir: &Path, name: &str) -> Option<PathBuf> {
-    let plain = dir.join(name);
-    if plain.is_file() {
-        return Some(plain);
-    }
     std::fs::read_dir(dir)
         .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| {
+        .filter(|path| {
             path.extension().is_none()
                 && path
                     .file_name()
                     .and_then(|file| file.to_str())
-                    .is_some_and(|file| file.starts_with(&format!("{name}-")))
+                    .is_some_and(|file| file == name || file.starts_with(&format!("{name}-")))
+                && !is_test_harness(path)
         })
+        .filter_map(|path| {
+            let built = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok()?;
+            Some((built, path))
+        })
+        .max_by_key(|(built, _)| *built)
+        .map(|(_, path)| path)
+}
+
+/// Whether `binary` is a test-harness build: libtest names its thread setting in every binary it
+/// links into, and the example proper never links it.
+fn is_test_harness(binary: &Path) -> bool {
+    let marker = b"RUST_TEST_THREADS";
+    std::fs::read(binary).is_ok_and(|bytes| {
+        bytes
+            .windows(marker.len())
+            .any(|window| window == marker.as_slice())
+    })
 }
 
 /// One line in the client's format: the meta fields, then the payload.
@@ -125,6 +148,47 @@ async fn a_stage_answers_the_keys_it_reads_and_ignores_the_rest() {
             "the stage answers each job it read, in order, got {answer}",
         );
     }
+
+    stage.kill().await.expect("the stage stops");
+}
+
+/// A payload a line cannot carry as it is - one that holds newlines and is padded with spaces -
+/// crosses the pipe in the envelope the publisher writes for it, and the stage reads it whole:
+/// the job it decodes is the one that was sent, not a fragment of the line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_payload_a_line_cannot_carry_crosses_the_pipe_whole() {
+    let mut stage = Command::new(example_binary("stdio_pipeline"))
+        .arg("run")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the pipeline stage starts");
+
+    // The envelope: a four-byte length of the header block (none here), then the payload, in
+    // base64 behind the `rs1:` prefix.
+    let payload = b"  {\n  \"id\": 11\n}\n  ";
+    let mut framed = 0_u32.to_be_bytes().to_vec();
+    framed.extend_from_slice(payload);
+    let envelope = format!("rs1:{}", BASE64.encode(&framed));
+    let mut input = stage.stdin.take().expect("the stage reads standard input");
+    input
+        .write_all(format!("[2024-01-01T00:00:00 | jobs | 1] {envelope}\n").as_bytes())
+        .await
+        .expect("the stage accepts input");
+    input.flush().await.expect("the input reaches the stage");
+
+    let mut output = BufReader::new(stage.stdout.take().expect("the stage writes output")).lines();
+    let answer = tokio::time::timeout(ANSWER_TIMEOUT, output.next_line())
+        .await
+        .expect("the stage answers rather than hanging")
+        .expect("the stage's output is readable")
+        .expect("the stage answers the job");
+    assert!(
+        answer.contains("{\"id\":11}"),
+        "the stage read the whole payload, got {answer}",
+    );
 
     stage.kill().await.expect("the stage stops");
 }

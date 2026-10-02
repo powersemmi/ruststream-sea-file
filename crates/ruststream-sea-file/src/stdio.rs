@@ -75,33 +75,88 @@
 //! standard input, so a stdio service runs in one process with no external commands. It is a test
 //! aid: an address that only held under it would break in the shape a service ships.
 
+// Without the `testing` feature a link has one variant, so a `match` on it has a single arm; the
+// matches stay so that the in-process arm has its place when the feature is on.
+#![cfg_attr(
+    not(feature = "testing"),
+    allow(clippy::infallible_destructuring_match)
+)]
+
 use std::future::{Future, ready};
+use std::io;
 use std::num::NonZeroUsize;
+use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::Stream;
+use futures::{FutureExt as _, Stream};
+#[cfg(feature = "testing")]
+use ruststream::RawMessage;
+#[cfg(feature = "testing")]
+use ruststream::testing::{Coordinator, InProcess, TestableBroker};
 use ruststream::{
     BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
     Lend, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
     Subscriber,
 };
-use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
+use sea_streamer_stdio::{
+    StdioConnectOptions, StdioConsumer, StdioConsumerOptions, StdioProducer, StdioProducerOptions,
+    StdioResult, StdioStreamer,
+};
 use sea_streamer_types::{
     Consumer as _, ConsumerMode, ConsumerOptions as _, Producer as _, StreamKey, Streamer as _,
     StreamerUri,
 };
+use tokio::runtime::Handle;
 use tokio::sync::{OnceCell, mpsc};
 
 use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
+#[cfg(feature = "testing")]
+use crate::in_process::{MemoryPipe, PipeQueue};
 use crate::message::SeaMessage;
 use crate::wire;
 
+/// Whether a subscription in this process has started the client's standard-input reader.
+///
+/// Why a static: the reader is the client's, and it is process-wide. The first consumer starts
+/// it, and it then holds standard input while it waits for a line, so only the subscription that
+/// starts it can hold standard input itself (see `open_consumer`); a later one would wait for
+/// the next line.
+static READER_STARTED: AtomicBool = AtomicBool::new(false);
+
 pub(crate) struct StdioCore {
-    pub(crate) streamer: StdioStreamer,
+    pub(crate) link: StdioLink,
     pub(crate) closed: AtomicBool,
+    /// The broker's own setting, which the test harness reads to know where a publish goes. The
+    /// field is there only with the `testing` feature.
+    #[cfg(feature = "testing")]
+    loopback: bool,
 }
+
+/// What a connected broker and every handle paired off it speak over: the process's own pipes,
+/// or, under the `testing` feature, the in-memory ones the test harness connected instead.
+///
+/// Without the feature there is one variant, so the type is the client's streamer itself and every
+/// `match` on it is irrefutable: a production build carries no second transport and no branch to
+/// it.
+pub(crate) enum StdioLink {
+    Stdio(Pipes),
+    #[cfg(feature = "testing")]
+    InProcess(Arc<MemoryPipe>),
+}
+
+/// The process's own pipes as the client opened them, and the runtime `connect` ran on: the
+/// reader task of every subscription runs there, whichever runtime opens it.
+pub(crate) struct Pipes {
+    streamer: StdioStreamer,
+    runtime: Handle,
+}
+
+// The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
+// link exactly the size of the pipes it wraps.
+#[cfg(not(feature = "testing"))]
+const _: () = assert!(size_of::<StdioLink>() == size_of::<Pipes>());
 
 impl StdioCore {
     fn ensure_open(&self) -> Result<(), SeaFileError> {
@@ -200,8 +255,13 @@ impl Broker for StdioBroker {
                         source: box_err(e),
                     })?;
                 Ok::<_, SeaFileError>(Arc::new(StdioCore {
-                    streamer,
+                    link: StdioLink::Stdio(Pipes {
+                        streamer,
+                        runtime: Handle::current(),
+                    }),
                     closed: AtomicBool::new(false),
+                    #[cfg(feature = "testing")]
+                    loopback: self.loopback,
                 }))
             })
             .await?
@@ -210,6 +270,61 @@ impl Broker for StdioBroker {
             core,
             cell: self.cell,
         })
+    }
+}
+
+/// The in-process mode: the connected form a test runs the production app against, over a pipe
+/// held in memory in place of the process's own standard input and output.
+///
+/// The pipe belongs to this broker and every clone of it. What the test injects arrives on its
+/// standard input; what the service publishes is written to its standard output, and reaches the
+/// service's own subscriptions only under [`loopback`](Self::loopback), as on a real pipe.
+#[cfg(feature = "testing")]
+impl InProcess for StdioBroker {
+    async fn connect_in_process(self) -> Result<Self::Connected, Self::Error> {
+        let core = self
+            .cell
+            .get_or_init(async || {
+                Arc::new(StdioCore {
+                    link: StdioLink::InProcess(MemoryPipe::new(self.loopback)),
+                    closed: AtomicBool::new(false),
+                    loopback: self.loopback,
+                })
+            })
+            .await
+            .clone();
+        Ok(ConnectedStdioBroker {
+            core,
+            cell: self.cell,
+        })
+    }
+}
+
+#[cfg(feature = "testing")]
+ruststream::register_testable_broker!(StdioBroker);
+
+/// Opens a consumer of `key` on standard input.
+///
+/// The client starts its reader inside the first consumer and only then registers that consumer,
+/// so a line already waiting on the pipe could be read in between and handed to no one: a stage
+/// started with its input ready lost its first line. The first subscription therefore holds
+/// standard input while the consumer is created, and the reader takes its first line only once
+/// the consumer is there. Creating a consumer completes without waiting, so standard input is
+/// held for that one poll and never across an await.
+async fn open_consumer(streamer: &StdioStreamer, key: StreamKey) -> StdioResult<StdioConsumer> {
+    let keys = [key];
+    let mut created =
+        pin!(streamer.create_consumer(&keys, StdioConsumerOptions::new(ConsumerMode::RealTime)));
+    if READER_STARTED.swap(true, Ordering::AcqRel) {
+        return created.await;
+    }
+    let first = {
+        let _input = io::stdin().lock();
+        created.as_mut().now_or_never()
+    };
+    match first {
+        Some(consumer) => consumer,
+        None => created.await,
     }
 }
 
@@ -244,11 +359,16 @@ impl ConnectedBroker for ConnectedStdioBroker {
 
     async fn shutdown(self) -> Result<(), Self::Error> {
         self.core.closed.store(true, Ordering::Release);
+        let streamer = match &self.core.link {
+            StdioLink::Stdio(pipes) => &pipes.streamer,
+            // The in-memory pipe belongs to this broker alone, so its shutdown reaches no other.
+            #[cfg(feature = "testing")]
+            StdioLink::InProcess(_) => return Ok(()),
+        };
         // Globally destructive by the client's design: every stdio consumer and producer in
         // the process ends. That is the honest meaning of shutting down a process-wide
         // transport.
-        self.core
-            .streamer
+        streamer
             .clone()
             .disconnect()
             .await
@@ -278,22 +398,30 @@ impl Subscribe for ConnectedStdioBroker {
         self.core.ensure_open()?;
         let key =
             StreamKey::new(name).map_err(|e| SeaFileError::Invalid(format!("'{name}': {e}")))?;
-        let consumer = self
-            .core
-            .streamer
-            .create_consumer(
-                &[key],
-                sea_streamer_stdio::StdioConsumerOptions::new(ConsumerMode::RealTime),
-            )
-            .await
-            .map_err(|e| SeaFileError::Subscribe {
-                stream: name.to_owned(),
-                source: box_err(e),
-            })?;
+        let pipes = match &self.core.link {
+            StdioLink::Stdio(pipes) => pipes,
+            #[cfg(feature = "testing")]
+            StdioLink::InProcess(pipe) => {
+                return Ok(StdioSubscriber {
+                    stream: name.to_owned(),
+                    inner: BufferedSubscriber::new(StdioDeliveries::InProcess(
+                        pipe.subscribe(key.name()),
+                    ))
+                    .max_wait(BATCH_MAX_WAIT),
+                });
+            }
+        };
+        let consumer =
+            open_consumer(&pipes.streamer, key)
+                .await
+                .map_err(|e| SeaFileError::Subscribe {
+                    stream: name.to_owned(),
+                    source: box_err(e),
+                })?;
 
         let (tx, rx) = mpsc::channel(64);
         let stream_name = name.to_owned();
-        tokio::spawn(async move {
+        pipes.runtime.spawn(async move {
             loop {
                 tokio::select! {
                     () = tx.closed() => break,
@@ -318,13 +446,85 @@ impl Subscribe for ConnectedStdioBroker {
         });
         Ok(StdioSubscriber {
             stream: name.to_owned(),
-            inner: BufferedSubscriber::new(StdioDeliveries { rx }).max_wait(BATCH_MAX_WAIT),
+            inner: BufferedSubscriber::new(StdioDeliveries::Reader(rx)).max_wait(BATCH_MAX_WAIT),
         })
     }
 }
 
 impl DefaultPublish for ConnectedStdioBroker {
     type Policy = StdioPublish;
+}
+
+/// The harness's view of the in-process transport: what it feeds to standard input, what it
+/// reads back, and the coordinator it counts the in-flight deliveries with.
+///
+/// An injected message is a line arriving on standard input, so every subscription on its stream
+/// key reads it. A publish is a line on standard output, which reaches the process downstream:
+/// [`routes`](TestableBroker::routes) answers that it reaches this service's subscriptions of the
+/// same stream key under [`loopback`](StdioBroker::loopback), and none of them otherwise.
+///
+/// # Panics
+///
+/// `inject` and `published` panic on a broker connected with `connect`: the harness drives only
+/// the pipe `connect_in_process` produces. `inject` also panics on a line a pipe cannot carry: an
+/// invalid stream key, or a message with no payload and no headers.
+#[cfg(feature = "testing")]
+impl TestableBroker for ConnectedStdioBroker {
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        if let StdioLink::InProcess(pipe) = &self.core.link {
+            pipe.install(coordinator);
+        }
+    }
+
+    fn inject(&self, message: OutgoingMessage<'_>) {
+        let pipe = self.memory_pipe("inject");
+        let key = StreamKey::new(message.name()).unwrap_or_else(|err| {
+            panic!(
+                "the injected message to {:?} is not one a pipe carries: {err}",
+                message.name()
+            )
+        });
+        assert!(
+            !(message.payload().is_empty() && message.headers().is_empty()),
+            "the injected message to {:?} is empty, and a pipe drops an empty line",
+            message.name(),
+        );
+        // The line an upstream stage of the pipeline writes for this message.
+        pipe.feed(
+            key,
+            wire::encode(message.headers(), message.payload(), true),
+        );
+    }
+
+    fn published(&self, name: &str) -> Vec<RawMessage> {
+        self.memory_pipe("published").published(name)
+    }
+
+    fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+        if !self.core.loopback {
+            return Vec::new();
+        }
+        subscriptions
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| **name == destination)
+            .map(|(position, _)| position)
+            .collect()
+    }
+}
+
+#[cfg(feature = "testing")]
+impl ConnectedStdioBroker {
+    /// The in-memory pipe, which is all the harness drives.
+    fn memory_pipe(&self, what: &str) -> &MemoryPipe {
+        match &self.core.link {
+            StdioLink::InProcess(pipe) => pipe,
+            StdioLink::Stdio(_) => panic!(
+                "TestableBroker::{what} reached a broker connected with `connect`; the harness \
+                 drives the pipe `connect_in_process` produces"
+            ),
+        }
+    }
 }
 
 /// A subscription to one stream key on standard input; yields [`SeaMessage`]s.
@@ -366,10 +566,23 @@ impl BatchSubscriber for StdioSubscriber {
     }
 }
 
-/// The reader task's deliveries, before batching: one line per poll, in arrival order.
-struct StdioDeliveries {
-    rx: mpsc::Receiver<Result<SeaMessage, SeaFileError>>,
+/// A subscription's lines, before batching: one line per poll, in arrival order.
+///
+/// Without the `testing` feature there is one variant, so the type is the reader task's channel
+/// itself and every `match` on it is irrefutable.
+enum StdioDeliveries {
+    /// The reader task's channel, fed from standard input.
+    Reader(mpsc::Receiver<Result<SeaMessage, SeaFileError>>),
+    /// The in-process pipe's queue.
+    #[cfg(feature = "testing")]
+    InProcess(PipeQueue),
 }
+
+// The zero-cost promise of the in-process mode, held by the compiler.
+#[cfg(not(feature = "testing"))]
+const _: () = assert!(
+    size_of::<StdioDeliveries>() == size_of::<mpsc::Receiver<Result<SeaMessage, SeaFileError>>>()
+);
 
 impl Subscriber for StdioDeliveries {
     type Message = SeaMessage;
@@ -379,14 +592,19 @@ impl Subscriber for StdioDeliveries {
         // Poll the channel in place rather than wrapping it in an owning stream, so `stream`
         // can be called again after the returned stream is dropped (the runtime and the
         // conformance helpers re-enter it per call).
-        futures::stream::poll_fn(move |cx| self.rx.poll_recv(cx))
+        futures::stream::poll_fn(move |cx| match self {
+            Self::Reader(rx) => rx.poll_recv(cx),
+            #[cfg(feature = "testing")]
+            Self::InProcess(queue) => queue.poll_next(cx).map(|next| next.map(Ok)),
+        })
     }
 }
 
 /// Publishes messages to standard output.
 ///
-/// The line format is the client's own; payloads must be text, so a non-UTF-8 payload (and
-/// any message with headers) travels in the text-safe envelope. The client silently drops
+/// The line format is the client's own. A line is text, ends at a newline, and the reader trims
+/// it, so a payload that is not UTF-8, holds a newline or begins or ends with whitespace (and any
+/// message with headers) travels in the text-safe envelope. The client silently drops
 /// empty lines, so an empty payload is rejected here instead.
 ///
 /// A publish carries no per-message settings: a line on standard output takes a key and a
@@ -424,10 +642,20 @@ impl Publisher for StdioPublisher {
                 "stdio drops empty lines; an empty message cannot be transmitted".into(),
             ));
         }
+        let streamer = match &core.link {
+            StdioLink::Stdio(pipes) => &pipes.streamer,
+            #[cfg(feature = "testing")]
+            StdioLink::InProcess(pipe) => {
+                let key = StreamKey::new(msg.name())
+                    .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", msg.name())))?;
+                pipe.write(key, wire::encode(msg.headers(), msg.payload(), true));
+                return Ok(());
+            }
+        };
         let producer = self
             .producer
             .get_or_try_init(async || {
-                core.streamer
+                streamer
                     .create_generic_producer(StdioProducerOptions::default())
                     .await
                     .map_err(|e| SeaFileError::Publish {
@@ -498,29 +726,6 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
     fn pair(
         self,
         connected: &ConnectedStdioBroker,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.publisher()))
-    }
-}
-
-/// The policy pairs against this transport's in-process stand too, so a stdio routes file that
-/// names it - `.out_reply(Publish)`, the way production writes it - mounts on
-/// [`StdioTestBroker`](crate::testing::StdioTestBroker) unchanged.
-///
-/// It pairs against that stand and no other: a stdio service belongs on the stdio stand, which
-/// answers about retry copies and about seeking the way a pipe answers.
-///
-/// What the stand does not reproduce is the line format [`StdioPublisher`] writes: payloads
-/// travel as bytes, the text-safe envelope is not applied, and the empty payload a pipe would
-/// reject goes through. Those are the real transport's, and are covered against a real pipe - so a
-/// test here must not conclude that a payload survives a shell pipeline.
-#[cfg(feature = "testing")]
-impl PublishPolicy<crate::testing::ConnectedStdioTestBroker> for StdioPublish {
-    type Live = crate::testing::StdioTestPublisher;
-
-    fn pair(
-        self,
-        connected: &crate::testing::ConnectedStdioTestBroker,
     ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.publisher()))
     }
