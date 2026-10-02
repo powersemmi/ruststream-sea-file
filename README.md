@@ -76,7 +76,7 @@ struct Confirmation {
 #[subscriber(
     FileStream::new("orders"),
     start_at(FilePosition::beginning()),
-    publish("confirmations")
+    reply("confirmations")
 )]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation { id: order.id }

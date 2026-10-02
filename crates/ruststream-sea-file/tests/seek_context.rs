@@ -61,7 +61,7 @@ fn sequence_of(at: FilePosition) -> u64 {
 #[subscriber(
     FileStream::new("jobs"),
     start_at(FilePosition::beginning()),
-    publish("audit")
+    reply("audit")
 )]
 async fn work(job: &Job, Ctx(at): Ctx<Position>, Ctx(seeker): Ctx<SeekHandle>) -> Seen {
     if let Some(resume_at) = job.resume_at {
@@ -85,14 +85,14 @@ struct Receipt {
 }
 
 /// The declared form: the clause says only that the return value is published.
-#[subscriber("checkout", publish)]
+#[subscriber("checkout", reply)]
 async fn checkout(job: &Job) -> Receipt {
     Receipt { job: job.id }
 }
 
 /// The mount-site form: `Seen` declares no destination, so this subscriber names one, and the
 /// same type reaches a different key from the audit handler above.
-#[subscriber("review", publish("reviewed"))]
+#[subscriber("review", reply("reviewed"))]
 async fn review(job: &Job) -> Seen {
     Seen {
         id: job.id,

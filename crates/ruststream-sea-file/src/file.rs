@@ -132,8 +132,8 @@
 //!
 //! A destination here is a stream key inside the broker, and the file itself is named once, in
 //! [`FileBroker::new`]. A reply type may therefore declare its key with
-//! `#[outgoing(name = "receipts")]` and the subscriber carry the bare `publish` clause; a reply
-//! type that declares none is published where the mount site says, with `publish("receipts")`.
+//! `#[outgoing(name = "receipts")]` and the subscriber carry the bare `reply` clause; a reply
+//! type that declares none is published where the mount site says, with `reply("receipts")`.
 //!
 //! An append takes a stream key and a payload and nothing else, so this crate adds no step to the
 //! publish builder and a handler body that publishes keeps the framework prelude alone and the
@@ -154,7 +154,7 @@
 //!     order: u64,
 //! }
 //!
-//! #[subscriber(FileStream::new("orders"), publish)]
+//! #[subscriber(FileStream::new("orders"), reply)]
 //! async fn confirm(order: &Order) -> Receipt {
 //!     Receipt { order: order.id }
 //! }
@@ -857,7 +857,7 @@ impl ConnectedFileBroker {
 ///     order: u64,
 /// }
 ///
-/// #[subscriber(FileStream::new("orders"), publish("receipts"))]
+/// #[subscriber(FileStream::new("orders"), reply("receipts"))]
 /// async fn confirm(order: &Order) -> Receipt {
 ///     Receipt { order: order.id }
 /// }

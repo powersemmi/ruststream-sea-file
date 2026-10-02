@@ -29,7 +29,7 @@ struct Confirmation {
     id: u64,
 }
 
-#[subscriber(FileStream::new(INPUT), start_at(FilePosition::beginning()), publish)]
+#[subscriber(FileStream::new(INPUT), start_at(FilePosition::beginning()), reply)]
 async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmation {
     ctx.state().arrived();
     Confirmation {

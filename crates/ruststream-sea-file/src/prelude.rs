@@ -25,13 +25,13 @@
 //! #[subscriber(
 //!     FileStream::new("orders"),
 //!     start_at(FilePosition::beginning()),
-//!     publish("receipts")
+//!     reply("receipts")
 //! )]
 //! async fn record(order: &Order) -> Receipt {
 //!     Receipt { order: order.id }
 //! }
 //!
-//! #[subscriber("orders", publish("receipts"))]
+//! #[subscriber("orders", reply("receipts"))]
 //! async fn tee(order: &Order) -> Receipt {
 //!     Receipt { order: order.id }
 //! }

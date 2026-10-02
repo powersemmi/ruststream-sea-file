@@ -51,7 +51,7 @@ async fn defer_once(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
 }
 
 /// Confirms an order on the stream key its reply type declares.
-#[subscriber(FileStream::new("checkout"), publish)]
+#[subscriber(FileStream::new("checkout"), reply)]
 async fn confirm(checkout: &Checkout) -> Receipt {
     Receipt {
         order: checkout.order,
