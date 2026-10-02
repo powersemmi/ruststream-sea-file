@@ -183,10 +183,31 @@ type StdioCell = Arc<OnceCell<Arc<StdioCore>>>;
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::StdioBroker;
+/// use ruststream_sea_file::stdio::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let broker = StdioBroker::new();
-/// # let _ = broker;
+/// #[derive(Debug, Deserialize)]
+/// struct Line {
+///     text: String,
+/// }
+///
+/// #[derive(Debug, Outgoing, Serialize)]
+/// #[outgoing(name = "upper")]
+/// struct Upper {
+///     text: String,
+/// }
+///
+/// #[subscriber("lines", publish)]
+/// async fn shout(line: &Line) -> Upper {
+///     Upper { text: line.text.to_uppercase() }
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("shout", "0.1.0")).with_broker(StdioBroker::new(), |b| {
+///         b.include(shout).out_retry(Publish).to("lines.retry");
+///     })
+/// }
 /// ```
 #[derive(Debug, Clone, Default)]
 #[must_use]
@@ -667,10 +688,33 @@ impl Publisher for StdioPublisher {
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::StdioPublish;
+/// use ruststream_sea_file::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let policy = StdioPublish::default();
-/// # let _ = policy;
+/// #[derive(Debug, Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Debug, Outgoing, Serialize)]
+/// struct Receipt {
+///     order: u64,
+/// }
+///
+/// #[subscriber("orders", publish("receipts"))]
+/// async fn confirm(order: &Order) -> Receipt {
+///     Receipt { order: order.id }
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(StdioBroker::new(), |b| {
+///         b.include(confirm)
+///             .out_reply(StdioPublish)
+///             .out_retry(StdioPublish)
+///             .to("orders.retry");
+///     })
+/// }
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 #[must_use]
@@ -696,10 +740,33 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
 /// # Examples
 ///
 /// ```
-/// use ruststream_sea_file::stdio::Publish;
+/// use ruststream_sea_file::stdio::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let policy = Publish::default();
-/// # let _ = policy;
+/// #[derive(Debug, Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Debug, Outgoing, Serialize)]
+/// struct Receipt {
+///     order: u64,
+/// }
+///
+/// #[subscriber("orders", publish("receipts"))]
+/// async fn confirm(order: &Order) -> Receipt {
+///     Receipt { order: order.id }
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(StdioBroker::new(), |b| {
+///         b.include(confirm)
+///             .out_reply(Publish)
+///             .out_retry(Publish)
+///             .to("orders.retry");
+///     })
+/// }
 /// ```
 pub use StdioPublish as Publish;
 

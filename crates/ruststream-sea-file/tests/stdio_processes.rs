@@ -35,22 +35,35 @@ struct Job {
 
 /// The example binary the current build made beside this test.
 ///
-/// Examples land next to the test binaries: under their plain name when the artifact and build
-/// directories are the same, and under a content hash when they are split. Every spelling is a
-/// candidate, and the newest one is the build of this run: a build directory kept between runs
-/// (another toolchain, a cached target directory) also holds older builds of the example, which
-/// may not read what this test sends. A `cargo test --examples` run also builds each example as a
-/// test harness, which answers any argument with the test runner's report; that build is passed
-/// over.
+/// The profile's `examples` directory is an ancestor of the test binary in both the `deps` layout
+/// and the build-dir layout, where the test binary sits under `build/<package>/<hash>/out`. In it
+/// an example has its plain name when the artifact and build directories are the same, and a
+/// content hash when they are split. Each ancestor's `examples` directory is searched in turn,
+/// and in the first that holds the example every spelling is a candidate, the newest one being
+/// the build of this run: a build directory kept between runs (another toolchain, a cached
+/// target directory) also holds older builds of the example, which may not read what this test
+/// sends. A `cargo test --examples` run also builds each example as a test harness, which
+/// answers any argument with the test runner's report; that build is passed over.
 fn example_binary(name: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary has a path");
-    let dir = exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("the test binary sits inside the profile directory")
-        .join("examples");
-    std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("the examples directory {} must exist: {e}", dir.display()))
+    exe.ancestors()
+        .skip(1)
+        .map(|ancestor| ancestor.join("examples"))
+        .find_map(|dir| example_in(&dir, name))
+        .unwrap_or_else(|| {
+            panic!(
+                "the `{name}` example must be built beside the tests, in an `examples` directory \
+                 above {}",
+                exe.display(),
+            )
+        })
+}
+
+/// The newest build of the `name` example in one `examples` directory, under its plain name or a
+/// hashed one, leaving out test-harness builds.
+fn example_in(dir: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {
@@ -68,15 +81,7 @@ fn example_binary(name: &str) -> PathBuf {
             Some((built, path))
         })
         .max_by_key(|(built, _)| *built)
-        .map_or_else(
-            || {
-                panic!(
-                    "the `{name}` example must be built beside the tests, in {}",
-                    dir.display(),
-                )
-            },
-            |(_, path)| path,
-        )
+        .map(|(_, path)| path)
 }
 
 /// Whether `binary` is a test-harness build: libtest names its thread setting in every binary it
