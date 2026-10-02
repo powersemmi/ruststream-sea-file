@@ -33,22 +33,34 @@ struct Job {
 
 /// The example binary `cargo test` built beside this test.
 ///
-/// Examples land next to the test binaries: under their plain name when the artifact and build
-/// directories are the same, and under a content hash when they are split. Both spellings are
-/// searched, so the test finds the stage wherever the build put it.
+/// The profile's `examples` directory is an ancestor of the test binary in both the `deps` layout
+/// and the build-dir layout, where the test binary sits under `build/<package>/<hash>/out`. In it
+/// an example has its plain name when the artifact and build directories are the same, and a
+/// content hash when they are split. Both spellings are searched in each ancestor, so the test
+/// finds the stage wherever the build put it.
 fn example_binary(name: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary has a path");
-    let dir = exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("the test binary sits inside the profile directory")
-        .join("examples");
+    exe.ancestors()
+        .skip(1)
+        .map(|ancestor| ancestor.join("examples"))
+        .find_map(|dir| example_in(&dir, name))
+        .unwrap_or_else(|| {
+            panic!(
+                "the `{name}` example must be built beside the tests, in an `examples` directory \
+                 above {}",
+                exe.display(),
+            )
+        })
+}
+
+/// The `name` example in one `examples` directory, under its plain name or its hashed one.
+fn example_in(dir: &Path, name: &str) -> Option<PathBuf> {
     let plain = dir.join(name);
     if plain.is_file() {
-        return plain;
+        return Some(plain);
     }
-    std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("the examples directory {} must exist: {e}", dir.display()))
+    std::fs::read_dir(dir)
+        .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| {
@@ -57,12 +69,6 @@ fn example_binary(name: &str) -> PathBuf {
                     .file_name()
                     .and_then(|file| file.to_str())
                     .is_some_and(|file| file.starts_with(&format!("{name}-")))
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "the `{name}` example must be built beside the tests, in {}",
-                dir.display(),
-            )
         })
 }
 
