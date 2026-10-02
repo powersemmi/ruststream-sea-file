@@ -28,7 +28,7 @@ struct Order {
     id: u64,
 }
 
-/// The confirming handler's reply, which the declaration's `publish` clause carries to
+/// The confirming handler's reply, which the declaration's `reply` clause carries to
 /// `receipts` - how a run of that handler becomes observable to a test.
 #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
 struct Receipt {
@@ -37,7 +37,7 @@ struct Receipt {
 
 /// The file form as a service writes it: the transport's own descriptor, and a reply bound to a
 /// destination at the declaration.
-#[subscriber(FileStream::new("orders"), publish("receipts"))]
+#[subscriber(FileStream::new("orders"), reply("receipts"))]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

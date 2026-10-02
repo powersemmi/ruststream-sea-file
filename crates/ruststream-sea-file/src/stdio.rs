@@ -58,7 +58,7 @@
 //!     id: u64,
 //! }
 //!
-//! #[subscriber("jobs", publish)]
+//! #[subscriber("jobs", reply)]
 //! async fn work(job: &Job) -> Done {
 //!     Done { id: job.id }
 //! }
@@ -197,7 +197,7 @@ type StdioCell = Arc<OnceCell<Arc<StdioCore>>>;
 ///     text: String,
 /// }
 ///
-/// #[subscriber("lines", publish)]
+/// #[subscriber("lines", reply)]
 /// async fn shout(line: &Line) -> Upper {
 ///     Upper { text: line.text.to_uppercase() }
 /// }
@@ -701,7 +701,7 @@ impl Publisher for StdioPublisher {
 ///     order: u64,
 /// }
 ///
-/// #[subscriber("orders", publish("receipts"))]
+/// #[subscriber("orders", reply("receipts"))]
 /// async fn confirm(order: &Order) -> Receipt {
 ///     Receipt { order: order.id }
 /// }
@@ -753,7 +753,7 @@ impl PublishPolicy<ConnectedStdioBroker> for StdioPublish {
 ///     order: u64,
 /// }
 ///
-/// #[subscriber("orders", publish("receipts"))]
+/// #[subscriber("orders", reply("receipts"))]
 /// async fn confirm(order: &Order) -> Receipt {
 ///     Receipt { order: order.id }
 /// }
@@ -797,7 +797,7 @@ pub mod prelude {
     //!     id: u64,
     //! }
     //!
-    //! #[subscriber("jobs", publish)]
+    //! #[subscriber("jobs", reply)]
     //! async fn work(job: &Job) -> Done {
     //!     Done { id: job.id }
     //! }

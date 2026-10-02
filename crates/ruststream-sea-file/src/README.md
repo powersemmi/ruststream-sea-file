@@ -160,7 +160,7 @@ struct Receipt {
     order: u64,
 }
 
-#[subscriber(FileStream::new("orders"), publish)]
+#[subscriber(FileStream::new("orders"), reply)]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { order: order.id }
 }

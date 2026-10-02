@@ -25,7 +25,7 @@ struct Done {
     id: u64,
 }
 
-#[subscriber("jobs", publish)]
+#[subscriber("jobs", reply)]
 async fn work(job: &Job) -> Done {
     Done { id: job.id }
 }

@@ -16,7 +16,7 @@ struct Order {
     id: u64,
 }
 
-/// The reply, which the declaration's `publish` clause carries to a destination the test reads.
+/// The reply, which the declaration's `reply` clause carries to a destination the test reads.
 #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq, Eq)]
 struct Receipt {
     id: u64,
@@ -29,7 +29,7 @@ mod file_form {
 
     use super::{Order, Receipt};
 
-    #[subscriber(FileStream::new("orders"), publish("receipts"))]
+    #[subscriber(FileStream::new("orders"), reply("receipts"))]
     async fn confirm(order: &Order) -> Receipt {
         Receipt { id: order.id }
     }
@@ -68,7 +68,7 @@ mod stdio_form {
 
     use super::{Order, Receipt};
 
-    #[subscriber("jobs", publish("results"))]
+    #[subscriber("jobs", reply("results"))]
     async fn work(order: &Order) -> Receipt {
         Receipt { id: order.id }
     }

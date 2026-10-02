@@ -411,7 +411,7 @@ mod a_pipe {
     }
 
     /// Answers each job with a line on standard output.
-    #[subscriber("jobs", publish)]
+    #[subscriber("jobs", reply)]
     async fn stage(job: &Job) -> Line {
         Line { job: job.id }
     }

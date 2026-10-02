@@ -39,7 +39,7 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
 
 /// Reads a stream key on standard input, through the bare-name form, which carries no descriptor
 /// and therefore describes nothing, and answers on a second key.
-#[subscriber("lines", publish("lines.out"))]
+#[subscriber("lines", reply("lines.out"))]
 async fn tee(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

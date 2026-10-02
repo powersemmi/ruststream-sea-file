@@ -5,10 +5,9 @@ members = ["crates/ruststream-sea-file", "crates/ruststream-sea-file-bench"]
 [workspace.package]
 version = "0.7.0"
 edition = "2024"
-# 1.88 holds here independently of the core's own floor: the RustSec fix for the time
-# crate (a sea-streamer dependency) resolves only from 1.88, and a dependent may exceed
-# its dependency's floor.
-rust-version = "1.88"
+# The core's floor, which also covers the RustSec fix for the time crate (a sea-streamer
+# dependency) that resolves only from 1.88.
+rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream-sea-file"
 authors = ["RustStream contributors"]
@@ -19,7 +18,7 @@ ruststream-sea-file = { path = "crates/ruststream-sea-file" }
 # The lower bound names the release candidate: cargo excludes pre-releases from a range whose
 # bounds are all final, so `>=0.7.0` would refuse `0.7.0-rc.10`. Naming it admits the candidate
 # now and the final 0.7.0 later, without a second edit here.
-ruststream = { version = ">=0.7.0-rc.11, <0.8.0", default-features = false }
+ruststream = { version = ">=0.7.0-rc.12, <0.8.0", default-features = false }
 
 # The 1.0 release-candidate line: edition 2024 and a 1.85 floor, comfortably under this
 # workspace's own (the 0.5 stable line is over a year older). Pre-releases must be pinned
