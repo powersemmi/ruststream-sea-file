@@ -660,7 +660,7 @@ mod tests {
 
     /// Longer than anything the driver waits for on its own: on the paused clock it elapses only
     /// once the runtime has nothing left to run, so reaching it means the seek can never finish.
-    const STUCK: Duration = Duration::from_secs(60);
+    const STUCK: Duration = Duration::from_mins(1);
 
     /// A stream key's log held in memory, read the way a replay reads a file: every message in
     /// order, then the end of the file. A read is always ready, so the driver fills the delivery

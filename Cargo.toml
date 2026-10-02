@@ -5,10 +5,9 @@ members = ["crates/ruststream-sea-file", "crates/ruststream-sea-file-bench"]
 [workspace.package]
 version = "0.7.0"
 edition = "2024"
-# 1.88 holds here independently of the core's own floor: the RustSec fix for the time
-# crate (a sea-streamer dependency) resolves only from 1.88, and a dependent may exceed
-# its dependency's floor.
-rust-version = "1.88"
+# The core's floor, which also covers the RustSec fix for the time crate (a sea-streamer
+# dependency) that resolves only from 1.88.
+rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream-sea-file"
 authors = ["RustStream contributors"]

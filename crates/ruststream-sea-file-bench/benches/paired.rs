@@ -144,7 +144,7 @@ const ROUNDS: usize = 3;
 /// Worker threads every loop is driven on.
 const WORKERS: usize = 4;
 /// How long a run may go without a delivery before it is called stuck.
-const STALL: Duration = Duration::from_secs(60);
+const STALL: Duration = Duration::from_mins(1);
 
 /// How far the writer may run ahead of a tailing subscription, in messages.
 ///
