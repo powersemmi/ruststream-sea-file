@@ -64,7 +64,7 @@ use std::sync::{Arc, mpsc as std_mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, EventKind, LibraryBenchmarkConfig};
+use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
 use ruststream::runtime::{AppInfo, BrokerScope, Identity, RunningApp, RustStream};
 use ruststream_sea_file::FileBroker;
 use sea_streamer_file::{FileConnectOptions, FileId, FileProducerOptions, FileStreamer};
@@ -96,10 +96,43 @@ pub struct Order {
     pub quantity: u32,
 }
 
-/// Deliveries per measured run: large enough that entering and leaving the region is lost in the
-/// per-message number, small enough that a scenario stays within seconds of valgrind time.
-/// `scripts/bench_results.py` divides by the same count.
-pub const MESSAGES: usize = 1_000;
+/// Deliveries per measured run.
+///
+/// The default is large enough that entering and leaving the region is lost in the per-message
+/// number, and small enough that a scenario stays within seconds of valgrind time.
+/// `RUSTSTREAM_BENCH_MESSAGES` at build time overrides it (`just bench-code 5000`) for a steadier
+/// number at the price of a longer run. The published document is measured at the default, the
+/// allocation limits scale with the count through [`config_every`], and the recipe hands the same
+/// count to `scripts/bench_results.py`, which divides by it.
+pub const MESSAGES: usize = messages(option_env!("RUSTSTREAM_BENCH_MESSAGES"));
+
+/// The count a run measures when nothing names one.
+const DEFAULT_MESSAGES: usize = 1_000;
+
+/// The configured count, or the default; a value that is not a positive number is a build error
+/// naming the variable, so a typo cannot silently measure the default.
+const fn messages(configured: Option<&str>) -> usize {
+    let Some(text) = configured else {
+        return DEFAULT_MESSAGES;
+    };
+    let bytes = text.as_bytes();
+    let mut count = 0usize;
+    let mut index = 0;
+    while index < bytes.len() {
+        let digit = bytes[index];
+        assert!(
+            digit.is_ascii_digit(),
+            "RUSTSTREAM_BENCH_MESSAGES must be a positive number of deliveries"
+        );
+        count = count * 10 + (digit - b'0') as usize;
+        index += 1;
+    }
+    assert!(
+        count > 0,
+        "RUSTSTREAM_BENCH_MESSAGES must be a positive number of deliveries"
+    );
+    count
+}
 
 /// The measurement configuration every gated scenario shares.
 ///
@@ -107,9 +140,10 @@ pub const MESSAGES: usize = 1_000;
 /// service and taking the first delivery allocate once; together they are the hard limit the
 /// longest run of the scenario (twice [`MESSAGES`] deliveries) is held to, so the run fails when
 /// the path allocates more than it does today. Both are floors the code is held to, so a number
-/// that goes down is lowered here in the same change. The instruction limit is relative, at
-/// [`INSTRUCTION_LIMIT`] percent: `just bench-code --save-baseline=main` records a baseline and
-/// `just bench-code --baseline=main` compares against it.
+/// that goes down is lowered here in the same change. The instruction limit is relative, and
+/// `just bench-code` sets it only for a run against a named baseline:
+/// `just bench-code --save-baseline=main` records one, and `just bench-code --baseline=main` fails
+/// on six percent more instructions than it.
 pub fn config(steady: u64, cold: u64) -> LibraryBenchmarkConfig {
     config_every(steady, 1, cold)
 }
@@ -119,19 +153,10 @@ pub fn config(steady: u64, cold: u64) -> LibraryBenchmarkConfig {
 pub fn config_every(steady: u64, per: u64, cold: u64) -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config
-        .tool(callgrind().soft_limits([(EventKind::Ir, INSTRUCTION_LIMIT)]))
+        .tool(callgrind())
         .tool(dhat().hard_limits([(DhatMetric::TotalBlocks, blocks(steady, per, cold))]));
     config
 }
-
-/// How far a run's instruction total may rise over the run it is compared with, in percent.
-///
-/// Five runs of one unchanged binary moved a run's total by up to 2.7 percent while the
-/// per-message slope repeated within half a percent: what moved was the C library's allocator,
-/// whose work depends on how the other threads left the heap, and the deadline that closes a
-/// partial batch. The limit is twice that movement, rounded up,
-/// so an unchanged tree passes; the core's two percent would fail it.
-pub const INSTRUCTION_LIMIT: f64 = 6.0;
 
 /// The limit for the configured count: the cold part once, plus the steady rate over the longest
 /// run of the scenario, which is twice [`MESSAGES`]. The division rounds up.

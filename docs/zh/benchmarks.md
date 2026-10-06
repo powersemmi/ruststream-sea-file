@@ -117,5 +117,8 @@ just bench-code
 ```
 
 这条 recipe 在 valgrind 下、用目标目录里的流文件统计代码表，并重写同一份文档里的 `code` 部分。它不到
-一分钟就能跑完，也不需要启动环境，只要有 valgrind 和基准测试运行器：
-`cargo install --locked gungraun-runner --version =0.19.4`。
+一分钟就能跑完，也不需要启动环境，只要有 valgrind：基准测试运行器由 recipe 自己安装，版本就是
+`Cargo.lock` 锁定的那个。
+
+`just bench-code 5000` 让每个场景在五千次投递上测量，而不是一千次：数字更稳，运行更久；发布的数字
+仍按默认值测量。

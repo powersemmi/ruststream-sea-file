@@ -141,4 +141,7 @@ just bench-code
 
 The recipe counts the code table under valgrind, on stream files in the target directory, and
 rewrites the `code` section of the same document. It takes under a minute and needs no stand, only
-valgrind and the benchmark runner: `cargo install --locked gungraun-runner --version =0.19.4`.
+valgrind: the recipe installs the benchmark runner itself, at the release `Cargo.lock` pins.
+
+`just bench-code 5000` measures every scenario over five thousand deliveries instead of a thousand:
+a steadier number for a longer run. The published numbers are measured at the default.
