@@ -38,7 +38,7 @@ git clone https://github.com/powersemmi/ruststream-sea-file.git
 | `just deny` | cargo-deny | `cargo install cargo-deny --locked` |
 | `just typo`, `just zizmor` | uv | the uv documentation |
 | `just bench` | Python 3 | the system package manager |
-| `just bench-code` | valgrind and the benchmark runner | the system package manager, then `cargo install --locked gungraun-runner --version =0.19.4` |
+| `just bench-code` | valgrind and Python 3 | the system package manager; the recipe installs the benchmark runner itself, at the release `Cargo.lock` pins |
 | the documentation site | Python 3.12 | `pip install -r docs/requirements.txt`, then `properdocs serve` |
 
 ## Checking a change
@@ -58,7 +58,9 @@ process. The local machine is the transport, and `just test` runs these suites t
 and rewrites `docs/benchmarks/results.json`. It takes minutes, writes tens of gigabytes through
 `target/bench-streams`, and wants the machine to itself. `just bench-code` counts what a message
 costs in instructions and allocations, on the service's thread over a stream file in the target
-directory, and rewrites the code table of the same document.
+directory, and rewrites the code table of the same document. `just bench-code --save-baseline=main`
+on `main` records a baseline, and `just bench-code --baseline=main` on a branch measures against
+it. A run that breaches a limit prints every breach under the table and fails.
 
 ## Testing against a local core
 
