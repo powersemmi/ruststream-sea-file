@@ -2,8 +2,8 @@
   "schema": 3,
   "crate": "ruststream-sea-file",
   "crate_version": "0.7.0",
-  "core_version": "0.7.0-rc.9",
-  "measured_at": "2026-09-23",
+  "core_version": "0.7.0",
+  "measured_at": "2026-10-18",
   "environment": {
     "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
     "architecture": "x86_64",
@@ -11,14 +11,14 @@
     "cores": "12 physical, 24 logical",
     "memory": "62.4 GiB",
     "memory_speed": "unknown",
-    "os": "Linux 7.2.6-x64v3-xanmod1-1",
+    "os": "Linux 7.2.10-x64v3-xanmod1-1",
     "broker": "none: the transport is a stream file on this machine's filesystem",
     "filesystem": "btrfs on /dev/nvme1n1p1",
-    "file_size": "0.72 GiB per run at its largest",
+    "file_size": "0.70 GiB per run at its largest",
     "page_cache": "warm: every run writes its stream file immediately before reading it back, so the figures are the filesystem's rather than the device's",
-    "round_trip": "19.8 us per durable append",
-    "rustc": "1.98.1",
-    "profile": "bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)",
+    "round_trip": "21.0 us per flushed append",
+    "rustc": "1.99.0",
+    "profile": "bench, inheriting release (opt-level = 3, lto = fat, codegen-units = 16, debug = line-tables-only)",
     "features": "ruststream-sea-file default (none), ruststream macros,json",
     "rustflags": "none (the recipe clears RUSTFLAGS, so the numbers are not tied to this CPU)",
     "valgrind": "3.25.1"
@@ -27,52 +27,52 @@
     {
       "name": "replay of a recorded stream file, 512 B JSON",
       "unit": "msg/s",
-      "messages": 1350224,
+      "messages": 1315627,
       "pairs": 3,
       "raw": {
-        "best": 191899,
-        "median": 190249,
-        "worst": 190184
+        "best": 144130,
+        "median": 144062,
+        "worst": 90529
       },
       "adapter": {
-        "best": 255830,
-        "median": 249370,
-        "worst": 246703
+        "best": 218862,
+        "median": 192825,
+        "worst": 186627
       },
       "framework": {
-        "best": 301434,
-        "median": 280841,
-        "worst": 275638
+        "best": 307505,
+        "median": 304194,
+        "worst": 241033
       },
-      "adapter_overhead_percent": -33.3,
+      "adapter_overhead_percent": -51.9,
       "adapter_verdict": "measured",
-      "overhead_percent": -57.1,
+      "overhead_percent": -113.4,
       "verdict": "measured",
       "broker_bound": false
     },
     {
       "name": "live tail of a file being appended to, 512 B JSON",
       "unit": "msg/s",
-      "messages": 386877,
+      "messages": 394520,
       "pairs": 3,
       "raw": {
-        "best": 62128,
-        "median": 61968,
-        "worst": 61830
+        "best": 61726,
+        "median": 49807,
+        "worst": 37733
       },
       "adapter": {
-        "best": 62050,
-        "median": 61532,
-        "worst": 60636
+        "best": 61652,
+        "median": 60647,
+        "worst": 46507
       },
       "framework": {
-        "best": 61087,
-        "median": 59252,
-        "worst": 58833
+        "best": 60451,
+        "median": 58491,
+        "worst": 38181
       },
       "adapter_overhead_percent": 0.1,
       "adapter_verdict": "indistinguishable",
-      "overhead_percent": 1.7,
+      "overhead_percent": 2.1,
       "verdict": "indistinguishable",
       "broker_bound": true
     }
@@ -82,12 +82,12 @@
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
       "framework": {
-        "instructions": 54988.8,
+        "instructions": 52957.0,
         "allocations": 32.5
       },
       "cold": {
-        "instructions": 216069,
-        "allocations": 235
+        "instructions": 194100,
+        "allocations": 236
       },
       "gated": true
     },
@@ -95,12 +95,12 @@
       "name": "reply, appended to the same file by this crate's publisher",
       "messages": 1000,
       "framework": {
-        "instructions": 85411.3,
-        "allocations": 70.2
+        "instructions": 81033.3,
+        "allocations": 73.3
       },
       "cold": {
-        "instructions": 220086,
-        "allocations": 246
+        "instructions": 196968,
+        "allocations": 245
       },
       "gated": true
     },
@@ -108,14 +108,19 @@
       "name": "consume in batches of 64, assembled on the client",
       "messages": 1000,
       "framework": {
-        "instructions": 54919.3,
+        "instructions": 52971.1,
         "allocations": 32.5
       },
       "cold": {
-        "instructions": 240361,
-        "allocations": 246
+        "instructions": 221502,
+        "allocations": 247
       },
       "gated": true
     }
-  ]
+  ],
+  "code_measured": {
+    "crate_version": "0.7.0",
+    "core_version": "0.7.0",
+    "measured_at": "2026-10-18"
+  }
 }
