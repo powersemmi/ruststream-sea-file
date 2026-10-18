@@ -1,5 +1,6 @@
 //! A stdio subscription opened from another runtime keeps delivering once that runtime has
-//! stopped: the task that reads the client's consumer runs on the runtime the broker connected on.
+//! stopped: standard input is read on a thread of its own, not on a task of the runtime that
+//! opened the subscription.
 //!
 //! One test in this binary, and it owns the process's pipes: shutting this transport down ends
 //! every stdio consumer and producer in the process, so a second test beside it would be torn down

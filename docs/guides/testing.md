@@ -104,7 +104,7 @@ The in-process pipe is standard input the test feeds and standard output the ser
 A stage reads its own output only under [`loopback`](../components/broker/loopback.md), as on a real pipe.
 Both transports refuse what the real ones refuse: a stream key the client does not take, an empty line on a pipe, a beacon interval that is not a multiple of 1024.
 
-The bytes of a `.ss` file, what a file keeps across runs, and the line format on a real pipe show only on the real transport.
+The bytes of a `.ss` file, what a file keeps across runs, and the line format and the end of input on a real pipe show only on the real transport.
 
 ## The same test on a stream file
 

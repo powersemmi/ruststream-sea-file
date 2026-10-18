@@ -1,6 +1,6 @@
 ---
 sidebar_position: 4
-description: "Run a RustStream service as one stage of a shell pipeline: the line format, feeding a stage, reading its output and chaining stages."
+description: "A RustStream service as one stage of a shell pipeline: the line format, feeding a stage, reading its output, exiting when the input ends and chaining stages."
 ---
 
 import Tabs from '@theme/Tabs';
@@ -46,7 +46,7 @@ A line is a header in square brackets, then the payload ([Lines](../components/s
 Every field of the header is optional, so a producer usually writes the key alone:
 
 ```bash
-echo '[orders] {"id":7,"quantity":3,"unit_cents":250}' | ./pricing run
+echo '[orders] {"id":7,"quantity":3,"unit_cents":250}' | ./pricing
 ```
 
 A line under another key is passed over, so several stages can take their own keys out of one stream.
@@ -54,11 +54,12 @@ A line with no header names no key, and the client hands it to every subscriptio
 So a tool that writes plain JSON lines feeds every handler at once:
 
 ```bash
-jq -c '.[]' orders.json | ./pricing run
+jq -c '.[]' orders.json | ./pricing
 ```
 
-The client parses each header before the service sees the line, and a line it cannot parse stops the whole process.
-Two kinds of line do this: input that is not UTF-8, and a leading `[...]` that is not a header, such as a JSON array.
+The stage parses the header of each line before the service sees it.
+A line it cannot read is passed over with a warning in the log, and the stage reads on.
+Two kinds of line are passed over: input that is not UTF-8, and a leading `[...]` that is not a header, such as a JSON array.
 A producer of such payloads writes a header in front of each one.
 
 ## The output
@@ -73,7 +74,7 @@ The timestamp is the time of writing, to the second, and the sequence counts eac
 A tool that reads plain JSON takes the payload after the header:
 
 ```bash
-./pricing run < orders.txt | sed 's/^\[[^]]*\] //' | jq .total_cents
+./pricing < orders.txt | sed 's/^\[[^]]*\] //' | jq .total_cents
 ```
 
 A payload that a text line would change leaves in an [envelope](../components/headers/payloads.md): a binary payload, one with a newline or padding, and every message with headers.
@@ -82,10 +83,25 @@ An envelope is a line starting with `rs1:` or `rs2:`, meant for the next RustStr
 The log goes to standard error through `tracing`, so it never mixes with the messages.
 A line printed to standard output with `println!` reaches the next stage as a line with no key, and every subscription there reads it.
 
+## When the input ends
+
+{/* single-form: `main` is the same with and without the macros */}
+```rust title="src/main.rs" reference="examples/guide/pipelines.rs#exit"
+```
+
+When standard input ends, every subscription of the stage ends after the lines it has already read.
+`main` [starts](api:ruststream::runtime::RustStream::start) the service and watches the [`HealthProbe`](api:ruststream::runtime::HealthProbe), which counts the subscriptions that still read.
+When none is left, [`shutdown`](api:ruststream::runtime::RunningApp::shutdown) stops the service, and the stage exits with status 0.
+A fail-fast failure ends the wait too, and `shutdown` returns it as the error, so the stage exits with a failure status.
+So `./pricing < orders.txt` prices every order in the file and exits.
+
+`#[ruststream::app]` runs the service until `SIGINT` or `SIGTERM` instead.
+That fits a stage that waits for input as long as it runs, such as one behind `tail -f`.
+
 ## Chaining stages
 
 ```bash
-./intake run < orders.txt | ./pricing run | ./billing run
+./intake < orders.txt | ./pricing | ./billing
 ```
 
 Each stage reads the keys it subscribes to and writes its replies for the next one.
@@ -97,5 +113,5 @@ A stage that retries later sends its copies down the pipe under the key its moun
 The example file tests the stage in process: [`TestApp::start`](../components/testing/index.md) runs it, `tb.broker::<StdioBroker>().message(..)` injects an order line, and `published::<Receipt>("receipts")` reads the line it wrote.
 
 The live tests spawn the built stage with piped standard input and output.
-They check that it answers `orders` lines and lines with no key, passes over another key, and stops on a JSON array line and on input that is not UTF-8.
+They check that it answers `orders` lines and lines with no key, passes over another key, a JSON array line and input that is not UTF-8, and exits when its input ends.
 [`loopback`](../components/broker/loopback.md) feeds a stage its own output, so two stages run in one process and one test drives both.

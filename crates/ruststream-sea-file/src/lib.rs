@@ -9,6 +9,7 @@ pub mod file;
 mod in_process;
 mod message;
 pub mod prelude;
+mod stdin;
 pub mod stdio;
 mod stream;
 mod subscriber;

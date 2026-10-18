@@ -20,10 +20,10 @@ export const words = {
   "fHandler": ["Handler", "#[subscriber] fn"],
   "fPublish": ["FilePublisher", "envelope if headers"],
   "fAppend": ["Append, flush", "into the file"],
-  "pRead": ["stdin thread", "parses the line"],
-  "pTask": ["Reader task", "of the subscription"],
-  "pChannel": "Channel of 64",
-  "pStream": ["StdioSubscriber", "one message per poll"],
+  "pRead": ["Reader thread", "parses the line"],
+  "pTask": ["Dispatch", "by stream key"],
+  "pChannel": "Queue per subscription",
+  "pStream": ["StdioSubscriber", "opens a line per poll"],
   "pBatch": ["Batching", "under batch(n)"],
   "pDecode": ["Decode"],
   "pHandler": ["Handler", "#[subscriber] fn"],
@@ -38,11 +38,15 @@ the channel, the handler, the reply and the write.
 
 <Diagram name="path" words={words} />
 
-The subscription's task reads ahead of the handler. It takes each message off the client, opens
+On a file, the subscription's task reads ahead of the handler. It takes each message off the client, opens
 the [envelope](envelope.md) and copies the payload into a buffer of its own. It adds the message's
 number in the [`stream-sequence`](../components/headers/sequence-header.md) header, then queues the delivery on a channel of up to 64. The
 handler reads from that channel, so the next message is out of the file while the current one is
 handled.
+
+On a pipe, the process's reader thread reads ahead instead. It queues each line for the
+subscriptions of its key, with no bound, and the subscription opens the envelope and adds the
+header when the handler asks for the next message.
 
 On a file, every delivery carries the generation the reader was in when it read it. A
 [seek](seeking.md) opens a new generation, and the subscription drops what was queued under the old

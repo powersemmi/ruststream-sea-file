@@ -79,7 +79,9 @@ export function design(words: Words): {boxes: Box[]; links: Link[]} {
     {from: 'runtime', to: 'fileSubscriber', exitAt: centre(left), label: word(words, 'polls')},
     {from: 'runtime', to: 'stdioSubscriber', exitAt: centre(right)},
     {from: 'fileSubscriber', to: 'fileClient', exit: 'left', enter: 'left'},
-    {from: 'stdioSubscriber', to: 'stdioClient', exit: 'right', enter: 'right'},
+    // Standard input is read by the crate itself, so the stdio subscriber's link passes the
+    // client by and reaches the pipes.
+    {from: 'stdioSubscriber', to: 'pipes', exit: 'right', enter: 'right'},
     {from: 'fileClient', to: 'disk'},
     {from: 'stdioClient', to: 'pipes'},
   ];

@@ -25,6 +25,9 @@ So a delayed retry has no address on this transport, and every registration name
 A registration that names none fails startup, and the error names the subscription.
 [`loopback`](./loopback.md) sends the output back to the input, for tests that run several stages in one process.
 
+When standard input ends, every subscription ends after the lines it has already read.
+The guide [Shell pipelines](../../guides/pipelines.md#when-the-input-ends) shows a stage that then shuts down and exits.
+
 The transport belongs to the whole process.
 Shutting the broker down ends every stdio subscription and publisher in the process.
 The guide [Shell pipelines](../../guides/pipelines.md) feeds a stage, reads its output and chains stages.

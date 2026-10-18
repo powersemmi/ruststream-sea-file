@@ -16,10 +16,10 @@ A line is a header in square brackets, then the payload: `[timestamp | stream_ke
 Every field of the header is optional, so `[jobs] {"id":7}` names the key alone.
 A line under another key is passed over, so a stage takes the keys it subscribed to out of a shared stream.
 A line with no header names no key, and the client hands it to every subscription of the stage, whatever key the subscription reads.
-The client parses each header before the service sees the line.
-A stage stops on a line it cannot read: input that is not UTF-8, or a leading `[...]` that is not a header, a JSON array among them.
+The stage parses each header before the service sees the line.
+A line it cannot read is passed over with a warning in the log: input that is not UTF-8, or a leading `[...]` that is not a header, a JSON array among them.
 So a producer writes a header in front of a payload that opens with `[`.
-A stdio subscription reads lines as they arrive.
+A stdio subscription reads lines as they arrive, and ends when standard input ends, after the lines it has already read.
 A delivery reports the sequence its header names, or the count of its key's lines from zero when the header names none.
 A reply is a line on standard output under the key its type declares, and the next stage reads it.
 Every registration on a pipe names where a deferred copy goes, with [`out_retry(Publish).to(key)`](../settlement/out-retry.md).

@@ -8,7 +8,8 @@
 //! - [StdioBroker][stdio-broker]: [`StdioBroker`], and [`loopback`](StdioBroker::loopback) for a
 //!   stage that reads its own output ([loopback][loopback]).
 //! - [Lines][lines]: the client's `[timestamp | stream_key | sequence | shard_id] payload` line
-//!   format, read by a subscription on its stream key through [`StdioSubscriber`].
+//!   format, read by a subscription on its stream key through [`StdioSubscriber`]; the end of
+//!   standard input ends the subscription.
 //! - [StdioPublish][stdio-publish]: [`Publish`] and its live [`StdioPublisher`], one line per
 //!   message on standard output.
 //! - [Payloads][payloads]: binary, multi-line and padded payloads through the envelope.
@@ -31,13 +32,11 @@
 )]
 
 use std::future::{Future, ready};
-use std::io;
 use std::num::NonZeroUsize;
-use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::{FutureExt as _, Stream};
+use futures::Stream;
 #[cfg(feature = "testing")]
 use ruststream::RawMessage;
 #[cfg(feature = "testing")]
@@ -47,31 +46,17 @@ use ruststream::{
     Lend, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
     Subscriber,
 };
-use sea_streamer_stdio::{
-    StdioConnectOptions, StdioConsumer, StdioConsumerOptions, StdioProducer, StdioProducerOptions,
-    StdioResult, StdioStreamer,
-};
-use sea_streamer_types::{
-    Consumer as _, ConsumerMode, ConsumerOptions as _, Producer as _, StreamKey, Streamer as _,
-    StreamerUri,
-};
-use tokio::runtime::Handle;
-use tokio::sync::{OnceCell, mpsc};
+use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
+use sea_streamer_types::{Producer as _, StreamKey, Streamer as _, StreamerUri};
+use tokio::sync::OnceCell;
 
 use crate::batching::BATCH_MAX_WAIT;
 use crate::error::{SeaFileError, box_err};
 #[cfg(feature = "testing")]
 use crate::in_process::{MemoryPipe, PipeQueue};
 use crate::message::SeaMessage;
+use crate::stdin::{self, InputQueue};
 use crate::wire;
-
-/// Whether a subscription in this process has started the client's standard-input reader.
-///
-/// Why a static: the reader is the client's, and it is process-wide. The first consumer starts
-/// it, and it then holds standard input while it waits for a line, so only the subscription that
-/// starts it can hold standard input itself (see `open_consumer`); a later one would wait for
-/// the next line.
-static READER_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct StdioCore {
     pub(crate) link: StdioLink,
@@ -94,11 +79,11 @@ pub(crate) enum StdioLink {
     InProcess(Arc<MemoryPipe>),
 }
 
-/// The process's own pipes as the client opened them, and the runtime `connect` ran on: the
-/// reader task of every subscription runs there, whichever runtime opens it.
+/// The process's own pipes: standard output as the client opened it, and whether what this
+/// broker writes comes back to the subscriptions of the process.
 pub(crate) struct Pipes {
     streamer: StdioStreamer,
-    runtime: Handle,
+    loopback: bool,
 }
 
 // The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
@@ -128,8 +113,11 @@ type StdioCell = Arc<OnceCell<Arc<StdioCore>>>;
 /// Standard input and output as one stream: consume lines from stdin, publish lines to
 /// stdout, in the client's `[timestamp | stream_key | seq] payload` line format.
 ///
-/// Shutting this broker down ends every stdio subscription and publisher in the process, after
-/// the lines each subscription has already read: the client's transport is process-wide. The
+/// When standard input ends, every subscription ends after the lines it has read, so a pipeline
+/// stage stops when the stage before it does; a [`loopback`](Self::loopback) subscription also
+/// reads what the process writes and stays open. Shutting this broker down ends every stdio
+/// subscription and publisher in the process, after the lines each subscription has already
+/// read: standard input and output are process-wide. The
 /// [StdioBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/stdio-broker/)
 /// page shows it in a service.
 ///
@@ -176,6 +164,9 @@ impl StdioBroker {
     }
 
     /// Loops published messages back to this process's own subscribers (for tests).
+    ///
+    /// Its subscriptions read what the process writes as well as standard input, so the end of
+    /// standard input leaves them open until the shutdown.
     pub fn loopback(mut self) -> Self {
         self.loopback = true;
         self
@@ -199,18 +190,19 @@ impl Broker for StdioBroker {
         let core = self
             .cell
             .get_or_try_init(async || {
-                let mut options = StdioConnectOptions::default();
-                options.set_loopback(self.loopback);
-                let streamer = StdioStreamer::connect(StreamerUri::zero(), options)
-                    .await
-                    .map_err(|e| SeaFileError::Connect {
-                        target: "stdio".to_owned(),
-                        source: box_err(e),
-                    })?;
+                // The client's loopback feeds the client's own reader, which this crate does not
+                // use: a written line comes back through `stdin::loop_back` instead.
+                let streamer =
+                    StdioStreamer::connect(StreamerUri::zero(), StdioConnectOptions::default())
+                        .await
+                        .map_err(|e| SeaFileError::Connect {
+                            target: "stdio".to_owned(),
+                            source: box_err(e),
+                        })?;
                 Ok::<_, SeaFileError>(Arc::new(StdioCore {
                     link: StdioLink::Stdio(Pipes {
                         streamer,
-                        runtime: Handle::current(),
+                        loopback: self.loopback,
                     }),
                     closed: AtomicBool::new(false),
                     #[cfg(feature = "testing")]
@@ -256,31 +248,6 @@ impl InProcess for StdioBroker {
 #[cfg(feature = "testing")]
 ruststream::register_testable_broker!(StdioBroker);
 
-/// Opens a consumer of `key` on standard input.
-///
-/// The client starts its reader inside the first consumer and only then registers that consumer,
-/// so a line already waiting on the pipe could be read in between and handed to no one: a stage
-/// started with its input ready lost its first line. The first subscription therefore holds
-/// standard input while the consumer is created, and the reader takes its first line only once
-/// the consumer is there. Creating a consumer completes without waiting, so standard input is
-/// held for that one poll and never across an await.
-async fn open_consumer(streamer: &StdioStreamer, key: StreamKey) -> StdioResult<StdioConsumer> {
-    let keys = [key];
-    let mut created =
-        pin!(streamer.create_consumer(&keys, StdioConsumerOptions::new(ConsumerMode::RealTime)));
-    if READER_STARTED.swap(true, Ordering::AcqRel) {
-        return created.await;
-    }
-    let first = {
-        let _input = io::stdin().lock();
-        created.as_mut().now_or_never()
-    };
-    match first {
-        Some(consumer) => consumer,
-        None => created.await,
-    }
-}
-
 impl DescribeServer for StdioBroker {
     fn describe_server(&self) -> ServerSpec {
         ServerSpec::in_process("stdio")
@@ -322,9 +289,10 @@ impl ConnectedBroker for ConnectedStdioBroker {
                 return Ok(());
             }
         };
-        // Globally destructive by the client's design: every stdio consumer and producer in
-        // the process ends. That is the honest meaning of shutting down a process-wide
-        // transport.
+        // Globally destructive by design: standard input and output are the process's, so every
+        // stdio subscription and producer in the process ends. That is the honest meaning of
+        // shutting down a process-wide transport.
+        stdin::end_all();
         streamer
             .clone()
             .disconnect()
@@ -351,7 +319,15 @@ impl Subscribe for ConnectedStdioBroker {
     /// under it would break in the shape a service ships.)
     type Copies = NamedCopies;
 
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
+    fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
+        ready(self.open(name))
+    }
+}
+
+impl ConnectedStdioBroker {
+    /// Opens the subscription of `name`: standard input is read on a thread of its own, so
+    /// nothing here waits.
+    fn open(&self, name: &str) -> Result<StdioSubscriber, SeaFileError> {
         self.core.ensure_open()?;
         let key =
             StreamKey::new(name).map_err(|e| SeaFileError::Invalid(format!("'{name}': {e}")))?;
@@ -368,35 +344,13 @@ impl Subscribe for ConnectedStdioBroker {
                 });
             }
         };
-        let consumer =
-            open_consumer(&pipes.streamer, key)
-                .await
-                .map_err(|e| SeaFileError::Subscribe {
-                    stream: name.to_owned(),
-                    source: box_err(e),
-                })?;
-
-        let (tx, rx) = mpsc::channel(64);
-        pipes.runtime.spawn(async move {
-            loop {
-                tokio::select! {
-                    () = tx.closed() => break,
-                    next = consumer.next() => match next {
-                        Ok(message) => {
-                            if tx.send(Ok(SeaMessage::new(&message))).await.is_err() {
-                                break;
-                            }
-                        }
-                        // The client fails a read only once its consumers are disconnected,
-                        // which is what the shutdown does: the subscription ends there.
-                        Err(_) => break,
-                    },
-                }
-            }
-        });
+        let input = stdin::subscribe(key, pipes.loopback).map_err(|e| SeaFileError::Subscribe {
+            stream: name.to_owned(),
+            source: box_err(e),
+        })?;
         Ok(StdioSubscriber {
             stream: name.to_owned(),
-            inner: BufferedSubscriber::new(StdioDeliveries::Reader(rx)).max_wait(BATCH_MAX_WAIT),
+            inner: BufferedSubscriber::new(StdioDeliveries::Reader(input)).max_wait(BATCH_MAX_WAIT),
         })
     }
 }
@@ -480,9 +434,10 @@ impl ConnectedStdioBroker {
 /// A subscription to one stream key on standard input; yields [`SeaMessage`]s.
 ///
 /// Standard input has no retained log: there is no acknowledgement and no repositioning, and
-/// both are reported as unsupported rather than pretended. Batches it does serve: the client
-/// reads one line at a time, so they are assembled here, capped at the size the mount site
-/// named.
+/// both are reported as unsupported rather than pretended. Batches it does serve: standard input
+/// is read one line at a time, so they are assembled here, capped at the size the mount site
+/// named. The stream ends when standard input ends, after the lines it has read, unless the
+/// broker loops back.
 pub struct StdioSubscriber {
     stream: String,
     inner: BufferedSubscriber<StdioDeliveries>,
@@ -518,11 +473,11 @@ impl BatchSubscriber for StdioSubscriber {
 
 /// A subscription's lines, before batching: one line per poll, in arrival order.
 ///
-/// Without the `testing` feature there is one variant, so the type is the reader task's channel
-/// itself and every `match` on it is irrefutable.
+/// Without the `testing` feature there is one variant, so the type is the queue standard input
+/// fills itself and every `match` on it is irrefutable.
 enum StdioDeliveries {
-    /// The reader task's channel, fed from standard input.
-    Reader(mpsc::Receiver<Result<SeaMessage, SeaFileError>>),
+    /// The queue standard input fills.
+    Reader(InputQueue),
     /// The in-process pipe's queue.
     #[cfg(feature = "testing")]
     InProcess(PipeQueue),
@@ -530,9 +485,7 @@ enum StdioDeliveries {
 
 // The zero-cost promise of the in-process mode, held by the compiler.
 #[cfg(not(feature = "testing"))]
-const _: () = assert!(
-    size_of::<StdioDeliveries>() == size_of::<mpsc::Receiver<Result<SeaMessage, SeaFileError>>>()
-);
+const _: () = assert!(size_of::<StdioDeliveries>() == size_of::<InputQueue>());
 
 impl Subscriber for StdioDeliveries {
     type Message = SeaMessage;
@@ -543,7 +496,7 @@ impl Subscriber for StdioDeliveries {
         // can be called again after the returned stream is dropped (the runtime and the
         // conformance helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| match self {
-            Self::Reader(rx) => rx.poll_recv(cx),
+            Self::Reader(queue) => queue.poll_next(cx).map(|next| next.map(Ok)),
             #[cfg(feature = "testing")]
             Self::InProcess(queue) => queue.poll_next(cx).map(|next| next.map(Ok)),
         })
@@ -630,8 +583,8 @@ impl Publisher for StdioPublisher {
                 "stdio drops empty lines; an empty message cannot be transmitted".into(),
             ));
         }
-        let streamer = match &core.link {
-            StdioLink::Stdio(pipes) => &pipes.streamer,
+        let pipes = match &core.link {
+            StdioLink::Stdio(pipes) => pipes,
             #[cfg(feature = "testing")]
             StdioLink::InProcess(pipe) => {
                 let key = StreamKey::new(msg.name())
@@ -643,7 +596,8 @@ impl Publisher for StdioPublisher {
         let producer = self
             .producer
             .get_or_try_init(async || {
-                streamer
+                pipes
+                    .streamer
                     .create_generic_producer(StdioProducerOptions::default())
                     .await
                     .map_err(|e| SeaFileError::Publish {
@@ -656,18 +610,21 @@ impl Publisher for StdioPublisher {
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", msg.name())))?;
         // force_text: the stdio line format rejects non-UTF-8 payloads.
         let payload = wire::encode(msg.headers(), msg.payload(), true);
-        producer
+        let written = producer
             .send_to(&key, payload.as_slice())
             .map_err(|e| SeaFileError::Publish {
                 stream: msg.name().to_owned(),
                 source: box_err(e),
             })?
             .await
-            .map(|_| ())
             .map_err(|e| SeaFileError::Publish {
                 stream: msg.name().to_owned(),
                 source: box_err(e),
-            })
+            })?;
+        if pipes.loopback {
+            stdin::loop_back(&written, payload);
+        }
+        Ok(())
     }
 }
 
