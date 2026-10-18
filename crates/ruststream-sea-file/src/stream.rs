@@ -23,7 +23,13 @@ use crate::subscriber::FileSubscriber;
 ///
 /// Implements [`SubscriptionSource`], so it can sit inline in the `#[subscriber(..)]`
 /// decorator, and [`IntoSource`], so the manual path's `subscriber(..)` constructor takes it
-/// the way it takes a subject string. A replay of a recorded file:
+/// the way it takes a subject string. The
+/// [FileStream](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/file-stream/)
+/// page shows it in a service.
+///
+/// # Examples
+///
+/// A replay of a recorded file:
 ///
 /// ```
 /// use ruststream_sea_file::file::prelude::*;
@@ -36,7 +42,7 @@ use crate::subscriber::FileSubscriber;
 ///
 /// #[subscriber(FileStream::new("orders").replay())]
 /// async fn audit(order: &Order) -> HandlerOutcome {
-///     println!("recorded order {}", order.id);
+///     tracing::info!(order.id, "audited");
 ///     HandlerOutcome::ack()
 /// }
 ///
