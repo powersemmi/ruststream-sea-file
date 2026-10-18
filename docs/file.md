@@ -4,7 +4,7 @@
 file on disk, and the process's own standard input and output. Both implement the same broker
 contract as any network broker, so framework concepts (writing subscribers, routing, codecs,
 middleware) carry over unchanged - see the
-[RustStream documentation](https://powersemmi.github.io/ruststream/) for those.
+[RustStream documentation](https://powersemmi.github.io/ruststream/0.6/) for those.
 
 ```toml
 ruststream = { version = "0.6", features = ["macros", "json"] }
@@ -66,14 +66,12 @@ and producer in the process ends, which is what shutting down a process-wide tra
 `FileStream::new(key)` is the subscription descriptor for one stream key in the file. It sits
 inline in the `#[subscriber(..)]` decorator, and a plain descriptor follows the live tail:
 
-```rust
---8<-- "crates/ruststream-sea-file/examples/file_service.rs:handler"
+```rust reference="examples/file_service.rs#handler"
 ```
 
 Mount it on the broker; the `with_broker` / `include` part is identical to the in-memory broker.
 
-```rust
---8<-- "crates/ruststream-sea-file/examples/file_service.rs:app"
+```rust reference="examples/file_service.rs#app"
 ```
 
 On the stdio broker a subscription is a string-literal stream key, resolved through the framework's
@@ -108,13 +106,12 @@ sequence rewind is inclusive, which is what makes that hold.
 Where a subscription begins is the `start_at(..)` clause on the decorator, applied before the first
 delivery. A handler repositions its own live subscription through the injected `Seek` parameter:
 
-```rust
---8<-- "crates/ruststream-sea-file/examples/file_replay.rs:seek"
+```rust reference="examples/file_replay.rs#seek"
 ```
 
 Deliveries queued from before a seek are discarded, so the next message the handler sees comes from
 the new position. See
-[Seeking](https://powersemmi.github.io/ruststream/latest/guides/subscribers/#seeking) in the
+[Seeking](https://powersemmi.github.io/ruststream/0.6/guides/subscribers/#seeking) in the
 framework docs for the capability itself.
 
 Standard input has no retained log, so `StdioSubscriber` offers no repositioning at all.
@@ -130,8 +127,7 @@ it.
 The file publisher flushes on every publish: the sink buffers, and live subscribers (and external
 tails of the same file) observe the file, not the buffer.
 
-```rust
---8<-- "crates/ruststream-sea-file/examples/file_replay.rs:publish"
+```rust reference="examples/file_replay.rs#publish"
 ```
 
 The stdio publisher rejects an empty message with `SeaFileError::Invalid`, because the client's
@@ -165,8 +161,7 @@ open the next run with `start_at(..)`, or replay the file from the beginning.
 `StdioBroker` turns the process into a stage of a shell pipeline: stdin is the subscription, stdout
 is the publisher, and `producer | service | consumer` works with ordinary command-line tools.
 
-```rust
---8<-- "crates/ruststream-sea-file/examples/stdio_pipeline.rs:pipeline"
+```rust reference="examples/stdio_pipeline.rs#pipeline"
 ```
 
 Lines follow the client's `[timestamp | stream_key | seq] payload` format, so the stream key is
@@ -190,7 +185,7 @@ core routing with no file at all. It follows the same ladder as the real brokers
 form implements `ruststream::testing::TestableBroker`, so it drives the `TestApp` harness: inject
 traffic with `broker.inject(OutgoingMessage::new(..))` and assert on published output with the free
 `ruststream::testing::expect_published`. See
-[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/testing/#unit-testing-a-service-with-testapp).
+[Unit-testing a service with TestApp](https://powersemmi.github.io/ruststream/0.6/guides/testing/#unit-testing-a-service-with-testapp).
 
 `FileTestBroker` routes by exact address match and simulates none of the file semantics: replay,
 seeking, the end-of-stream mark, and the envelope are covered against real stream files instead.
