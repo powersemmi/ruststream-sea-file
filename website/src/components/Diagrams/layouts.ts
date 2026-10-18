@@ -1,3 +1,4 @@
+import {envelope} from './envelope';
 import type {Box, Lane, Link} from './flow';
 import {inProcess} from './inProcess';
 import type {Words} from './words';
@@ -12,6 +13,7 @@ type Place = (words: Words) => Layout;
 
 /** Every diagram a page can name: a layout places the boxes, the page supplies the words. */
 export const LAYOUTS = {
+  envelope,
   inProcess,
 } satisfies Record<string, Place>;
 
