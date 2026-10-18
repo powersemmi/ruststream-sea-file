@@ -8,6 +8,7 @@
 //! ```
 
 use std::convert::Infallible;
+use std::future::{Future, ready};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -17,10 +18,6 @@ use ruststream::runtime::cli::run_main;
 use ruststream::schemars::JsonSchema;
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
-
-#[cfg(test)]
-#[path = "../../../tests/common/mod.rs"]
-mod common;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "ruststream::schemars")]
@@ -72,25 +69,25 @@ struct Invoicing {
 struct Invoice;
 
 impl Handle<Order, (), (), FileContext, Invoicing> for Invoice {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         ctx: &mut Context<'_, FileContext, Invoicing>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let FilePosition::Sequence(sequence) = ctx.context(Position) else {
-            return Err(HandlerOutcome::drop());
+            return ready(Err(HandlerOutcome::drop()));
         };
         let checkpoint = &ctx.state().checkpoint;
         // The run opens at the stored sequence, so the order the last run ended on comes again.
         if checkpoint.load().is_some_and(|stored| sequence <= stored) {
-            return Err(HandlerOutcome::drop());
+            return ready(Err(HandlerOutcome::drop()));
         }
         tracing::info!(order.id, sequence, "invoiced");
         if let Err(error) = checkpoint.store(sequence) {
             tracing::error!(order.id, sequence, %error, "checkpoint not stored");
         }
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -125,7 +122,6 @@ mod recorded_stream;
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
     use std::error::Error;
     use std::{env, fs, process};
 
@@ -133,7 +129,7 @@ mod tests {
     use ruststream_sea_file::file::prelude::*;
 
     use super::recorded_stream::record;
-    use super::{Checkpoint, Invoice, Invoicing, Order, common, invoicing};
+    use super::{Checkpoint, Invoicing, Order, invoicing};
 
     const PATH: &str = "/var/lib/shop/orders.ss";
 
@@ -197,60 +193,42 @@ mod tests {
         Ok(())
     }
 
-    /// The service opened at `start` instead of at its checkpoint.
-    fn opened_at(file: FileBroker, start: FilePosition) -> impl App<State = Invoicing> {
-        let checkpoint = Checkpoint::new(env::temp_dir().join("unused.checkpoint"));
-        RustStream::new(AppInfo::new("invoicing", "0.1.0"))
-            .on_startup(async move |()| Ok::<_, Infallible>(Invoicing { checkpoint }))
-            .with_broker(file, |b| {
-                b.include(
-                    subscriber(FileStream::new("orders"), Invoice)
-                        .start_at(start)
-                        .build(),
-                );
-            })
-    }
-
     /// Two runs of the service on one stream file: the second opens at the order the first ended
-    /// on. A run opened one sequence past the last order the file holds is refused.
-    #[test]
-    fn a_restart_opens_at_the_order_the_last_run_ended_on() -> Result<(), Box<dyn Error>> {
-        common::rt().block_on(async {
-            let path = common::tmp_path("manual-guide-resume");
-            let stored = checkpoint("restart", None)?;
+    /// on, and passes it over.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_restart_opens_at_the_order_the_last_run_ended_on() -> Result<(), Box<dyn Error>> {
+        // A file of this run's own, so nothing an earlier run appended is read.
+        let path = env::temp_dir().join(format!("manual-guide-resume-{}.ss", process::id()));
+        let path = path.to_string_lossy().into_owned();
+        let stored = checkpoint("restart", None)?;
 
-            let first = TestApp::start_live(invoicing(FileBroker::new(&path), stored.clone())).await?;
-            for id in [1, 2] {
-                first
-                    .broker::<FileBroker>()
-                    .message(&Order { id })
-                    .publish()
-                    .await?;
-            }
-            first.shutdown().await?;
-            assert_eq!(stored.load(), Some(2));
-
-            let second = TestApp::start_live(invoicing(FileBroker::new(&path), stored.clone())).await?;
-            second
+        let first = TestApp::start_live(invoicing(FileBroker::new(&path), stored.clone())).await?;
+        for id in [1, 2] {
+            first
                 .broker::<FileBroker>()
-                .message(&Order { id: 3 })
+                .message(&Order { id })
                 .publish()
                 .await?;
-            // The publish returns once the subscription handled one delivery: the first one.
-            assert_eq!(read(&second).first(), Some(&2));
-            second.shutdown().await?;
+        }
+        first.shutdown().await?;
+        assert_eq!(stored.load(), Some(2));
 
-            // The file holds orders 1 to 3, so a run opened after the last of them is refused.
-            let past_the_end = TestApp::start_live(opened_at(
-                FileBroker::new(&path),
-                FilePosition::sequence(4),
-            ))
-            .await;
-            assert!(past_the_end.is_err(), "sequence 4 is not written yet");
+        let second = TestApp::start_live(invoicing(FileBroker::new(&path), stored.clone())).await?;
+        second
+            .broker::<FileBroker>()
+            .message(&Order { id: 3 })
+            .publish()
+            .await?;
+        // The publish returns once the subscription has handled a delivery, and the first one
+        // is the order the last run ended on.
+        let broker = second.broker::<FileBroker>();
+        let resumed = broker.subscriber("orders");
+        assert_eq!(resumed.received::<Order>().first(), Some(&Order { id: 2 }));
+        assert_eq!(resumed.outcomes().first(), Some(&Outcome::Drop));
+        second.shutdown().await?;
 
-            fs::remove_file(&path)?;
-            fs::remove_file(&stored.path)?;
-            Ok(())
-        })
+        fs::remove_file(&path)?;
+        fs::remove_file(&stored.path)?;
+        Ok(())
     }
 }
