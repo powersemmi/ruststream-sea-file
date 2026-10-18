@@ -1,4 +1,19 @@
 {
+  "$schema": "https://context7.com/schema/context7.json",
+  "folders": [
+    "docs",
+    "crates/ruststream-sea-file/src",
+    "crates/ruststream-sea-file/examples",
+    "website/static"
+  ],
+  "excludeFolders": [
+    "docs/benchmarks",
+    "website/i18n",
+    "website/build",
+    "website/.docusaurus",
+    "website/node_modules",
+    "target"
+  ],
   "rules": [
     "Glob one prelude: `ruststream_sea_file::file::prelude::*` on a stream file, `ruststream_sea_file::stdio::prelude::*` on a pipeline, and `ruststream_sea_file::prelude::*` only in a service that spans both, where the policies are written `FilePublish` and `StdioPublish`.",
     "Subscribe to a stream file with `#[subscriber(FileStream::new(\"key\"))]`; the bare `#[subscriber(\"key\")]` works on both transports but carries no descriptor, so it describes nothing in the generated AsyncAPI document.",
