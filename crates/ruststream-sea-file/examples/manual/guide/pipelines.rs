@@ -214,8 +214,8 @@ mod tests {
             .await?;
         input.flush().await?;
 
-        let mut output = BufReader::new(stage.stdout.take().ok_or("the stage writes output")?)
-            .lines();
+        let mut output =
+            BufReader::new(stage.stdout.take().ok_or("the stage writes output")?).lines();
         let mut answers = Vec::new();
         while answers.len() < 2 {
             let line = timeout(ANSWER_TIMEOUT, output.next_line())

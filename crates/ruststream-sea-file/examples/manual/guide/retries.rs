@@ -88,7 +88,11 @@ impl Handle<Order, (), (), (), Clients> for Review {
         ctx: &mut Context<'_, (), Clients>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let deliveries = ctx.headers().get_str(RETRY_COUNT_HEADER).unwrap_or("1");
-        tracing::error!(order.id, deliveries, "unpaid order needs a person to look at it");
+        tracing::error!(
+            order.id,
+            deliveries,
+            "unpaid order needs a person to look at it"
+        );
         ready(Ok(()))
     }
 }

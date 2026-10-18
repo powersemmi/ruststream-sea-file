@@ -61,9 +61,13 @@ impl Handle<Order, Receipt> for Checkout {
 
 fn service(file: FileBroker) -> RustStream {
     RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| {
-        b.include(subscriber(FileStream::new("orders"), Checkout).reply().build())
-            .max_attempts(nonzero!(3u32))
-            .dead_letter("orders.review");
+        b.include(
+            subscriber(FileStream::new("orders"), Checkout)
+                .reply()
+                .build(),
+        )
+        .max_attempts(nonzero!(3u32))
+        .dead_letter("orders.review");
     })
 }
 

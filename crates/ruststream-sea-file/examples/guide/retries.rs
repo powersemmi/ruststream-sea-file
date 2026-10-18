@@ -72,7 +72,11 @@ async fn ship(order: &Order, State(payments): State<Arc<Payments>>) -> HandlerOu
 #[subscriber(FileStream::new("orders.dead"))]
 async fn review(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
     let deliveries = ctx.headers().get_str(RETRY_COUNT_HEADER).unwrap_or("1");
-    tracing::error!(order.id, deliveries, "unpaid order needs a person to look at it");
+    tracing::error!(
+        order.id,
+        deliveries,
+        "unpaid order needs a person to look at it"
+    );
     HandlerOutcome::ack()
 }
 // --8<-- [end:dead_letters]

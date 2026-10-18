@@ -120,7 +120,10 @@ mod tests {
     async fn an_order_gets_a_receipt_that_the_follower_reads() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(shop(FileBroker::new(PATH))).await?;
 
-        tb.broker::<FileBroker>().message(&order(1)).publish().await?;
+        tb.broker::<FileBroker>()
+            .message(&order(1))
+            .publish()
+            .await?;
 
         tb.broker::<FileBroker>()
             .published::<Receipt>("receipts")
