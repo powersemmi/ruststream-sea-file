@@ -51,7 +51,7 @@ The file is synced to the device when the broker [shuts down](../components/brok
 Between those points the operating system decides when the bytes reach the device.
 
 The file client caps a stream file at 16 GiB.
-A publish that reaches the cap fails with [`SeaFileError::Publish`](../components/broker/errors.md), and so does every later publish of that connection.
+A publish that reaches the cap fails with [`SeaFileError::Publish`](../components/broker/errors.md), and so does every later publish to that file.
 A long-lived log therefore moves to a new file before it reaches the cap: the service starts on a new path, and readers of the old file finish it with a [replay](../components/subscriptions/replay.md).
 
 ## Shutdown

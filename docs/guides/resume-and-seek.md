@@ -72,7 +72,7 @@ It suits a service that rebuilds its view from a point in time instead of from a
 A handler moves its own subscription with [`Ctx<SeekHandle>`](../components/positions/seek.md).
 `seek(FilePosition::end())` skips the backlog and goes on from the tip; `seek(FilePosition::sequence(n))` goes back to message `n` or forward past a run of messages known to fail.
 The deliveries already queued from the old place are discarded, and the next delivery comes from the new one.
-A seek to a sequence the file has not written is refused with an error: a live subscription then ends, and a [replay](../components/subscriptions/replay.md) stays where it was.
+A seek to a sequence past the next one the file writes is refused with an error: a live subscription then ends, and a [replay](../components/subscriptions/replay.md) stays where it was.
 A batch handler reaches the same handle through [`FileBatchContext`](../components/positions/batch-context.md).
 
 ## Testing the resume

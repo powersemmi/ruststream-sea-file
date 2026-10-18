@@ -44,9 +44,9 @@ A seek that moved the reader opens a new generation, and the driver publishes it
 The subscription drops every delivery stamped with an older one, so once `seek` returns, nothing
 read at the old position reaches the handler.
 
-A refused seek, such as a sequence past the last one written, leaves a replay where it was, with
-what it had read still queued. A live subscription ends instead: the client reads forward looking
-for the message and runs out of file. A replay that reached the end of the file can still seek,
+A refused seek, such as a sequence past the next one the file writes, leaves a replay where it
+was, with what it had read still queued. A live subscription ends instead: the client reads forward
+looking for the message and runs out of file. A replay that reached the end of the file can still seek,
 and it delivers again from the new position.
 
 Seeks are served while the channel is full. The handler that stopped draining the channel may be

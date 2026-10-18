@@ -44,7 +44,7 @@ The receipt keeps the order's sequence, which [`Ctx<Position>`](../components/po
 A later run that appends to the same file carries the numbering on: after a restart the next order is number three, not one.
 
 The file client caps a stream file at 16 GiB.
-A publish that reaches the cap fails, and so does every later publish of that connection.
+A publish that reaches the cap fails, and so does every later publish to that file.
 [Running in production](production.md) covers what that means for a long-lived file.
 
 ## A one-pass job

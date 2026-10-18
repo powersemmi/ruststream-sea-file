@@ -16,7 +16,7 @@ A publish appends the message under its stream key and flushes it to the file, s
 A live subscription of that key reads the message next, and so does another process that reads the same file.
 The file is synced to the storage device when the broker shuts down.
 A stream key is a place inside the file, so the destination is the key alone and the path is named once, in [`FileBroker::new`](api:ruststream_sea_file::file::FileBroker::new).
-The file client caps a stream file at 16 GiB, and a publish past the cap fails with [`SeaFileError::Publish`](api:ruststream_sea_file::SeaFileError::Publish).
+The file client caps a stream file at 16 GiB: a publish that reaches the cap fails with [`SeaFileError::Publish`](../broker/errors.md), and every later publish to that file fails too.
 A publisher kept from before the [shutdown](../broker/shutdown.md) returns [`SeaFileError::NotConnected`](api:ruststream_sea_file::SeaFileError::NotConnected).
 A hook registered with `after_startup` runs once the subscriptions are open, and a hook that returns an error stops the startup.
 
