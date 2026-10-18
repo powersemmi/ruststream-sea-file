@@ -13,3 +13,5 @@ description: "Guides to building services on a stream file or a shell pipeline w
 is a log kept in one `.ss` file on disk: it survives a restart, and a subscriber can replay it or
 move back to an earlier position. Standard input and output make a service a stage of a shell
 pipeline. Neither one needs a server.
+The guides take a service on either transport from installation to production.
+Start with [Getting started](getting-started.md).
