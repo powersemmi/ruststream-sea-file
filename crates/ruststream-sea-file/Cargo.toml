@@ -278,3 +278,14 @@ name = "manual_sea_broker_errors"
 path = "examples/manual/sea_broker_errors.rs"
 required-features = ["testing"]
 test = true
+
+[[example]]
+name = "sea_asyncapi"
+required-features = ["asyncapi"]
+test = true
+
+[[example]]
+name = "manual_sea_asyncapi"
+path = "examples/manual/sea_asyncapi.rs"
+required-features = ["asyncapi"]
+test = true
