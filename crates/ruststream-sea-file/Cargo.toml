@@ -96,6 +96,31 @@ required-features = ["testing"]
 test = true
 
 [[example]]
+name = "file_position"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_start_at"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_position_key"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_seek"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_batch_seek"
+required-features = ["testing"]
+test = true
+
+[[example]]
 name = "manual_file_subscriptions"
 path = "examples/manual/file_subscriptions.rs"
 required-features = ["testing"]
@@ -122,5 +147,35 @@ test = true
 [[example]]
 name = "manual_file_batches"
 path = "examples/manual/file_batches.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_position"
+path = "examples/manual/file_position.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_start_at"
+path = "examples/manual/file_start_at.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_position_key"
+path = "examples/manual/file_position_key.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_seek"
+path = "examples/manual/file_seek.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_batch_seek"
+path = "examples/manual/file_batch_seek.rs"
 required-features = ["testing"]
 test = true
