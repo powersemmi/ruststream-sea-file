@@ -21,6 +21,7 @@ A publish through it returns `NotConnected` and never succeeds against the close
 
 The stdio transport belongs to the whole process.
 Shutting a [`StdioBroker`](./stdio-broker.md) down ends every stdio subscription and publisher in the process, not only the ones that broker opened.
+Each subscription first delivers the lines it has already read, then ends.
 
 ## Example
 

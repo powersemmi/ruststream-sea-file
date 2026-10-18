@@ -15,8 +15,9 @@ A file publish appends under the destination's stream key and flushes, so a live
 A publish appends the message under its stream key and flushes it to the file, so the bytes have reached the operating system when the call returns.
 A live subscription of that key reads the message next, and so does another process that reads the same file.
 The file is synced to the storage device when the broker shuts down.
+Publishes into one file go one at a time, across every broker of the process opened on that path.
 A stream key is a place inside the file, so the destination is the key alone and the path is named once, in [`FileBroker::new`](../broker/file-broker.md).
-The file client caps a stream file at 16 GiB: a publish that reaches the cap fails with [`SeaFileError::Publish`](../broker/errors.md), and every later publish to that file fails too.
+The file client caps a stream file at 16 GiB: a publish that reaches the cap fails with [`SeaFileError::Publish`](../broker/errors.md), and every later publish to that file returns that error at once.
 A publisher kept from before the [shutdown](../broker/shutdown.md) returns [`SeaFileError::NotConnected`](../broker/errors.md).
 A hook registered with `after_startup` runs once the subscriptions are open, and a hook that returns an error stops the startup.
 

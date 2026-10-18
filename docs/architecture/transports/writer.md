@@ -40,7 +40,9 @@ A message published since the last sync survives a crash of the process, not a p
 
 Every producer of one file in a process shares one writer task, which counts the producer handles.
 Opening a producer on a file that already holds messages scans back to the last beacon and forward
-to the end, to learn where each key's numbering stands. That scan grows with the file.
+to the end, to learn where each key's numbering stands. That scan grows with the file. This crate
+hands the writer one append at a time per file, so a failed append leaves no other publish waiting.
 
 The client stops a file at 16 GiB unless told otherwise, and this crate leaves the limit at that
-default. A publish that reaches the cap fails, and every later publish to that file fails too.
+default. A publish that reaches the cap fails, and every later publish to that file returns that error
+at once.

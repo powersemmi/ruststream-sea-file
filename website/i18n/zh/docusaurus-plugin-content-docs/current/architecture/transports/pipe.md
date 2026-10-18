@@ -35,6 +35,6 @@ stdio 客户端在一个线程上读取标准输入，在另一个线程上写�
 
 虚线箭头是 [`loopback`](../../components/broker/loopback.md)：stdout 线程还把每一行交给本进程自己的消费者。这样，一个 stdio 服务可以在一个进程里运行，测试正是这样做的。
 
-两个线程都属于进程，而不属于某个 Broker。[关闭](../../components/broker/shutdown.md)会结束进程持有的每个 stdio 消费者和生产者。标准输入结束时，stdin 线程停止，订阅仍保持打开。一行不是 UTF-8，或者方括号部分无法解析，都会使进程中止。
+两个线程都属于进程，而不属于某个 Broker。[关闭](../../components/broker/shutdown.md)会在每个订阅交付完已读取的行之后，结束进程持有的每个 stdio 消费者和生产者。标准输入结束时，stdin 线程停止，订阅仍保持打开。一行不是 UTF-8，或者方括号部分无法解析，都会使进程中止。
 
 这一模型是 `sea-streamer-stdio` 自己的模型（[客户端](https://docs.rs/sea-streamer-stdio/1.0.0-rc.2/sea_streamer_stdio/)）。订阅如何读取它的键，见[行](../../components/subscriptions/lines.md)。

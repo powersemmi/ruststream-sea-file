@@ -48,7 +48,8 @@ The dashed arrow is [`loopback`](../../components/broker/loopback.md): the stdou
 consumers. It runs a stdio service in one process, as a test does.
 
 Both threads belong to the process, not to a broker. A [shutdown](../../components/broker/shutdown.md)
-ends every stdio consumer and producer the process holds. When standard input ends, the stdin
+ends every stdio consumer and producer the process holds, after each subscription has delivered
+the lines it already read. When standard input ends, the stdin
 thread stops and the subscriptions stay open. A line that is not UTF-8, or one whose brackets do not
 parse, aborts the process.
 
