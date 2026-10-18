@@ -149,7 +149,7 @@ def file_size(byte_count: int) -> str:
 
 
 def round_trip(nanos: int) -> str:
-    """What the filesystem charges for one durable append, measured outside every loop.
+    """What the filesystem charges for one flushed append, measured outside every loop.
 
     A transport with no server still makes a delivery wait on something, and this is it. The
     `broker_bound` flag on a row is decided against this figure, so it is published with the
@@ -157,7 +157,7 @@ def round_trip(nanos: int) -> str:
     """
     if nanos <= 0:
         return "unknown"
-    return f"{nanos / 1000:.1f} us per durable append"
+    return f"{nanos / 1000:.1f} us per flushed append"
 
 
 def crate_version() -> str:
