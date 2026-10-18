@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 use std::convert::Infallible;
+use std::future::{Future, ready};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -18,10 +19,6 @@ use ruststream::runtime::cli::run_main;
 use ruststream::schemars::JsonSchema;
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
-
-#[cfg(test)]
-#[path = "../../../tests/common/mod.rs"]
-mod common;
 
 /// The orders whose payment has cleared; stands in for the payment service's client.
 #[derive(Debug, Default)]
@@ -64,18 +61,18 @@ struct Order {
 struct Ship;
 
 impl Handle<Order, (), (), (), Clients> for Ship {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         ctx: &mut Context<'_, (), Clients>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         if !ctx.state().payments.has_cleared(order.id) {
             // The payment may clear later: ask again after a pause.
-            return Err(HandlerOutcome::retry_after(RECHECK));
+            return ready(Err(HandlerOutcome::retry_after(RECHECK)));
         }
         tracing::info!(order.id, "order shipped");
-        Ok(())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:ship]
@@ -84,15 +81,15 @@ impl Handle<Order, (), (), (), Clients> for Ship {
 struct Review;
 
 impl Handle<Order, (), (), (), Clients> for Review {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         ctx: &mut Context<'_, (), Clients>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let deliveries = ctx.headers().get_str(RETRY_COUNT_HEADER).unwrap_or("1");
         tracing::error!(order.id, deliveries, "unpaid order needs a person to look at it");
-        Ok(())
+        ready(Ok(()))
     }
 }
 // --8<-- [end:dead_letters]
@@ -132,14 +129,14 @@ impl MessageHeaders for Order {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::fs;
     use std::sync::Arc;
+    use std::{env, fs, process};
 
     use ruststream::runtime::RETRY_COUNT_HEADER;
     use ruststream::testing::{Outcome, TestApp};
     use ruststream_sea_file::file::prelude::*;
 
-    use super::{Clients, Order, Payments, RECHECK, app, common, shipping};
+    use super::{Clients, Order, Payments, RECHECK, app, shipping};
 
     #[tokio::test(start_paused = true)]
     async fn an_order_ships_once_its_payment_clears() -> Result<(), Box<dyn Error>> {
@@ -208,14 +205,16 @@ mod tests {
         an_unpaid_order_goes_to_the_dead_letters(TestApp::start(app()).await?).await
     }
 
-    #[test]
-    fn an_unpaid_order_goes_to_the_dead_letters_on_a_stream_file() -> Result<(), Box<dyn Error>> {
-        common::rt().block_on(async {
-            let path = common::tmp_path("manual-guide-retries");
-            let tb = TestApp::start_live(shipping(FileBroker::new(&path))).await?;
-            an_unpaid_order_goes_to_the_dead_letters(tb).await?;
-            fs::remove_file(&path)?;
-            Ok(())
-        })
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unpaid_order_goes_to_the_dead_letters_on_a_stream_file()
+    -> Result<(), Box<dyn Error>> {
+        // A file of this run's own, so nothing an earlier run appended is read.
+        let path = env::temp_dir().join(format!("manual-guide-retries-{}.ss", process::id()));
+        let path = path.to_string_lossy().into_owned();
+
+        let tb = TestApp::start_live(shipping(FileBroker::new(&path))).await?;
+        an_unpaid_order_goes_to_the_dead_letters(tb).await?;
+        fs::remove_file(&path)?;
+        Ok(())
     }
 }

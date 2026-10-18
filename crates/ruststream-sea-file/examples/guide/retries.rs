@@ -1,10 +1,10 @@
-//! The shipping service of the Retries and dead letters guide written without the macros: each
-//! handler is a type with an `impl Handle`, mounted with the `subscriber` constructor, and `main`
-//! is written by hand.
+//! The shipping service of the Retries and dead letters guide: it ships an order once its payment
+//! has cleared, asks again later while it has not, and hands an order that never clears to a
+//! dead-letter key that a person reviews.
 //!
 //! ```text
-//! cargo run --example manual_guide_retries --features testing -- run
-//! cargo test --example manual_guide_retries --features testing
+//! cargo run --example guide_retries --features testing -- run
+//! cargo test --example guide_retries --features testing
 //! ```
 
 use std::collections::HashSet;
@@ -15,13 +15,8 @@ use std::time::Duration;
 
 use ruststream::runtime::RETRY_COUNT_HEADER;
 use ruststream::runtime::cli::run_main;
-use ruststream::schemars::JsonSchema;
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
-
-#[cfg(test)]
-#[path = "../../../tests/common/mod.rs"]
-mod common;
 
 /// The orders whose payment has cleared; stands in for the payment service's client.
 #[derive(Debug, Default)]
@@ -46,7 +41,8 @@ impl Payments {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+/// The app's state: each field reaches a handler as `State<FieldType>`.
+#[derive(Debug, Default, Clone, FromRef)]
 struct Clients {
     payments: Arc<Payments>,
 }
@@ -55,45 +51,29 @@ struct Clients {
 /// How long an order waits before the service asks the payment service again.
 const RECHECK: Duration = Duration::from_secs(2);
 
-#[derive(Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "ruststream::schemars")]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+#[outgoing(name = "orders")]
 struct Order {
     id: u64,
 }
 
-struct Ship;
-
-impl Handle<Order, (), (), (), Clients> for Ship {
-    async fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        ctx: &mut Context<'_, (), Clients>,
-    ) -> Result<(), HandlerOutcome> {
-        if !ctx.state().payments.has_cleared(order.id) {
-            // The payment may clear later: ask again after a pause.
-            return Err(HandlerOutcome::retry_after(RECHECK));
-        }
-        tracing::info!(order.id, "order shipped");
-        Ok(())
+#[subscriber(FileStream::new("orders"))]
+async fn ship(order: &Order, State(payments): State<Arc<Payments>>) -> HandlerOutcome {
+    if !payments.has_cleared(order.id) {
+        // The payment may clear later: ask again after a pause.
+        return HandlerOutcome::retry_after(RECHECK);
     }
+    tracing::info!(order.id, "order shipped");
+    HandlerOutcome::ack()
 }
 // --8<-- [end:ship]
 
 // --8<-- [start:dead_letters]
-struct Review;
-
-impl Handle<Order, (), (), (), Clients> for Review {
-    async fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        ctx: &mut Context<'_, (), Clients>,
-    ) -> Result<(), HandlerOutcome> {
-        let deliveries = ctx.headers().get_str(RETRY_COUNT_HEADER).unwrap_or("1");
-        tracing::error!(order.id, deliveries, "unpaid order needs a person to look at it");
-        Ok(())
-    }
+#[subscriber(FileStream::new("orders.dead"))]
+async fn review(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+    let deliveries = ctx.headers().get_str(RETRY_COUNT_HEADER).unwrap_or("1");
+    tracing::error!(order.id, deliveries, "unpaid order needs a person to look at it");
+    HandlerOutcome::ack()
 }
 // --8<-- [end:dead_letters]
 
@@ -103,10 +83,10 @@ fn shipping(file: FileBroker) -> impl App<State = Clients> {
         .on_startup(async move |()| Ok::<_, Infallible>(Clients::default()))
         .with_broker(file, |b| {
             // Three deliveries of one order, the first included; then the dead-letter key.
-            b.include(subscriber(FileStream::new("orders"), Ship).build())
+            b.include(ship)
                 .max_attempts(nonzero!(3u32))
                 .dead_letter("orders.dead");
-            b.include(subscriber(FileStream::new("orders.dead"), Review).build());
+            b.include(review);
         })
 }
 
@@ -119,27 +99,17 @@ fn main() -> ExitCode {
 }
 // --8<-- [end:app]
 
-// `#[outgoing(name = "orders")]` by hand: the type names the stream key it is published to.
-impl OutgoingDestination for Order {
-    type Form = FixedName;
-    const DESTINATION: &'static str = "orders";
-}
-
-impl MessageHeaders for Order {
-    type Contract = NoHeaders;
-}
-
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::fs;
     use std::sync::Arc;
+    use std::{env, fs, process};
 
     use ruststream::runtime::RETRY_COUNT_HEADER;
     use ruststream::testing::{Outcome, TestApp};
     use ruststream_sea_file::file::prelude::*;
 
-    use super::{Clients, Order, Payments, RECHECK, app, common, shipping};
+    use super::{Clients, Order, Payments, RECHECK, app, shipping};
 
     #[tokio::test(start_paused = true)]
     async fn an_order_ships_once_its_payment_clears() -> Result<(), Box<dyn Error>> {
@@ -208,14 +178,16 @@ mod tests {
         an_unpaid_order_goes_to_the_dead_letters(TestApp::start(app()).await?).await
     }
 
-    #[test]
-    fn an_unpaid_order_goes_to_the_dead_letters_on_a_stream_file() -> Result<(), Box<dyn Error>> {
-        common::rt().block_on(async {
-            let path = common::tmp_path("manual-guide-retries");
-            let tb = TestApp::start_live(shipping(FileBroker::new(&path))).await?;
-            an_unpaid_order_goes_to_the_dead_letters(tb).await?;
-            fs::remove_file(&path)?;
-            Ok(())
-        })
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unpaid_order_goes_to_the_dead_letters_on_a_stream_file()
+    -> Result<(), Box<dyn Error>> {
+        // A file of this run's own, so nothing an earlier run appended is read.
+        let path = env::temp_dir().join(format!("guide-retries-{}.ss", process::id()));
+        let path = path.to_string_lossy().into_owned();
+
+        let tb = TestApp::start_live(shipping(FileBroker::new(&path))).await?;
+        an_unpaid_order_goes_to_the_dead_letters(tb).await?;
+        fs::remove_file(&path)?;
+        Ok(())
     }
 }
