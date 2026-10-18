@@ -95,7 +95,7 @@ jq -c '.[]' orders.json | ./pricing run
 
 ## 测试这一级 {/* #testing-the-stage */}
 
-示例文件在进程内测试这一级：`TestApp::start` 运行它，`tb.broker::<StdioBroker>().message(..)` 注入一行订单，`published::<Receipt>("receipts")` 读取它写出的行。
+示例文件在进程内测试这一级：[`TestApp::start`](../components/testing/index.md) 运行它，`tb.broker::<StdioBroker>().message(..)` 注入一行订单，`published::<Receipt>("receipts")` 读取它写出的行。
 
 实时测试把构建好的这一级作为子进程启动，标准输入和标准输出都接到管道上。
 它们检查这一级回复 `orders` 行和没有键的行，跳过其他键，并在遇到 JSON 数组行和非 UTF-8 输入时停止。

@@ -52,14 +52,14 @@ Broker [关闭](../components/broker/shutdown.md)时，文件同步到设备。
 在这两个时间点之间，由操作系统决定字节何时到达设备。
 
 文件客户端把流文件的大小上限定为 16 GiB。
-达到上限的发布返回 [`SeaFileError::Publish`](../components/broker/errors.md)，该连接之后的每次发布也都返回这个错误。
+达到上限的发布返回 [`SeaFileError::Publish`](../components/broker/errors.md)，之后向该文件的每次发布也都返回这个错误。
 因此，长期使用的日志要在达到上限之前换到新文件：服务在新路径上启动，旧文件的读取者用[重放](../components/subscriptions/replay.md)把它读完。
 
 ## 关闭 {/* #shutdown */}
 
 Broker 关闭时，等待进行中的发布完成；如果 Broker 要求，就写入[流结束标记](../components/broker/end-with-eos.md)；然后同步文件。
 关闭返回时文件已经关闭，所以 `after_shutdown` 钩子可以移动或复制它。
-`end_with_eos` 适合停止时文件即完整的写入者，例如按天记录的日志：重放读到该标记即完成，实时读取者则在该标记处结束。
+[`end_with_eos`](../components/broker/end-with-eos.md) 适合停止时文件即完整的写入者，例如按天记录的日志：重放读到该标记即完成，实时读取者则在该标记处结束。
 关闭之前保留下来的发布者返回 [`SeaFileError::NotConnected`](../components/broker/errors.md)，从不向已关闭的文件写入。
 
 ## 管道级 {/* #a-pipeline-stage */}
@@ -75,5 +75,5 @@ stdio 传输属于整个进程：关闭一个 [`StdioBroker`](../components/brok
 
 ## 测试配置 {/* #testing-the-configuration */}
 
-测试在 `TestApp::start` 下启动生产环境的 `app`，所以设置按启动时的方式接受检查，而不需要文件。
+测试在 [`TestApp::start`](../components/testing/index.md) 下启动生产环境的 `app`，所以设置按启动时的方式接受检查，而不需要文件。
 不是 1024 倍数的信标间隔，在测试中与在真实文件上一样会让启动返回错误。

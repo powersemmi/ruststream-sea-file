@@ -43,7 +43,7 @@ export const stdio = {
 
 # 生命周期
 
-`FileBroker::new` 记录路径，connect 打开文件，每个订阅打开一个读取者，shutdown 结束写入者；`StdioBroker` 在第一次使用时接上进程的管道。
+[`FileBroker::new`](../components/broker/file-broker.md) 记录路径，connect 打开文件，每个订阅打开一个读取者，shutdown 结束写入者；[`StdioBroker`](../components/broker/stdio-broker.md) 在第一次使用时接上进程的管道。
 
 <Diagram name="lifecycle" words={file} />
 

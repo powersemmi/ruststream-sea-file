@@ -82,7 +82,7 @@ ss-decode --file /tmp/orders.ss
 ## 第一个测试 {/* #the-first-test */}
 
 示例文件里还有两个测试。
-每个测试都用 `TestApp::start` 启动同一个 `app`，发布一个订单，然后检查 `take_order` 如何结算它。
+每个测试都用 [`TestApp::start`](../components/testing/index.md) 启动同一个 `app`，发布一个订单，然后检查 `take_order` 如何结算它。
 在测试中，`FileBroker` 在进程内运行，所以测试不接触任何文件：
 
 ```bash
@@ -113,7 +113,7 @@ cargo test
 
 [`StdioBroker::new`](../components/broker/stdio-broker.md) 不接收任何设置，订阅只指定流键。
 管道的一级用 [`out_retry(Publish).to(..)`](../components/settlement/out-retry.md) 指定延迟副本发往的键，没有它就不会启动。
-两个 prelude 中的发布策略都叫 `Publish`，所以负责发布的代码在两种传输上写法相同。
+两个 prelude 中的发布策略都叫 [`Publish`](../components/publishing/index.md)，所以负责发布的代码在两种传输上写法相同。
 
 给这一级输入一行：
 

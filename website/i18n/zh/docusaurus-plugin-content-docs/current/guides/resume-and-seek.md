@@ -57,7 +57,7 @@ import TabItem from '@theme/TabItem';
 
 `invoicing` 在服务启动之前读取检查点，并把它传给挂载点上的 [`start_at`](../components/positions/start-at.md)。
 第一次运行没有检查点，从头读取文件。
-[`FilePosition::sequence(n)`](api:ruststream_sea_file::FilePosition::sequence) 投递第 `n` 条消息本身，所以从保存的序号打开的运行，会再次得到上次运行最后处理的订单。
+[`FilePosition::sequence(n)`](../components/positions/index.md) 投递第 `n` 条消息本身，所以从保存的序号打开的运行，会再次得到上次运行最后处理的订单。
 `invoice` 用 [`Ctx<Position>`](../components/positions/position.md) 读取投递的序号，丢弃序号不大于检查点的订单。
 其余每个订单都开出发票，它的序号成为新的检查点。
 
@@ -73,12 +73,12 @@ import TabItem from '@theme/TabItem';
 处理器用 [`Ctx<SeekHandle>`](../components/positions/seek.md) 移动它自己的订阅。
 `seek(FilePosition::end())` 跳过积压，从末端继续；`seek(FilePosition::sequence(n))` 回到第 `n` 条消息，或者向前越过一段已知会失败的消息。
 从旧位置已排入队列的投递被丢弃，下一次投递来自新位置。
-定位到文件尚未写入的序号会被拒绝并返回错误：实时订阅随之结束，[重放](../components/subscriptions/replay.md)则留在原处。
+定位到文件下一个写入序号之后的序号会被拒绝并返回错误：实时订阅随之结束，[重放](../components/subscriptions/replay.md)则留在原处。
 批处理器通过 [`FileBatchContext`](../components/positions/batch-context.md) 拿到同一个句柄。
 
 ## 测试恢复 {/* #testing-the-resume */}
 
 进程内测试在服务启动之前记录五个订单，并保存检查点三。
 服务读取三号到五号订单，丢弃第三个，为另外两个开票。
-重启测试用 `TestApp::start_live` 在一个真实文件上运行服务两次：第二次运行在第一次结束时的订单处打开，并丢弃它。
+重启测试用 [`TestApp::start_live`](../components/testing/live.md) 在一个真实文件上运行服务两次：第二次运行在第一次结束时的订单处打开，并丢弃它。
 [测试文件或管道服务](testing.md)讲解这两种模式。

@@ -33,7 +33,7 @@ stdio 客户端在一个线程上读取标准输入，在另一个线程上写�
 
 第一次发布启动 stdout 线程。它为每个键从零开始编号，以秒为精度打上写入时间，然后输出这一行。它会跳过空载荷，因此[发布者](../../components/publishing/stdio-publish.md)拒绝空消息，而不是报告一行从未发出的内容。一行会改变的载荷放进[信封](../envelope.md)。
 
-虚线箭头是 `loopback`：stdout 线程还把每一行交给本进程自己的消费者。这样，一个 stdio 服务可以在一个进程里运行，测试正是这样做的。
+虚线箭头是 [`loopback`](../../components/broker/loopback.md)：stdout 线程还把每一行交给本进程自己的消费者。这样，一个 stdio 服务可以在一个进程里运行，测试正是这样做的。
 
 两个线程都属于进程，而不属于某个 Broker。[关闭](../../components/broker/shutdown.md)会结束进程持有的每个 stdio 消费者和生产者。标准输入结束时，stdin 线程停止，订阅仍保持打开。一行不是 UTF-8，或者方括号部分无法解析，都会使进程中止。
 

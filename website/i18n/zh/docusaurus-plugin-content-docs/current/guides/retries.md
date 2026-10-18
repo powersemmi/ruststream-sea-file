@@ -99,5 +99,5 @@ import TabItem from '@theme/TabItem';
 
 示例文件中的测试在暂停的时钟上于进程内运行应用，所以 `tb.advance(RECHECK)` 让两秒立刻过去。
 一个测试在两次投递之间让付款到账，订单在第二次投递时发货。
-死信测试既在进程内运行，也用 `TestApp::start_live` 在真实流文件上运行，后者的延迟按真实时钟过去。
+死信测试既在进程内运行，也用 [`TestApp::start_live`](../components/testing/live.md) 在真实流文件上运行，后者的延迟按真实时钟过去。
 [测试文件或管道服务](testing.md)讲解测试套件。

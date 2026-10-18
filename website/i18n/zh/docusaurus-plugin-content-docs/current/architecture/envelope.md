@@ -34,4 +34,4 @@ export const words = {
 
 两种信封都是一个前缀加 base64，所以都能放进一行。信封内部先是消息头块的大端序长度，然后是这个块，最后是载荷。`rs1:` 把每个消息头写成一行 `name: value`，本 crate 的早期版本读取这种形式。每个消息头都能从这样的行中原样读回时，使用 `rs1:`。`rs2:` 为每个名称和值各写上自己的长度，因此能承载任意字节，其余情况都使用它。
 
-读取者能打开任一种信封，并加上 `stream-sequence` 消息头。不是格式正确的信封的内容，都读作不带消息头的载荷。服务如何读取和设置消息头，见组件中的[信封](../components/headers/index.md)。
+读取者能打开任一种信封，并加上 [`stream-sequence`](../components/headers/sequence-header.md) 消息头。不是格式正确的信封的内容，都读作不带消息头的载荷。服务如何读取和设置消息头，见组件中的[消息头](../components/headers/index.md)。
