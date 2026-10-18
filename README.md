@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <b><a href="https://powersemmi.github.io/ruststream-sea-file/">Documentation</a></b>
+  <b><a href="https://powersemmi.github.io/ruststream-sea-file/latest/">Documentation</a></b>
 </p>
 
 ---
@@ -24,7 +24,8 @@
 `ruststream-sea-file` runs a RustStream service over a stream file or a shell pipeline, through
 [`sea-streamer-file`](https://crates.io/crates/sea-streamer-file) and
 [`sea-streamer-stdio`](https://crates.io/crates/sea-streamer-stdio). There is no server: a broker
-is a `.ss` file on disk, durable and replayable, or the process's own standard input and output.
+is a `.ss` file on disk that survives restarts and replays, or the process's own standard input
+and output.
 It is the zero-infrastructure way into the framework. Handlers, routing, codecs and middleware come
 from the framework; this crate is the transport.
 
@@ -122,8 +123,17 @@ tb.broker::<FileBroker>()
 
 ## Documentation
 
-- This crate: <https://docs.rs/ruststream-sea-file>
-- The framework: <https://powersemmi.github.io/ruststream/latest>
+- [Getting started](https://powersemmi.github.io/ruststream-sea-file/latest/guides/getting-started/) - installation and a first service on a stream
+  file.
+- [Guides](https://powersemmi.github.io/ruststream-sea-file/latest/) - an event log on disk, resuming and seeking, shell pipelines, retries, testing
+  and production.
+- [Components](https://powersemmi.github.io/ruststream-sea-file/latest/components/) - one page per part of the crate: the brokers, subscriptions,
+  positions, publishing, settlement, headers, AsyncAPI and testing.
+- [Architecture](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/) - how a stream file and a pipe carry messages, and where the
+  crate sits between them and the runtime.
+- [Benchmarks](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/benchmarks/) - what the crate costs over the raw client.
+- [API reference](https://docs.rs/ruststream-sea-file) - every item on docs.rs.
+- The framework: <https://powersemmi.github.io/ruststream/latest/>
 
 ## Minimum supported Rust version
 

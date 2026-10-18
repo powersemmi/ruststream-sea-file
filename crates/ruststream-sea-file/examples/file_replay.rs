@@ -1,65 +1,83 @@
-//! Replay and repositioning on the default start path: the `start_at` clause opens the
-//! subscription at the beginning of the file (recorded history replays before anything
-//! live), the `SeekHandle` context key skips a poisoned region, the first publish rides the
-//! scope's `after_startup` lifecycle hook, and the demo file is removed in `after_shutdown`,
-//! once the broker has closed it - no hand-written runtime setup anywhere.
+//! A replay: the subscription reads every message the file holds under its key, from the start,
+//! and completes at the end of the file instead of following new writes.
 //!
 //! ```text
-//! cargo run --example file_replay -- run
+//! cargo test --example file_replay --features testing
+//! cargo run --example file_replay --features testing -- run
 //! ```
 
-use std::{fs, io};
+use std::process::ExitCode;
 
+use ruststream::runtime::cli::run_main;
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
-const DEMO_FILE: &str = "/tmp/ruststream-file-replay-example.ss";
-
-#[derive(Debug, Outgoing, Serialize, Deserialize)]
-struct Job {
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+#[outgoing(name = "orders")]
+struct Order {
     id: u64,
 }
 
-// --8<-- [start:seek]
-/// Replays the jobs from the beginning of the file; on the poison marker it jumps to the
-/// live tail, dropping everything still queued from the replay. The seeker is a broker context
-/// field - the `SeekHandle` key reads it off the delivery's context.
-#[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
-async fn replay(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
-    if job.id == 999 {
-        println!("poison marker: skipping the rest of the recorded region");
-        if seeker.seek(FilePosition::end()).await.is_err() {
-            return HandlerOutcome::retry();
-        }
-        return HandlerOutcome::ack();
-    }
-    println!("replayed job {}", job.id);
+// --8<-- [start:replay]
+/// Audits a finished day of orders in one pass.
+#[subscriber(FileStream::new("orders").replay())]
+async fn audit(order: &Order) -> HandlerOutcome {
+    tracing::info!(order.id, "audited");
     HandlerOutcome::ack()
 }
-// --8<-- [end:seek]
 
-// --8<-- [start:publish]
-#[ruststream::app]
-fn app() -> impl App {
-    RustStream::new(AppInfo::new("replay-demo", "0.1.0"))
-        // The demo file is transient: remove it after the brokers have shut down and the
-        // stream file is closed and flushed.
-        .after_shutdown(async move |_state| -> io::Result<()> { fs::remove_file(DEMO_FILE) })
-        .with_broker(FileBroker::new(DEMO_FILE), |b| {
-            // The recording side, as a lifecycle hook: it runs once the broker is connected
-            // and the subscriptions are open, so the paired publisher arrives live.
-            b.after_startup(Publish, async move |publisher| -> io::Result<()> {
-                for id in [1u64, 999, 3, 4] {
-                    publisher
-                        .message(&Job { id })
-                        .to("jobs")
-                        .publish()
-                        .await
-                        .map_err(io::Error::other)?;
-                }
-                Ok(())
-            });
-            b.include(replay);
-        })
+/// The audit of the day's file `main` hands it.
+fn app(file: FileBroker) -> impl App<State = ()> {
+    RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(file, |b| {
+        b.include(audit);
+    })
 }
-// --8<-- [end:publish]
+
+fn main() -> ExitCode {
+    // The shop wrote the day's file; the audit reads it and never creates one.
+    run_main(|| app(FileBroker::new("/var/lib/shop/2026-10-17.ss").existing_only()))
+}
+// --8<-- [end:replay]
+
+#[cfg(test)]
+#[path = "support/recorded_stream.rs"]
+mod recorded_stream;
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use ruststream::testing::TestApp;
+    use ruststream_sea_file::file::prelude::*;
+
+    use super::recorded_stream::record;
+    use super::{Order, app};
+
+    #[tokio::test]
+    async fn the_replay_reads_the_whole_file_and_completes() -> Result<(), Box<dyn Error>> {
+        let file = FileBroker::new("/var/lib/shop/2026-10-17.ss");
+        record(&file, (1..=3).map(|id| Order { id })).await?;
+        let tb = TestApp::start(app(file)).await?;
+        tb.settle().await?;
+
+        let audited: Vec<u64> = tb
+            .broker::<FileBroker>()
+            .subscriber("orders")
+            .received::<Order>()
+            .into_iter()
+            .map(|order| order.id)
+            .collect();
+        assert_eq!(audited, [1, 2, 3]);
+
+        // The replay completed at the end of the file, so a later append is not read.
+        tb.broker::<FileBroker>()
+            .message(&Order { id: 4 })
+            .publish()
+            .await?;
+        tb.broker::<FileBroker>()
+            .subscriber("orders")
+            .assert_called(3);
+        tb.shutdown().await?;
+        Ok(())
+    }
+}

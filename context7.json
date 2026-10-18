@@ -1,14 +1,31 @@
 {
+  "$schema": "https://context7.com/schema/context7.json",
+  "folders": [
+    "docs",
+    "crates/ruststream-sea-file/src",
+    "crates/ruststream-sea-file/examples",
+    "website/static"
+  ],
+  "excludeFolders": [
+    "docs/benchmarks",
+    "website/i18n",
+    "website/build",
+    "website/.docusaurus",
+    "website/node_modules",
+    "target"
+  ],
   "rules": [
-    "Glob one prelude: `ruststream_sea_file::file::prelude::*` on a stream file, `ruststream_sea_file::stdio::prelude::*` on a pipeline, and `ruststream_sea_file::prelude::*` only in a service that spans both, where the policies are written `FilePublish` and `StdioPublish`.",
-    "Subscribe to a stream file with `#[subscriber(FileStream::new(\"key\"))]`; the bare `#[subscriber(\"key\")]` works on both transports but carries no descriptor, so it describes nothing in the generated AsyncAPI document.",
-    "Open a subscription at a position with `start_at(FilePosition::beginning() | end() | sequence(n) | timestamp(millis))`; `FileStream::new(key).replay()` is the separate mode that reads the retained file in one pass and completes at its end.",
-    "Reposition a running subscription through the `Ctx<Position>` and `Ctx<SeekHandle>` parameters; both belong to the file transport, and a handler that reads them does not compile against `StdioBroker`.",
-    "Name the publish policy `Publish` at the mount site (`.out_reply(Publish)`, `.out(Marker, Publish)`); neither transport carries per-message settings, so a handler body imports the framework prelude alone and bounds an injected publisher as `Out<impl Publisher, Marker>`.",
-    "A `retry_after` copy reaches a stream file under the stream key its subscription reads and needs nothing at the mount site, while a stdio registration must name where the copy goes with `.out_retry(Publish).to(\"key\")` or it refuses to start.",
-    "Cap circulating retries with `.max_attempts(n)` and `.dead_letter(\"key\")` right after `include`; the count is the framework's retry-count header, because neither transport counts its own redeliveries.",
-    "Take batches with a `&[T]` handler and `.batch(n)` at the mount site; both clients read one entry at a time, so a batch is assembled on the client and a partial one goes out 10 ms after its first delivery.",
-    "Do not rely on acknowledgement: `ack` and `nack` report `AckError::Unsupported` on both transports, so a service resumes by storing a `FilePosition` and reopening with `start_at(..)`, or by replaying the file.",
-    "Test the production app: with feature `testing`, hand the builder `main` runs to `ruststream::testing::TestApp::start`, which connects `FileBroker` and `StdioBroker` in process, and address each as `tb.broker::<FileBroker>()` or `tb.broker::<StdioBroker>()`; `TestApp::start_live` runs the same test against a real stream file."
+    "Glob `ruststream_sea_file::file::prelude::*` on a stream file, `ruststream_sea_file::stdio::prelude::*` on a pipeline, and `ruststream_sea_file::prelude::*` in a service on both, writing `FilePublish` and `StdioPublish` (Components > Broker > Prelude).",
+    "Subscribe to a stream file with `#[subscriber(FileStream::new(\"key\"))]`, the descriptor the AsyncAPI document describes; a bare `#[subscriber(\"key\")]` is the stdio form (Components > Subscriptions > FileStream).",
+    "Open a subscription at a position with `start_at(FilePosition::beginning() | end() | sequence(n) | timestamp(millis))` (Components > Positions > start_at).",
+    "Read a finished file in one pass with `FileStream::new(key).replay()`, which completes at the end of the file or at the end-of-stream mark (Components > Subscriptions > replay).",
+    "Resume where a run stopped: store one past the sequence `Ctx<Position>` read last and open with `start_at(FilePosition::sequence(n))`, since `ack` and `nack` report `AckError::Unsupported` (Components > Positions > start_at).",
+    "Move a running file subscription from its handler with `Ctx<SeekHandle>`; it belongs to the file transport, and a handler that reads it does not compile against `StdioBroker` (Components > Positions > Seek).",
+    "Name the policy `Publish` at the mount site (`.out_reply(Publish)`, `.out(Marker, Publish)`); a handler body imports `ruststream::prelude::*` and bounds a slot as `Out<impl Publisher, Marker>` (Components > Publishing).",
+    "On a stream file a `retry_after` copy returns to the key its subscription reads; a stdio registration names the copy's key with `.out_retry(Publish).to(\"key\")` (Components > Settlement > retry_after, out_retry).",
+    "Cap retries with `.max_attempts(n)` and `.dead_letter(\"key\")` right after `include`; the count travels in the framework's retry-count header on every copy (Components > Settlement > Retries).",
+    "Take batches with a `&[T]` handler and `.batch(n)` at the mount site; the batch is assembled on the client and a partial one goes out 10 ms after its first delivery (Components > Subscriptions > Batches).",
+    "Test the production app with `TestApp::start` (feature `testing`), which connects `FileBroker` and `StdioBroker` in process, addressed as `tb.broker::<FileBroker>()` (Components > Testing).",
+    "Run the same test body against a real stream file with `TestApp::start_live` (Components > Testing > Live)."
   ]
 }

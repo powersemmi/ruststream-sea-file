@@ -13,8 +13,8 @@ use crate::wire;
 /// Header exposing the message's sequence number within its stream.
 pub const SEQUENCE_HEADER: &str = "stream-sequence";
 
-/// A position in a stream file's retained log, accepted by
-/// [`Seeker::seek`](ruststream::Seeker::seek).
+/// A position in a stream file's retained log: where `start_at(..)` opens a subscription, and
+/// where [`Seeker::seek`](ruststream::Seeker::seek) moves a running one.
 ///
 /// Captured positions ([`Positioned::position`]) carry the pinned semantics the framework
 /// defines: seeking to one redelivers exactly that message (the transport's sequence rewind
@@ -22,12 +22,53 @@ pub const SEQUENCE_HEADER: &str = "stream-sequence";
 /// everything retained, `End` skips to the tip, and `Timestamp` resumes at the earliest
 /// message strictly later than the instant (milliseconds since the Unix epoch).
 ///
-/// Seek to a position the stream has reached, or to the sequence it writes next, which is the tip:
-/// a service that handled every message resumes there. A sequence further ahead, and an
+/// Seek to a position the stream has reached, or to the sequence it writes next, which is the
+/// tip: a service that handled every message resumes there. A sequence further ahead, and an
 /// instant later than every message it holds, are both refused - the transport reads forward
 /// looking for the message and runs out of file - and the subscription ends with that refusal
 /// rather than staying where it was. A captured position, the beginning and the tip are always
 /// safe; a number a service worked out for itself is what needs the care.
+///
+/// The
+/// [FilePosition](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/)
+/// page shows it in a service.
+///
+/// # Examples
+///
+/// A handler reads its delivery's place in the file with `Ctx<Position>` and moves its own
+/// subscription with `Ctx<SeekHandle>`:
+///
+/// ```
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Job {
+///     id: u64,
+///     poisoned: bool,
+/// }
+///
+/// #[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
+/// async fn work(
+///     job: &Job,
+///     Ctx(at): Ctx<Position>,
+///     Ctx(seeker): Ctx<SeekHandle>,
+/// ) -> HandlerOutcome {
+///     if job.poisoned && seeker.seek(FilePosition::end()).await.is_err() {
+///         return HandlerOutcome::retry();
+///     }
+///     tracing::info!(job.id, position = ?at, "worked");
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("jobs", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
+///             b.include(work);
+///         })
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilePosition {
     /// Everything retained.

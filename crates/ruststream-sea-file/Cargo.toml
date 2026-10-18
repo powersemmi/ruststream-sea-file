@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 readme = "../../README.md"
 keywords = ["file", "stdio", "streaming", "broker", "ruststream"]
@@ -66,3 +67,494 @@ tokio = { workspace = true, features = [
     # once instead of waiting out a real timeout.
     "test-util",
 ] }
+
+# --- examples: subscriptions and positions ---
+
+[[example]]
+name = "file_subscriptions"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_stream"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_replay"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_lines"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_batches"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_position"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_start_at"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_position_key"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_seek"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_batch_seek"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_subscriptions"
+path = "examples/manual/file_subscriptions.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_stream"
+path = "examples/manual/file_stream.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_replay"
+path = "examples/manual/file_replay.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_lines"
+path = "examples/manual/stdio_lines.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_batches"
+path = "examples/manual/file_batches.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_position"
+path = "examples/manual/file_position.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_start_at"
+path = "examples/manual/file_start_at.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_position_key"
+path = "examples/manual/file_position_key.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_seek"
+path = "examples/manual/file_seek.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_batch_seek"
+path = "examples/manual/file_batch_seek.rs"
+required-features = ["testing"]
+test = true
+
+# --- examples: brokers-and-document ---
+
+[[example]]
+name = "file_service"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_service"
+path = "examples/manual/file_service.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker"
+path = "examples/manual/file_broker.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker_existing_only"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_existing_only"
+path = "examples/manual/file_broker_existing_only.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker_eos"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_eos"
+path = "examples/manual/file_broker_eos.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker_beacons"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_beacons"
+path = "examples/manual/file_broker_beacons.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_broker"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_broker"
+path = "examples/manual/stdio_broker.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_broker_loopback"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_broker_loopback"
+path = "examples/manual/stdio_broker_loopback.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_broker_shutdown"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_broker_shutdown"
+path = "examples/manual/sea_broker_shutdown.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_broker_prelude"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_broker_prelude"
+path = "examples/manual/sea_broker_prelude.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_broker_errors"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_broker_errors"
+path = "examples/manual/sea_broker_errors.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_asyncapi"
+required-features = ["asyncapi"]
+test = true
+
+[[example]]
+name = "manual_sea_asyncapi"
+path = "examples/manual/sea_asyncapi.rs"
+required-features = ["asyncapi"]
+test = true
+
+# --- examples: publishing, settlement, headers, testing ---
+
+[[example]]
+name = "sea_publish"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_publish"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_publish"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_acknowledgement"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_retry_after"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_out_retry"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_max_attempts"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_dead_letter"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_headers"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_sequence_header"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_payloads"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_testing"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_testing_live"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_publish"
+path = "examples/manual/sea_publish.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_publish"
+path = "examples/manual/file_publish.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_publish"
+path = "examples/manual/stdio_publish.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_acknowledgement"
+path = "examples/manual/sea_acknowledgement.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_retry_after"
+path = "examples/manual/file_retry_after.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_out_retry"
+path = "examples/manual/stdio_out_retry.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_max_attempts"
+path = "examples/manual/file_max_attempts.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_dead_letter"
+path = "examples/manual/file_dead_letter.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_headers"
+path = "examples/manual/sea_headers.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_sequence_header"
+path = "examples/manual/file_sequence_header.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_payloads"
+path = "examples/manual/stdio_payloads.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_testing"
+path = "examples/manual/sea_testing.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_testing_live"
+path = "examples/manual/file_testing_live.rs"
+required-features = ["testing"]
+test = true
+
+# --- examples: guides ---
+
+[[example]]
+name = "guide_getting_started"
+path = "examples/guide/getting_started.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_getting_started_pipe"
+path = "examples/guide/getting_started_pipe.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_event_log"
+path = "examples/guide/event_log.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_resume"
+path = "examples/guide/resume.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_pipelines_tests"
+path = "examples/guide/pipelines_tests.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_retries"
+path = "examples/guide/retries.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_testing"
+path = "examples/guide/testing.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "guide_production"
+path = "examples/guide/production.rs"
+required-features = ["testing"]
+test = true
+
+# The stage a pipeline runs, and the binary the guide's live test spawns: a test build of it
+# would be a test harness, so `guide_pipelines_tests` compiles it again to run its tests.
+[[example]]
+name = "guide_pipelines"
+path = "examples/guide/pipelines.rs"
+required-features = ["testing"]
+
+[[example]]
+name = "manual_guide_getting_started"
+path = "examples/manual/guide/getting_started.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_getting_started_pipe"
+path = "examples/manual/guide/getting_started_pipe.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_event_log"
+path = "examples/manual/guide/event_log.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_resume"
+path = "examples/manual/guide/resume.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_pipelines_tests"
+path = "examples/manual/guide/pipelines_tests.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_retries"
+path = "examples/manual/guide/retries.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_testing"
+path = "examples/manual/guide/testing.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_guide_production"
+path = "examples/manual/guide/production.rs"
+required-features = ["testing"]
+test = true
+
+# The manual twin of the stage, plain for the same reason.
+[[example]]
+name = "manual_guide_pipelines"
+path = "examples/manual/guide/pipelines.rs"
+required-features = ["testing"]

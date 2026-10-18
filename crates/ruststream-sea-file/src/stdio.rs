@@ -5,75 +5,23 @@
 //! `producer | service | consumer` works with ordinary command-line tools. A service on a
 //! pipeline globs this form's [`prelude`] and names its policy [`Publish`].
 //!
-//! Shutting this broker down ends every stdio consumer and producer in the process, not only the
-//! ones it opened: the client's transport is process-wide.
+//! - [StdioBroker][stdio-broker]: [`StdioBroker`], and [`loopback`](StdioBroker::loopback) for a
+//!   stage that reads its own output ([loopback][loopback]).
+//! - [Lines][lines]: the client's `[timestamp | stream_key | sequence | shard_id] payload` line
+//!   format, read by a subscription on its stream key through [`StdioSubscriber`].
+//! - [StdioPublish][stdio-publish]: [`Publish`] and its live [`StdioPublisher`], one line per
+//!   message on standard output.
+//! - [Payloads][payloads]: binary, multi-line and padded payloads through the envelope.
+//! - [out_retry][out-retry]: where a deferred copy goes, named at the mount site.
+//! - [Shutdown][shutdown]: a stdio shutdown ends every stdio stream of the process.
 //!
-//! # The line format
-//!
-//! Lines follow the client's `[timestamp | stream_key | sequence | shard_id] payload` format,
-//! with every meta field optional. The stream key is part of the line, so one process serves
-//! several keys:
-//!
-//! ```text
-//! echo '[2024-01-01T00:00:00 | jobs | 1] {"id":7}' | ./pipeline run
-//! ```
-//!
-//! # Subscribing
-//!
-//! A subscription here is the stream key itself, so this form has no descriptor type and
-//! `#[subscriber("jobs")]` consumes the `jobs` key off standard input. Standard input keeps no
-//! retained log: there is no acknowledgement (`ack` and `nack` report `AckError::Unsupported`)
-//! and no repositioning, and a handler that reads the [`SeekHandle`](crate::SeekHandle) key does
-//! not compile against this broker. Batches it does serve - the client reads one line at a time,
-//! so `batch(n)` is honoured by assembling them here, and a partial batch goes out 10 ms after
-//! its first delivery.
-//!
-//! # Publishing and deferred copies
-//!
-//! [`Publish`] pairs into [`StdioPublisher`], which writes a line to standard output under the
-//! message's stream key. A line carries a key and a payload and nothing else, so this crate adds
-//! no step to the publish builder. A message with no payload and no headers is rejected with
-//! [`SeaFileError::Invalid`], because the client's line format
-//! silently drops empty lines.
-//!
-//! Standard output reaches the next process in the pipeline and never this process's own
-//! standard input, so nothing here addresses the subscription. A registration that defers a
-//! delivery therefore names where the copy goes - `.out_retry(Publish).to("jobs.retry")`, or a
-//! transform that names one per delivery - and one that names neither refuses to start. That is
-//! the right answer for a pipeline stage: a delayed message that went nowhere is worse than a
-//! service that does not come up.
-//!
-//! ```
-//! use ruststream_sea_file::stdio::prelude::*;
-//! use serde::{Deserialize, Serialize};
-//!
-//! #[derive(Debug, Deserialize)]
-//! struct Job {
-//!     id: u64,
-//! }
-//!
-//! #[derive(Debug, Outgoing, Serialize)]
-//! #[outgoing(name = "results")]
-//! struct Done {
-//!     id: u64,
-//! }
-//!
-//! #[subscriber("jobs", reply)]
-//! async fn work(job: &Job) -> Done {
-//!     Done { id: job.id }
-//! }
-//!
-//! #[ruststream::app]
-//! fn app() -> impl App {
-//!     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-//!         b.include(work).out_retry(Publish).to("jobs.retry");
-//!     })
-//! }
-//! ```
-//!
-//! [`loopback`](StdioBroker::loopback) sends this process's standard output back into its own
-//! standard input, so a stdio service runs in one process with no external commands. It is a test
-//! aid: an address that only held under it would break in the shape a service ships.
+//! [stdio-broker]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/stdio-broker/
+//! [loopback]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/loopback/
+//! [lines]: https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/lines/
+//! [stdio-publish]: https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/stdio-publish/
+//! [payloads]: https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/payloads/
+//! [out-retry]: https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/out-retry/
+//! [shutdown]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/shutdown/
 
 // Without the `testing` feature a link has one variant, so a `match` on it has a single arm; the
 // matches stay so that the in-process arm has its place when the feature is on.
@@ -179,6 +127,11 @@ type StdioCell = Arc<OnceCell<Arc<StdioCore>>>;
 
 /// Standard input and output as one stream: consume lines from stdin, publish lines to
 /// stdout, in the client's `[timestamp | stream_key | seq] payload` line format.
+///
+/// Shutting this broker down ends every stdio subscription and publisher in the process, after
+/// the lines each subscription has already read: the client's transport is process-wide. The
+/// [StdioBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/stdio-broker/)
+/// page shows it in a service.
 ///
 /// # Examples
 ///
@@ -607,6 +560,44 @@ impl Subscriber for StdioDeliveries {
 /// A publish carries no per-message settings: a line on standard output takes a key and a
 /// payload and nothing else, so [`Publisher::Options`] is the unit type and the publish builder
 /// gains no step from this crate.
+///
+/// Standard output reaches the next process in the pipeline and never this process's own
+/// standard input, so a registration that defers a delivery names where the copy goes, with
+/// `.out_retry(Publish).to(key)` or a transform that names one per delivery; one that names
+/// neither refuses to start. The
+/// [StdioPublish](https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/stdio-publish/)
+/// page shows it in a service.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream_sea_file::stdio::prelude::*;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Job {
+///     id: u64,
+/// }
+///
+/// #[derive(Debug, Outgoing, Serialize)]
+/// #[outgoing(name = "results")]
+/// struct Done {
+///     id: u64,
+/// }
+///
+/// #[subscriber("jobs", reply)]
+/// async fn work(job: &Job) -> Done {
+///     tracing::info!(job.id, "done");
+///     Done { id: job.id }
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
+///         b.include(work).out_retry(Publish).to("jobs.retry");
+///     })
+/// }
+/// ```
 #[derive(Clone)]
 pub struct StdioPublisher {
     cell: StdioCell,
