@@ -1,6 +1,7 @@
 import {envelope} from './envelope';
 import type {Box, Lane, Link} from './flow';
 import {inProcess} from './inProcess';
+import {seeking} from './seeking';
 import {outcomes, retries} from './settlement';
 import type {Words} from './words';
 
@@ -14,6 +15,7 @@ type Place = (words: Words) => Layout;
 
 /** Every diagram a page can name: a layout places the boxes, the page supplies the words. */
 export const LAYOUTS = {
+  seeking,
   outcomes,
   retries,
   envelope,
