@@ -131,6 +131,12 @@ impl MemoryPipe {
         }
     }
 
+    /// What the broker's shutdown does to the pipe: it ends every subscription on it, after the
+    /// lines each has already read, as the real shutdown ends every consumer of standard input.
+    pub(crate) fn finish(&self) {
+        self.lock().registry.end_all();
+    }
+
     fn unsubscribe(&self, id: SubscriptionId) {
         self.lock().registry.close(id);
     }
