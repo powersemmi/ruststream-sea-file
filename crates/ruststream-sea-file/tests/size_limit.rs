@@ -5,6 +5,7 @@
 //! included, so a test of a capped service does not succeed where the real file fails.
 
 use std::num::NonZeroU64;
+use std::time::Duration;
 
 use ruststream::testing::{InProcess, TestableBroker};
 use ruststream::{Broker, ConnectedBroker, OutgoingMessage, Publisher};
@@ -13,6 +14,9 @@ use sea_streamer_file::{FileErr, FileId, MessageSource, StreamMode};
 use sea_streamer_types::{Buffer as _, Message as _};
 
 mod common;
+
+/// How long a step on a local file may take before the test calls it stuck.
+const STEP: Duration = Duration::from_secs(10);
 
 /// A limit a few dozen records reach.
 const LIMIT: NonZeroU64 = NonZeroU64::new(8 * 1024).unwrap();
@@ -93,6 +97,18 @@ async fn on_a_real_file(records: &[Record], beacon_interval: Option<u32>) -> Out
         .expect("connects");
     let accepted = publish_all(&connected, records).await;
     let _ = connected.shutdown().await;
+    if accepted.contains(&false) {
+        // The client reports the cap as soon as it hands its last write, which ends exactly at
+        // the limit, to the runtime's file thread: the bytes reach the file a moment later.
+        let size = || std::fs::metadata(&path).expect("the file is there").len();
+        tokio::time::timeout(STEP, async {
+            while size() < LIMIT.get() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the last write reaches the file");
+    }
     let held = read_back(&path, records).await;
     std::fs::remove_file(&path).expect("the file is removed");
     Outcome { accepted, held }

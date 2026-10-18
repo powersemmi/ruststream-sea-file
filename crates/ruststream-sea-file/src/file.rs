@@ -1208,6 +1208,15 @@ mod tests {
 
             let refused = publish(&exact).await;
             assert!(refused.is_err(), "the publish that reached the cap failed");
+            // The client reports the cap as soon as it hands its last write to the runtime's
+            // file thread, so the bytes reach the file a moment after the publish returns.
+            timeout(STEP, async {
+                while size() < LIMIT.get() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the last write reaches the file");
             assert_eq!(
                 size(),
                 LIMIT.get(),
