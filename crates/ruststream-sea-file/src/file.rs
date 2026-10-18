@@ -51,6 +51,8 @@ use ruststream::{
     AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Lend,
     OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
 };
+#[cfg(feature = "testing")]
+use sea_streamer_file::DEFAULT_BEACON_INTERVAL;
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
     FileProducerOptions, FileStreamer, MessageSource, StreamMode,
@@ -63,7 +65,7 @@ use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{SeaFileError, box_err};
 #[cfg(feature = "testing")]
-use crate::in_process::MemoryFile;
+use crate::in_process::{Budget, Fit, MemoryFile};
 use crate::stream::FileStream;
 #[cfg(feature = "asyncapi")]
 use crate::stream::channel_extension;
@@ -414,6 +416,27 @@ impl FileBroker {
     }
 }
 
+#[cfg(feature = "testing")]
+impl FileBroker {
+    /// The size limit of the in-process file, with the bytes `connect` writes into a new file
+    /// already counted: its header and the priming message. A limit those do not fit fails, as
+    /// `connect` fails on a real file.
+    fn in_process_budget(&self) -> Result<Option<Budget>, SeaFileError> {
+        let Some(limit) = self.size_limit else {
+            return Ok(None);
+        };
+        let interval = self.beacon_interval.unwrap_or(DEFAULT_BEACON_INTERVAL);
+        let mut budget = Budget::new(limit.get(), interval);
+        if budget.take(PRIME_STREAM, 1) != Fit::Kept {
+            return Err(SeaFileError::Connect {
+                target: self.path.clone(),
+                source: box_err(FileErr::FileLimitExceeded),
+            });
+        }
+        Ok(Some(budget))
+    }
+}
+
 impl Broker for FileBroker {
     type Error = SeaFileError;
     type Connected = ConnectedFileBroker;
@@ -522,8 +545,9 @@ impl InProcess for FileBroker {
                         target: self.path.clone(),
                         source: box_err(e),
                     })?;
+                let budget = self.in_process_budget()?;
                 Ok::<_, SeaFileError>(Arc::new(Core {
-                    link: Link::InProcess(MemoryFile::new(self.end_with_eos)),
+                    link: Link::InProcess(MemoryFile::new(self.end_with_eos, budget)),
                     path: self.path.clone(),
                     closed: AtomicBool::new(false),
                 }))
@@ -784,8 +808,11 @@ impl Publisher for FilePublisher {
             }),
             #[cfg(feature = "testing")]
             Link::InProcess(file) => {
-                file.append(key, payload);
-                Ok(())
+                file.append(key, payload)
+                    .map_err(|err| SeaFileError::Publish {
+                        stream: msg.name().to_owned(),
+                        source: box_err(err),
+                    })
             }
         }
     }
@@ -919,10 +946,18 @@ impl TestableBroker for ConnectedFileBroker {
                 message.name()
             )
         });
-        file.append(
+        // An injection has no error to return, so a message the size limit refuses on a real
+        // file ends the test here rather than passing where the file fails.
+        if let Err(err) = file.append(
             key,
             wire::encode(message.headers(), message.payload(), false),
-        );
+        ) {
+            panic!(
+                "the injected message to {:?} reaches the file's size limit, where a real file \
+                 fails its publish: {err}",
+                message.name()
+            );
+        }
     }
 
     fn published(&self, name: &str) -> Vec<RawMessage> {

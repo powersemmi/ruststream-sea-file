@@ -22,7 +22,10 @@ A message larger than the space left is cut at the cap, and a reader stops befor
 A file already larger than the cap fails startup with [`SeaFileError::Invalid`](./errors.md), which names the size and the cap.
 Brokers opened on one path in one process share the file's writer, and with it the cap of the first one to connect.
 
-In a [`TestApp`](api:ruststream::testing::TestApp) test the stream file is a log in memory and has no size, so the cap shows only against a real file, with [`TestApp::start_live`](../testing/live.md).
+In a [`TestApp`](api:ruststream::testing::TestApp) test the stream file is a log in memory, and it counts each message in the bytes the file client writes for it, beacons included.
+So the cap falls on the same message as on a real file, with the same three outcomes.
+A message larger than the space left is refused whole in memory, where a real file holds its first bytes; a reader sees it in neither.
+A message the test itself injects past the cap ends the test with a panic, because an injection has no error to return.
 
 ## Example
 

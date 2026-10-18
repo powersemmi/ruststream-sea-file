@@ -10,7 +10,10 @@ use ruststream::RawMessage;
 use ruststream::testing::Coordinator;
 use sea_streamer_types::{SharedMessage, StreamKey, Timestamp};
 
+use sea_streamer_file::FileErr;
+
 use crate::error::SeaFileError;
+use crate::in_process::budget::{Budget, Fit};
 use crate::in_process::queue::{
     Entry, EntryReceiver, EntrySender, Registry, Release, SubscriptionId, raw, release_one,
     release_queued, stamp,
@@ -36,6 +39,8 @@ struct FileInner {
     marked: bool,
     /// Set by the broker's shutdown; every seek is refused from then on.
     closed: bool,
+    /// The bytes the file has written against its size limit, when it has one.
+    budget: Option<Budget>,
 }
 
 impl std::fmt::Debug for MemoryFile {
@@ -47,10 +52,14 @@ impl std::fmt::Debug for MemoryFile {
 }
 
 impl MemoryFile {
-    /// An empty file, finished with the end-of-stream mark on shutdown when `end_with_eos`.
-    pub(crate) fn new(end_with_eos: bool) -> Arc<Self> {
+    /// An empty file, finished with the end-of-stream mark on shutdown when `end_with_eos`, and
+    /// counting its bytes against `budget` when it has a size limit.
+    pub(crate) fn new(end_with_eos: bool, budget: Option<Budget>) -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::default(),
+            inner: Mutex::new(FileInner {
+                budget,
+                ..FileInner::default()
+            }),
             coordinator: OnceLock::new(),
             end_with_eos,
         })
@@ -72,8 +81,21 @@ impl MemoryFile {
     }
 
     /// Appends one encoded message under `key` and hands it to every subscription reading it.
-    pub(crate) fn append(&self, key: StreamKey, bytes: Vec<u8>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `FileLimitExceeded` when the message reaches the size limit, whether the file
+    /// kept it (it filled the limit exactly) or not (it did not fit), and for every message
+    /// after that.
+    pub(crate) fn append(&self, key: StreamKey, bytes: Vec<u8>) -> Result<(), FileErr> {
         let mut inner = self.lock();
+        let fit = inner
+            .budget
+            .as_mut()
+            .map_or(Fit::Kept, |budget| budget.take(key.name(), bytes.len()));
+        if fit == Fit::Refused {
+            return Err(FileErr::FileLimitExceeded);
+        }
         let entries = inner.streams.entry(key.name().to_owned()).or_default();
         let message = stamp(key, entries.len() as u64 + 1, bytes);
         entries.push(message.clone());
@@ -82,6 +104,11 @@ impl MemoryFile {
             &message,
             self.coordinator(),
         );
+        drop(inner);
+        match fit {
+            Fit::Kept => Ok(()),
+            Fit::KeptAtTheLimit | Fit::Refused => Err(FileErr::FileLimitExceeded),
+        }
     }
 
     /// Every message written under `name`, in order, with its envelope opened.
