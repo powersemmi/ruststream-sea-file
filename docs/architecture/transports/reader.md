@@ -11,7 +11,7 @@ export const words = {
   "text": "The diagram as text",
   "file": "The stream file",
   "source": ["Source task", "reads to the end, waits"],
-  "messages": ["Message source", "messages apart from beacons"],
+  "messages": ["Message source", "steps over the beacons"],
   "consumer": ["Consumer", "the messages of its key"],
   "subscription": ["The subscription", "one message per next()"],
   "survey": ["Survey the beacons", "narrow the region"],
