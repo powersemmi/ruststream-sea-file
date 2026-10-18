@@ -679,23 +679,35 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
                 .expect("publish succeeds");
         }
         let mut received = Vec::new();
-        let mut batches = pin!(subscriber.batches(STDIO_BATCH));
-        while received.len() < 3 {
-            let batch = tokio::time::timeout(RECV_TIMEOUT, batches.next())
-                .await
-                .expect("batch arrives")
-                .expect("stream is open")
-                .expect("batch is ok");
-            assert!(!batch.is_empty(), "a yielded batch must not be empty");
-            assert!(
-                batch.len() <= STDIO_BATCH.get(),
-                "a batch must never carry more than the size it was opened with",
-            );
-            received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
+        {
+            let mut batches = pin!(subscriber.batches(STDIO_BATCH));
+            while received.len() < 3 {
+                let batch = tokio::time::timeout(RECV_TIMEOUT, batches.next())
+                    .await
+                    .expect("batch arrives")
+                    .expect("stream is open")
+                    .expect("batch is ok");
+                assert!(!batch.is_empty(), "a yielded batch must not be empty");
+                assert!(
+                    batch.len() <= STDIO_BATCH.get(),
+                    "a batch must never carry more than the size it was opened with",
+                );
+                received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
+            }
         }
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
 
         connected.shutdown().await.expect("shutdown succeeds");
+
+        // The shutdown ends every consumer of standard input, and that is the end of the
+        // subscription, not a failure to read.
+        let ended = tokio::time::timeout(RECV_TIMEOUT, pin!(subscriber.stream()).next())
+            .await
+            .expect("the subscription ends rather than waiting");
+        assert!(
+            ended.is_none(),
+            "the shutdown must end the subscription cleanly, got {ended:?}",
+        );
 
         // The publisher handed out before the shutdown outlives the connection, and the pipe it
         // wrote to is gone: it must say so rather than accept a line nobody will ever read.

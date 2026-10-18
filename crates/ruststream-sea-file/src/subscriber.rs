@@ -55,6 +55,42 @@ pub(crate) struct Stamped {
 /// end-of-stream mark a writer left with
 /// [`end_with_eos`](crate::FileBroker::end_with_eos). A replay that ended can still be moved by
 /// its seeker until the subscriber is dropped, and its stream then delivers again.
+///
+/// A handler taking `&[T]` consumes batches of this subscription, and `batch(n)` at the mount
+/// site says how large one may be. The client reads one entry at a time, so the batch is
+/// assembled here: it holds at most the size the mount site named, and fewer when that is all the
+/// file had. A partial batch goes out 10 ms after its first delivery. The
+/// [Batches](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/batches/)
+/// page shows it in a service.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Reading {
+///     millivolts: u32,
+/// }
+///
+/// #[subscriber(FileStream::new("readings"))]
+/// async fn aggregate(batch: &[Reading]) -> Vec<HandlerOutcome> {
+///     let total: u32 = batch.iter().map(|reading| reading.millivolts).sum();
+///     tracing::info!(readings = batch.len(), total, "aggregated");
+///     batch.iter().map(|_| HandlerOutcome::ack()).collect()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("readings", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/readings.ss"), |b| {
+///             b.include(aggregate.batch(nonzero!(4)))
+///                 .max_attempts(nonzero!(3u32))
+///                 .dead_letter("readings.dead");
+///         })
+/// }
+/// ```
 pub struct FileSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
@@ -612,10 +648,20 @@ async fn serve(
         }));
         return false;
     }
+    // Whether the reader reads one message past the target before the subscription delivers.
+    let mut skip_one = false;
     let target = match position {
-        FilePosition::Beginning => SeekTarget::Beginning,
+        // A stream key is numbered from one, so its first message is where the file begins.
+        FilePosition::Beginning | FilePosition::Sequence(0 | 1) => SeekTarget::Beginning,
         FilePosition::End => SeekTarget::End,
-        FilePosition::Sequence(sequence) => SeekTarget::SeqNo(sequence),
+        // The file finds a sequence by reading forward to it, so it refuses the one its next
+        // append carries, which is where a service that handled everything resumes. The message
+        // before it is there to find, and reading it leaves the reader where `sequence` is or
+        // will be: the file numbers a stream key without gaps.
+        FilePosition::Sequence(sequence) => {
+            skip_one = true;
+            SeekTarget::SeqNo(sequence - 1)
+        }
         FilePosition::Timestamp(millis) => {
             let nanos = i128::from(millis) * 1_000_000;
             match Timestamp::from_unix_timestamp_nanos(nanos) {
@@ -631,7 +677,10 @@ async fn serve(
     };
     // The client's seek is not cancel-safe: it runs here to completion, never inside a racing
     // select arm.
-    let result = reader.reposition(target).await;
+    let mut result = reader.reposition(target).await.map_err(box_err);
+    if result.is_ok() && skip_one {
+        result = reader.next().await.map(drop).map_err(box_err);
+    }
     let moved = result.is_ok();
     if moved {
         // Published before the answer (Release, paired with the filter's Acquire load), so once
@@ -639,9 +688,9 @@ async fn serve(
         *generation += 1;
         epoch.store(*generation, Ordering::Release);
     }
-    let _ = done.send(result.map_err(|e| SeaFileError::Seek {
+    let _ = done.send(result.map_err(|source| SeaFileError::Seek {
         stream: stream.to_owned(),
-        source: box_err(e),
+        source,
     }));
     moved
 }
@@ -812,6 +861,50 @@ mod tests {
             .expect("a seek after the stream ended succeeds");
 
         assert_eq!(next_body(&mut stream).await, Some(2));
+        assert_eq!(next_body(&mut stream).await, None);
+    }
+
+    /// The sequence after the last message is where the next append arrives: the seek succeeds
+    /// and the subscription delivers nothing the file already holds.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_to_the_sequence_after_the_last_lands_at_the_tip() {
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
+                false
+            });
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(4)))
+            .await
+            .expect("the seek completes")
+            .expect("the sequence the file writes next is a position");
+
+        assert_eq!(next_body(&mut stream).await, None);
+    }
+
+    /// The first sequence of a stream key is the start of the file, and a seek there replays
+    /// everything from it.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_to_the_first_sequence_replays_from_the_start() {
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
+                false
+            });
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+        assert_eq!(next_body(&mut stream).await, Some(2));
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(1)))
+            .await
+            .expect("the seek completes")
+            .expect("the first sequence is a position");
+
+        for expected in 1..=3 {
+            assert_eq!(next_body(&mut stream).await, Some(expected));
+        }
         assert_eq!(next_body(&mut stream).await, None);
     }
 

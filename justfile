@@ -35,7 +35,7 @@ test-brokers:
     cargo build --workspace --all-features --examples
     cargo test --workspace --all-features \
         --test integration_sea --test conformance_sea --test file_positions \
-        --test file_retry --test stdio_processes --test stdio_retry --test both_modes \
+        --test file_retry --test stdio_processes --test stdio_line_format --test stdio_retry --test both_modes \
         --test connect_runtime --test connect_runtime_stdio
 
 # What this crate costs over the sea-streamer-file client it wraps, and what the runtime costs on
@@ -44,7 +44,7 @@ test-brokers:
 # broker the local machine is the transport - so the recipe only points the runs at a directory for
 # their stream files and removes it again afterwards. On demand only: it takes minutes, it writes
 # tens of gigabytes through that directory, and it wants the machine to itself. The page it feeds
-# is docs/benchmarks.md.
+# is the site's Benchmarks page, docs/architecture/benchmarks/.
 bench *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -62,8 +62,8 @@ bench *ARGS:
 # callgrind and allocations through DHAT, each scenario a service on FileBroker over a stream file
 # of its own in the target directory. There is no stand to start - on this broker the local
 # machine is the transport - and the counts do not depend on how busy the machine is; it takes
-# under a minute. The page it feeds is the code table of docs/benchmarks.md. RUSTFLAGS is cleared
-# because valgrind aborts on the instructions a recent CPU advertises. Needs valgrind.
+# under a minute. The page it feeds is the code table of the site's Benchmarks page. RUSTFLAGS
+# is cleared because valgrind aborts on the instructions a recent CPU advertises. Needs valgrind.
 #
 # The benchmarks hand the measurement to gungraun's runner, which has to be the release of the
 # library the lock file pins. The recipe installs that release into `target/gungraun-runner` on

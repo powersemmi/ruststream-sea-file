@@ -7,6 +7,11 @@
 //!
 //! Standard input has no retained log, so nothing here applies to it: its deliveries carry no
 //! reposition handle, which is what makes a stdio mount of a seeking handler a compile error.
+//!
+//! The [Position](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/position/),
+//! [Seek](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/seek/) and
+//! [FileBatchContext](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/batch-context/)
+//! pages show them in a service.
 
 use ruststream::{BuildBatchContext, BuildContext, ContextField, Field};
 
@@ -17,32 +22,35 @@ use crate::subscriber::{FileMessage, FileSeeker};
 /// the subscription's own seeker.
 ///
 /// The runtime builds one per delivery, and handlers read its fields by key - [`Position`] and
-/// [`SeekHandle`]. A body that repositions a stream file names this type as its context axis and
-/// needs nothing else.
+/// [`SeekHandle`]. A handler that reads both, or that reads them on the manual path, names this
+/// type as its context.
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::prelude::*;
-/// use ruststream::Seeker;
-/// use ruststream_sea_file::{FileContext, FilePosition, SeekHandle};
-/// # #[derive(serde::Deserialize)]
-/// # struct Job { id: u64 }
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
 ///
-/// struct Replayer;
+/// #[derive(Debug, Deserialize)]
+/// struct Job {
+///     id: u64,
+/// }
 ///
-/// impl Handle<Job, (), (), FileContext> for Replayer {
-///     async fn handle(
-///         &self,
-///         job: &Job,
-///         _outs: &(),
-///         ctx: &mut Context<'_, FileContext>,
-///     ) -> Result<(), HandlerOutcome> {
-///         if job.id == 0 && ctx.context(SeekHandle).seek(FilePosition::end()).await.is_err() {
-///             return Err(HandlerOutcome::retry());
-///         }
-///         Ok(())
+/// #[subscriber(FileStream::new("jobs"))]
+/// async fn work(job: &Job, ctx: &mut Context<'_, FileContext>) -> HandlerOutcome {
+///     if job.id == 0 && ctx.context(SeekHandle).seek(FilePosition::end()).await.is_err() {
+///         return HandlerOutcome::retry();
 ///     }
+///     tracing::info!(job.id, position = ?ctx.context(Position), "worked");
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("jobs", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
+///             b.include(work);
+///         })
 /// }
 /// ```
 #[derive(Debug)]
@@ -73,29 +81,60 @@ impl BuildContext<FileMessage> for FileContext {
 ///
 /// # Examples
 ///
+/// The batch settles first, so a seek from its body applies to the batches after it:
+///
 /// ```
-/// use ruststream::prelude::*;
-/// use ruststream::Seeker;
-/// use ruststream_sea_file::{FileBatchContext, FilePosition, SeekHandle};
-/// # #[derive(serde::Deserialize)]
-/// # struct Job { id: u64 }
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
 ///
-/// struct Replayer;
+/// #[derive(Debug, Deserialize)]
+/// struct Job {
+///     id: u64,
+///     resume_at: Option<u64>,
+/// }
 ///
-/// impl Handle<[Job], (), (), FileBatchContext> for Replayer {
-///     async fn handle(
-///         &self,
-///         batch: &[Job],
-///         _outs: &(),
-///         ctx: &mut Context<'_, FileBatchContext>,
-///     ) -> Result<(), Vec<HandlerOutcome>> {
-///         if batch.iter().any(|job| job.id == 0)
-///             && ctx.context(SeekHandle).seek(FilePosition::end()).await.is_err()
-///         {
-///             return Err(batch.iter().map(|_| HandlerOutcome::retry()).collect());
-///         }
-///         Ok(())
+/// #[subscriber(FileStream::new("jobs"), start_at(FilePosition::beginning()))]
+/// async fn drain(jobs: &[Job], ctx: &mut Context<'_, FileBatchContext>) -> HandlerOutcome {
+///     tracing::info!(jobs = jobs.len(), "drained");
+///     let Some(resume_at) = jobs.iter().find_map(|job| job.resume_at) else {
+///         return HandlerOutcome::ack();
+///     };
+///     if let Err(error) = ctx
+///         .context(SeekHandle)
+///         .seek(FilePosition::sequence(resume_at))
+///         .await
+///     {
+///         tracing::warn!(resume_at, %error, "seek refused");
 ///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("worker", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
+///             b.include(drain.batch(nonzero!(3)));
+///         })
+/// }
+/// ```
+///
+/// A batch body that asks for a per-delivery position does not compile: [`Position`] is a key of
+/// [`FileContext`] alone.
+///
+/// ```compile_fail,E0277
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Job {
+///     id: u64,
+/// }
+///
+/// #[subscriber(FileStream::new("jobs"))]
+/// async fn drain(jobs: &[Job], ctx: &mut Context<'_, FileBatchContext>) -> HandlerOutcome {
+///     let first: FilePosition = ctx.context(Position);
+///     tracing::info!(jobs = jobs.len(), ?first, "drained");
+///     HandlerOutcome::ack()
 /// }
 /// ```
 #[derive(Debug)]
@@ -124,7 +163,7 @@ impl BuildBatchContext<FileMessage> for FileBatchContext {
 ///
 /// #[subscriber(FileStream::new("jobs"))]
 /// async fn audit(job: &Job, Ctx(at): Ctx<Position>) -> HandlerOutcome {
-///     println!("job {} sits at {at:?}", job.id);
+///     tracing::info!(job.id, position = ?at, "audited");
 ///     HandlerOutcome::ack()
 /// }
 /// ```
@@ -166,6 +205,34 @@ impl Field<FileContext> for Position {
 ///         return HandlerOutcome::retry();
 ///     }
 ///     HandlerOutcome::ack()
+/// }
+/// ```
+///
+/// Standard input keeps no log to move within, so a handler that reads the key does not compile
+/// against [`StdioBroker`](crate::StdioBroker):
+///
+/// ```compile_fail,E0277
+/// use ruststream_sea_file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Job {
+///     id: u64,
+/// }
+///
+/// #[subscriber("jobs")]
+/// async fn work(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
+///     if job.id == 0 && seeker.seek(FilePosition::end()).await.is_err() {
+///         return HandlerOutcome::retry();
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
+///         b.include(work);
+///     })
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

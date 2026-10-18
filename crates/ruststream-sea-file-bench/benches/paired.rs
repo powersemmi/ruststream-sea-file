@@ -41,8 +41,8 @@
 //! end of the file.
 //!
 //! [`Scenario::Tail`] attaches the subscription first and appends to the file while it reads. Each
-//! loop appends through its own layer, and an append is durable before the next one starts - what
-//! [`FilePublisher`] does per publish - so this row is paced by the filesystem.
+//! loop appends through its own layer, and an append is flushed to the file before the next one
+//! starts - what [`FilePublisher`] does per publish - so this row is paced by the filesystem.
 //!
 //! The window runs from the first delivery to the end of the last handler call. Opening the file,
 //! creating the consumer and writing the recorded region are startup cost and sit outside it.
@@ -118,7 +118,7 @@ const DIR_VAR: &str = "RUSTSTREAM_BENCH_DIR";
 
 /// Deliveries the probe run takes to measure the raw loop's rate.
 const PROBE_MESSAGES: usize = 100_000;
-/// Durable appends the round-trip probe times, after a tenth of that as warm-up.
+/// Flushed appends the round-trip probe times, after a tenth of that as warm-up.
 const PROBE_APPENDS: usize = 50_000;
 /// How long a measured run lasts, at least.
 const SECONDS: f64 = 5.0;
@@ -406,7 +406,7 @@ fn consumer_options(replay: bool) -> FileConsumerOptions {
     options
 }
 
-/// One durable append: the body is in the file before the call returns.
+/// One flushed append: the body is in the file before the call returns.
 ///
 /// This is what this crate's publisher does per publish, spelled out on the client so the raw loop
 /// appends the way the other two do.
@@ -457,7 +457,7 @@ fn remove(path: &str) {
     let _ = fs::remove_file(path);
 }
 
-/// What the filesystem charges for one durable append, measured outside every loop.
+/// What the filesystem charges for one flushed append, measured outside every loop.
 ///
 /// This is the round trip of a transport with no server: what a delivery waits on when it waits on
 /// anything. A row is marked `broker_bound` against this figure rather than against a guess about
@@ -805,7 +805,7 @@ impl Scenario {
         }
     }
 
-    /// Durable appends the filesystem charges for one delivery.
+    /// Flushed appends the filesystem charges for one delivery.
     ///
     /// A replay reads a file that is already complete, so nothing inside its window waits on
     /// storage. A tail pays for one append per delivery, which is what paces it.
@@ -1059,7 +1059,7 @@ fn main() {
     let body = payload(BODY_BYTES);
     let runtime = runtime();
     let trip = runtime.block_on(round_trip(&dir, &body.bytes));
-    println!("one durable append: {:.1} us", trip.as_secs_f64() * 1e6);
+    println!("one flushed append: {:.1} us", trip.as_secs_f64() * 1e6);
 
     let measured: Vec<Measured> = [Scenario::Replay, Scenario::Tail]
         .into_iter()

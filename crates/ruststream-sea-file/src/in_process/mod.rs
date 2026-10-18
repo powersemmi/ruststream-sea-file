@@ -16,7 +16,7 @@
 //! is what the test feeds in, standard output is what the service writes, and what the service
 //! writes comes back to its own subscriptions only under
 //! [`loopback`](crate::StdioBroker::loopback). What belongs to the real transport and is left to
-//! the live mode: the bytes a `.ss` file holds, beacons, durability across a restart, the line
+//! the live mode: the bytes a `.ss` file holds, beacons, what a file keeps across a restart, the line
 //! format a shell pipeline carries, and the process-wide reach of a stdio shutdown.
 
 mod file;
