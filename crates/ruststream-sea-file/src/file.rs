@@ -38,8 +38,9 @@
 //! then the rest of the log in order. Deliveries already queued from before a seek are discarded,
 //! so the next message a handler sees comes from the new position.
 //!
-//! Seek to a position the stream has reached. A sequence past the last one written, and an
-//! instant later than every message the file holds, are both refused. A live subscription ends
+//! Seek to a position the stream has reached, or to the sequence it writes next, which is the tip.
+//! A sequence further ahead, and an instant later than every message the file holds, are both
+//! refused. A live subscription ends
 //! with the refusal rather than staying where it was: the transport reads forward looking for the
 //! message and runs out of file. A replay stays where it was, and what it had read is still
 //! delivered. A captured position, the beginning and the tip are always safe.
