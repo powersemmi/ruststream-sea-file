@@ -8,11 +8,11 @@
 //! ```
 
 use std::env;
+use std::future::{Future, ready};
 use std::process::ExitCode;
 
 use ruststream::runtime::cli::run_main;
 use ruststream::schemars::JsonSchema;
-
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -41,14 +41,14 @@ struct Receipt {
 struct Checkout;
 
 impl Handle<Order, Receipt> for Checkout {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Receipt, HandlerOutcome> {
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
         tracing::info!(order.id, "order confirmed");
-        Ok(Receipt { order: order.id })
+        ready(Ok(Receipt { order: order.id }))
     }
 }
 

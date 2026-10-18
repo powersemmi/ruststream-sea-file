@@ -1,17 +1,12 @@
-//! The service of the Running in production guide written without the macros: the handler is a
-//! type with an `impl Handle`, mounted with the `subscriber` constructor, and `main` is written by
-//! hand. The broker is the same code in both forms.
+//! The service of the Running in production guide: a checkout on the shop's stream file, at the
+//! path the deployment names.
 //!
 //! ```text
-//! ORDERS_FILE=/tmp/orders.ss cargo run --example manual_guide_production --features testing -- run
-//! cargo test --example manual_guide_production --features testing
+//! ORDERS_FILE=/tmp/orders.ss cargo run --example guide_production --features testing -- run
+//! cargo test --example guide_production --features testing
 //! ```
 
 use std::env;
-use std::process::ExitCode;
-
-use ruststream::runtime::cli::run_main;
-use ruststream::schemars::JsonSchema;
 
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -26,65 +21,35 @@ fn broker() -> FileBroker {
 // --8<-- [end:broker]
 
 // --8<-- [start:service]
-#[derive(Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "ruststream::schemars")]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+#[outgoing(name = "orders")]
 struct Order {
     id: u64,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "ruststream::schemars")]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+#[outgoing(name = "receipts")]
 struct Receipt {
     order: u64,
 }
 
-struct Checkout;
-
-impl Handle<Order, Receipt> for Checkout {
-    async fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> Result<Receipt, HandlerOutcome> {
-        tracing::info!(order.id, "order confirmed");
-        Ok(Receipt { order: order.id })
-    }
+#[subscriber(FileStream::new("orders"), reply)]
+async fn checkout(order: &Order) -> Receipt {
+    tracing::info!(order.id, "order confirmed");
+    Receipt { order: order.id }
 }
 
 fn service(file: FileBroker) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| {
-        b.include(subscriber(FileStream::new("orders"), Checkout).reply().build());
+        b.include(checkout);
     })
 }
 
+#[ruststream::app]
 fn app() -> impl App<State = ()> {
     service(broker())
 }
-
-fn main() -> ExitCode {
-    run_main(app)
-}
 // --8<-- [end:service]
-
-// `#[outgoing(name = ..)]` by hand: each type names the stream key it is published to.
-impl OutgoingDestination for Order {
-    type Form = FixedName;
-    const DESTINATION: &'static str = "orders";
-}
-
-impl MessageHeaders for Order {
-    type Contract = NoHeaders;
-}
-
-impl OutgoingDestination for Receipt {
-    type Form = FixedName;
-    const DESTINATION: &'static str = "receipts";
-}
-
-impl MessageHeaders for Receipt {
-    type Contract = NoHeaders;
-}
 
 #[cfg(test)]
 mod tests {
