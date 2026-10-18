@@ -193,6 +193,41 @@ async fn a_payload_a_line_cannot_carry_crosses_the_pipe_whole() {
     stage.kill().await.expect("the stage stops");
 }
 
+/// The end of a stage's input is the end of its work: a stage whose input closes exits on its
+/// own, after answering what it read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stage_exits_when_its_input_ends() {
+    let mut stage = Command::new(example_binary("stdio_pipeline"))
+        .arg("run")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the pipeline stage starts");
+
+    let mut input = stage.stdin.take().expect("the stage reads standard input");
+    input
+        .write_all(line("jobs", 1, 7).as_bytes())
+        .await
+        .expect("the stage accepts input");
+    drop(input);
+
+    let mut output = BufReader::new(stage.stdout.take().expect("the stage writes output")).lines();
+    let answer = tokio::time::timeout(ANSWER_TIMEOUT, output.next_line())
+        .await
+        .expect("the stage answers rather than hanging")
+        .expect("the stage's output is readable")
+        .expect("the stage answers the job");
+    assert!(answer.contains("{\"id\":7}"), "got {answer}");
+
+    let status = tokio::time::timeout(ANSWER_TIMEOUT, stage.wait())
+        .await
+        .expect("the stage exits once its input ends")
+        .expect("the stage's exit status is readable");
+    assert!(status.success(), "the stage exits cleanly, got {status}");
+}
+
 /// Asks for a pause before another attempt, which on a pipe means a copy sent downstream.
 #[subscriber("jobs")]
 async fn defer(_job: &Job) -> HandlerOutcome {

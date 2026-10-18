@@ -6,15 +6,14 @@
 //!
 //! ```text
 //! echo '[orders] {"id":7,"quantity":3,"unit_cents":250}' \
-//!     | cargo run --example manual_guide_pipelines --features testing -- run
+//!     | cargo run --example manual_guide_pipelines --features testing
 //! cargo build --example manual_guide_pipelines --features testing
 //! cargo test --example manual_guide_pipelines_tests --features testing
 //! ```
 
 use std::future::{Future, ready};
-use std::process::ExitCode;
 
-use ruststream::runtime::cli::run_main;
+use ruststream::runtime::RustStreamError;
 use ruststream::schemars::JsonSchema;
 
 // --8<-- [start:stage]
@@ -63,11 +62,21 @@ fn app() -> impl App {
             .to("orders.retry");
     })
 }
-
-fn main() -> ExitCode {
-    run_main(app)
-}
 // --8<-- [end:stage]
+
+// --8<-- [start:exit]
+/// Runs the stage until its input ends: the end of standard input ends the subscription, and
+/// the stage then shuts down and exits.
+#[tokio::main]
+async fn main() -> Result<(), RustStreamError> {
+    let running = app().start().await?;
+    let mut health = running.health();
+    while health.is_running() && health.subscriptions().active > 0 {
+        health.changed().await;
+    }
+    running.shutdown().await
+}
+// --8<-- [end:exit]
 
 // `#[outgoing(name = ..)]` by hand: each type names the stream key it is published to.
 impl OutgoingDestination for Order {
@@ -130,8 +139,8 @@ mod tests {
     /// How long the stage is given to answer a line.
     const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
 
-    /// How long a stage that read a line it cannot parse is given to stop.
-    const STOP_TIMEOUT: Duration = Duration::from_secs(20);
+    /// How long a stage whose input ended is given to exit.
+    const EXIT_TIMEOUT: Duration = Duration::from_secs(20);
 
     /// The stage binary the current build made beside this test, found the way the crate's
     /// pipeline suite finds its own: the newest plain build in the first `examples` directory
@@ -235,19 +244,31 @@ mod tests {
         Ok(())
     }
 
-    /// A line the client cannot parse stops the whole stage: here a JSON array, whose leading
-    /// `[..]` is not a header, and a line that is not UTF-8.
+    /// The stage passes over the lines it cannot read, a JSON array whose leading `[..]` is not
+    /// a header and a line that is not UTF-8, answers the rest, and exits once its input ends.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_line_the_client_cannot_parse_stops_the_stage() -> Result<(), Box<dyn Error>> {
-        for line in [b"[1,2]\n".as_slice(), b"\xff\xfe\n".as_slice()] {
-            let mut stage = spawn_stage()?;
-            let mut input = stage.stdin.take().ok_or("the stage reads standard input")?;
-            input.write_all(line).await?;
-            input.flush().await?;
+    async fn the_stage_passes_over_what_it_cannot_read_and_exits_when_its_input_ends()
+    -> Result<(), Box<dyn Error>> {
+        let mut stage = spawn_stage()?;
+        let mut input = stage.stdin.take().ok_or("the stage reads standard input")?;
+        input
+            .write_all(b"[1,2]\n\xff\xfe\n[orders] {\"id\":7,\"quantity\":3,\"unit_cents\":250}\n")
+            .await?;
+        drop(input);
 
-            let status = timeout(STOP_TIMEOUT, stage.wait()).await??;
-            assert!(!status.success(), "{line:?} left the stage with {status}");
-        }
+        let mut output =
+            BufReader::new(stage.stdout.take().ok_or("the stage writes output")?).lines();
+        let answer = timeout(ANSWER_TIMEOUT, output.next_line())
+            .await?
+            .map_err(|error| format!("the stage's output is unreadable: {error}"))?
+            .ok_or("the stage closed its output")?;
+        assert!(
+            answer.ends_with(r#"{"order":7,"total_cents":750}"#),
+            "{answer}"
+        );
+
+        let status = timeout(EXIT_TIMEOUT, stage.wait()).await??;
+        assert!(status.success(), "the stage exits cleanly, got {status}");
         Ok(())
     }
 }

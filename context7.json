@@ -23,6 +23,7 @@
     "Move a running file subscription from its handler with `Ctx<SeekHandle>`; it belongs to the file transport, and a handler that reads it does not compile against `StdioBroker` (Components > Positions > Seek).",
     "Name the policy `Publish` at the mount site (`.out_reply(Publish)`, `.out(Marker, Publish)`); a handler body imports `ruststream::prelude::*` and bounds a slot as `Out<impl Publisher, Marker>` (Components > Publishing).",
     "A stream file grows without limit; cap it with `FileBroker::new(path).size_limit(nonzero!(bytes))`, after which the publish that reaches the cap and every later one fail (Components > Broker > size_limit).",
+    "A pipeline stage that exits when its standard input ends starts the app, waits until `health().subscriptions().active` is zero, and calls `shutdown`; `#[ruststream::app]` runs until a signal (Guides > Shell pipelines).",
     "On a stream file a `retry_after` copy returns to the key its subscription reads; a stdio registration names the copy's key with `.out_retry(Publish).to(\"key\")` (Components > Settlement > retry_after, out_retry).",
     "Cap retries with `.max_attempts(n)` and `.dead_letter(\"key\")` right after `include`; the count travels in the framework's retry-count header on every copy (Components > Settlement > Retries).",
     "Take batches with a `&[T]` handler and `.batch(n)` at the mount site; the batch is assembled on the client and a partial one goes out 10 ms after its first delivery (Components > Subscriptions > Batches).",

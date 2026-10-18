@@ -1,9 +1,9 @@
 //! How a pipeline stage reads the lines on its standard input, on real pipes.
 //!
-//! The header of a line is parsed by the stdio client, before anything of this crate sees it, so
-//! what a header may hold is a property of the client, and the only faithful place to check it is
-//! a stage running as a child process. The stage is the `stdio_pipeline` example: it answers each
-//! `jobs` line with a `results` line, and ignores the rest.
+//! The header of a line is read off standard input itself, so the only faithful place to check
+//! what a header may hold is a stage running as a child process. The stage is the
+//! `stdio_pipeline` example: it answers each `jobs` line with a `results` line, and ignores the
+//! rest.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// How long the stage is given to answer a line, or to stop on one it cannot read.
+/// How long the stage is given to answer a line.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The example binary the current build made beside this test, as `stdio_processes` finds it:
@@ -99,22 +99,6 @@ async fn first_answer(stage: &mut Child, input: &[u8]) -> String {
     answer
 }
 
-/// Writes `input` to the stage and waits for it to stop, returning whether it stopped cleanly.
-async fn stops_cleanly(stage: &mut Child, input: &[u8]) -> bool {
-    let mut stdin = stage.stdin.take().expect("the stage reads standard input");
-    stdin
-        .write_all(input)
-        .await
-        .expect("the stage accepts input");
-    stdin.flush().await.expect("the input reaches the stage");
-    let status = tokio::time::timeout(ANSWER_TIMEOUT, stage.wait())
-        .await
-        .expect("the stage stops on the line rather than waiting for more")
-        .expect("the stage's exit status is readable");
-    drop(stdin);
-    status.success()
-}
-
 /// A header that holds one word is the stream key, with no timestamp and no sequence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_header_of_one_word_names_the_stream_key() {
@@ -140,23 +124,26 @@ async fn a_line_with_no_key_reaches_the_subscription() {
     stage.kill().await.expect("the stage stops");
 }
 
-/// Standard input that is not UTF-8 stops the stage: the client reads text lines only.
+/// A line that is not UTF-8 is not one the format defines: the stage passes over it and answers
+/// the lines after it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_line_that_is_not_utf8_stops_the_stage() {
+async fn a_line_that_is_not_utf8_is_passed_over() {
     let mut stage = stage();
 
-    let clean = stops_cleanly(&mut stage, b"[jobs] \xff\xfe\n").await;
+    let answer = first_answer(&mut stage, b"[jobs] \xff\xfe\n[jobs] {\"id\":3}\n").await;
 
-    assert!(!clean, "the stage reports the failure in its exit status");
+    assert!(answer.contains("{\"id\":3}"), "got {answer}");
+    stage.kill().await.expect("the stage stops");
 }
 
-/// A line that opens with a bracket the client cannot read as a header stops the stage, a JSON
-/// array among them.
+/// A line that opens with a bracket that is no header, a JSON array among them, is not one the
+/// format defines either: the stage passes over it and answers the lines after it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_leading_bracket_that_is_no_header_stops_the_stage() {
+async fn a_leading_bracket_that_is_no_header_is_passed_over() {
     let mut stage = stage();
 
-    let clean = stops_cleanly(&mut stage, b"[1,2]\n").await;
+    let answer = first_answer(&mut stage, b"[1,2]\n[jobs] {\"id\":4}\n").await;
 
-    assert!(!clean, "the stage reports the failure in its exit status");
+    assert!(answer.contains("{\"id\":4}"), "got {answer}");
+    stage.kill().await.expect("the stage stops");
 }

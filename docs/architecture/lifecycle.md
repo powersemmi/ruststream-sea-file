@@ -33,7 +33,7 @@ export const stdio = {
   "connected": ["ConnectedStdioBroker"],
   "closed": ["Closed = ()", "nothing to report"],
   "config": ["Records loopback,", "touches no pipe"],
-  "reading": ["First subscription:", "the stdin thread"],
+  "reading": ["First subscription:", "the reader thread"],
   "writing": ["First publish:", "the stdout thread"],
   "shutdown": ["Ends every stdio", "stream of the process"],
   "afterShutdown": ["A publisher kept from before answers NotConnected"],
@@ -74,6 +74,7 @@ against the closed file.
 <Diagram name="stdioLifecycle" words={stdio} />
 
 Connect records whether the broker loops back and touches no pipe. The first subscription in the
-process starts the client's stdin thread, and the first publish its stdout thread, as
-[Pipe](transports/pipe.md) draws. Both threads serve the whole process, so a shutdown ends every
-stdio consumer and producer in it, those of other brokers included.
+process starts the reader thread of standard input, and the first publish the client's stdout
+thread, as [Pipe](transports/pipe.md) draws. Both threads serve the whole process, so a shutdown
+ends every stdio subscription and producer in it, those of other brokers included. The end of
+standard input ends the subscriptions too, those of a broker under `loopback` excepted.
