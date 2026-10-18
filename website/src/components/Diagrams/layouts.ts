@@ -1,6 +1,7 @@
 import {envelope} from './envelope';
 import type {Box, Lane, Link} from './flow';
 import {inProcess} from './inProcess';
+import {lifecycle, stdioLifecycle} from './lifecycle';
 import {pipe} from './pipe';
 import {reader} from './reader';
 import {seeking} from './seeking';
@@ -23,6 +24,8 @@ export const LAYOUTS = {
   reader,
   writer,
   pipe,
+  lifecycle,
+  stdioLifecycle,
   seeking,
   outcomes,
   retries,
