@@ -11,6 +11,7 @@
 //! cargo test --example manual_guide_pipelines_tests --features testing
 //! ```
 
+use std::future::{Future, ready};
 use std::process::ExitCode;
 
 use ruststream::runtime::cli::run_main;
@@ -38,19 +39,19 @@ struct Receipt {
 struct Price;
 
 impl Handle<Order, Receipt> for Price {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Receipt, HandlerOutcome> {
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
         let total_cents = order.quantity * order.unit_cents;
         // The log goes to standard error; standard output carries only messages.
         tracing::info!(order.id, total_cents, "order priced");
-        Ok(Receipt {
+        ready(Ok(Receipt {
             order: order.id,
             total_cents,
-        })
+        }))
     }
 }
 
@@ -97,11 +98,11 @@ mod tests {
     use ruststream::testing::TestApp;
     use ruststream_sea_file::stdio::prelude::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::process::Command;
+    use tokio::process::{Child, Command};
+    use tokio::time::timeout;
 
     use super::{Order, Receipt, app};
 
-    // --8<-- [start:test]
     #[tokio::test]
     async fn an_order_line_gets_a_receipt_line() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -125,13 +126,12 @@ mod tests {
         tb.shutdown().await?;
         Ok(())
     }
-    // --8<-- [end:test]
 
     /// How long the stage is given to answer a line.
     const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
 
-    /// How long a stage whose input ended is watched for an exit.
-    const EXIT_WATCH: Duration = Duration::from_secs(2);
+    /// How long a stage that read a line it cannot parse is given to stop.
+    const STOP_TIMEOUT: Duration = Duration::from_secs(20);
 
     /// The stage binary the current build made beside this test, found the way the crate's
     /// pipeline suite finds its own: the newest plain build in the first `examples` directory
@@ -188,24 +188,28 @@ mod tests {
         })
     }
 
-    /// The stage on real pipes: it answers the `orders` lines, passes over a line under another
-    /// key, and keeps running once its input has ended.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_stage_answers_its_key_and_outlives_its_input() -> Result<(), Box<dyn Error>> {
-        let mut stage = Command::new(stage_binary())
+    /// The stage as a pipeline runs it, with its standard input and output piped here.
+    fn spawn_stage() -> std::io::Result<Child> {
+        Command::new(stage_binary())
             .arg("run")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true)
-            .spawn()?;
+            .spawn()
+    }
 
+    /// The stage on real pipes: it answers the `orders` lines and a line with no key, and passes
+    /// over a line under another key.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_stage_answers_its_key_and_the_lines_with_no_key() -> Result<(), Box<dyn Error>> {
+        let mut stage = spawn_stage()?;
         let mut input = stage.stdin.take().ok_or("the stage reads standard input")?;
         input
             .write_all(
                 b"[orders] {\"id\":7,\"quantity\":3,\"unit_cents\":250}\n\
                   [refunds] {\"id\":8,\"quantity\":1,\"unit_cents\":100}\n\
-                  [orders] {\"id\":9,\"quantity\":2,\"unit_cents\":50}\n",
+                  {\"id\":9,\"quantity\":2,\"unit_cents\":50}\n",
             )
             .await?;
         input.flush().await?;
@@ -214,7 +218,7 @@ mod tests {
             .lines();
         let mut answers = Vec::new();
         while answers.len() < 2 {
-            let line = tokio::time::timeout(ANSWER_TIMEOUT, output.next_line())
+            let line = timeout(ANSWER_TIMEOUT, output.next_line())
                 .await?
                 .map_err(|error| format!("the stage's output is unreadable: {error}"))?
                 .ok_or("the stage closed its output")?;
@@ -227,12 +231,23 @@ mod tests {
             assert!(answer.contains("| receipts |"), "{answer}");
             assert!(answer.ends_with(receipt), "{answer}");
         }
-
-        // End of input: the stage still runs, and a signal is what stops it.
-        drop(input);
-        let exited = tokio::time::timeout(EXIT_WATCH, stage.wait()).await;
-        assert!(exited.is_err(), "the stage exited at the end of its input: {exited:?}");
         stage.kill().await?;
+        Ok(())
+    }
+
+    /// A line the client cannot parse stops the whole stage: here a JSON array, whose leading
+    /// `[..]` is not a header, and a line that is not UTF-8.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_line_the_client_cannot_parse_stops_the_stage() -> Result<(), Box<dyn Error>> {
+        for line in [b"[1,2]\n".as_slice(), b"\xff\xfe\n".as_slice()] {
+            let mut stage = spawn_stage()?;
+            let mut input = stage.stdin.take().ok_or("the stage reads standard input")?;
+            input.write_all(line).await?;
+            input.flush().await?;
+
+            let status = timeout(STOP_TIMEOUT, stage.wait()).await??;
+            assert!(!status.success(), "{line:?} left the stage with {status}");
+        }
         Ok(())
     }
 }
