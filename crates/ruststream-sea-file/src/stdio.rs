@@ -314,9 +314,13 @@ impl ConnectedBroker for ConnectedStdioBroker {
         self.core.closed.store(true, Ordering::Release);
         let streamer = match &self.core.link {
             StdioLink::Stdio(pipes) => &pipes.streamer,
-            // The in-memory pipe belongs to this broker alone, so its shutdown reaches no other.
+            // The in-memory pipe belongs to this broker alone, so its shutdown ends only the
+            // subscriptions on it.
             #[cfg(feature = "testing")]
-            StdioLink::InProcess(_) => return Ok(()),
+            StdioLink::InProcess(pipe) => {
+                pipe.finish();
+                return Ok(());
+            }
         };
         // Globally destructive by the client's design: every stdio consumer and producer in
         // the process ends. That is the honest meaning of shutting down a process-wide
@@ -373,7 +377,6 @@ impl Subscribe for ConnectedStdioBroker {
                 })?;
 
         let (tx, rx) = mpsc::channel(64);
-        let stream_name = name.to_owned();
         pipes.runtime.spawn(async move {
             loop {
                 tokio::select! {
@@ -384,15 +387,9 @@ impl Subscribe for ConnectedStdioBroker {
                                 break;
                             }
                         }
-                        Err(err) => {
-                            let _ = tx
-                                .send(Err(SeaFileError::Receive {
-                                    stream: stream_name.clone(),
-                                    source: box_err(err),
-                                }))
-                                .await;
-                            break;
-                        }
+                        // The client fails a read only once its consumers are disconnected,
+                        // which is what the shutdown does: the subscription ends there.
+                        Err(_) => break,
                     },
                 }
             }

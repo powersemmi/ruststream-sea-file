@@ -648,10 +648,20 @@ async fn serve(
         }));
         return false;
     }
+    // Whether the reader reads one message past the target before the subscription delivers.
+    let mut skip_one = false;
     let target = match position {
-        FilePosition::Beginning => SeekTarget::Beginning,
+        // A stream key is numbered from one, so its first message is where the file begins.
+        FilePosition::Beginning | FilePosition::Sequence(0 | 1) => SeekTarget::Beginning,
         FilePosition::End => SeekTarget::End,
-        FilePosition::Sequence(sequence) => SeekTarget::SeqNo(sequence),
+        // The file finds a sequence by reading forward to it, so it refuses the one its next
+        // append carries, which is where a service that handled everything resumes. The message
+        // before it is there to find, and reading it leaves the reader where `sequence` is or
+        // will be: the file numbers a stream key without gaps.
+        FilePosition::Sequence(sequence) => {
+            skip_one = true;
+            SeekTarget::SeqNo(sequence - 1)
+        }
         FilePosition::Timestamp(millis) => {
             let nanos = i128::from(millis) * 1_000_000;
             match Timestamp::from_unix_timestamp_nanos(nanos) {
@@ -667,7 +677,10 @@ async fn serve(
     };
     // The client's seek is not cancel-safe: it runs here to completion, never inside a racing
     // select arm.
-    let result = reader.reposition(target).await;
+    let mut result = reader.reposition(target).await.map_err(box_err);
+    if result.is_ok() && skip_one {
+        result = reader.next().await.map(drop).map_err(box_err);
+    }
     let moved = result.is_ok();
     if moved {
         // Published before the answer (Release, paired with the filter's Acquire load), so once
@@ -675,9 +688,9 @@ async fn serve(
         *generation += 1;
         epoch.store(*generation, Ordering::Release);
     }
-    let _ = done.send(result.map_err(|e| SeaFileError::Seek {
+    let _ = done.send(result.map_err(|source| SeaFileError::Seek {
         stream: stream.to_owned(),
-        source: box_err(e),
+        source,
     }));
     moved
 }
@@ -848,6 +861,50 @@ mod tests {
             .expect("a seek after the stream ended succeeds");
 
         assert_eq!(next_body(&mut stream).await, Some(2));
+        assert_eq!(next_body(&mut stream).await, None);
+    }
+
+    /// The sequence after the last message is where the next append arrives: the seek succeeds
+    /// and the subscription delivers nothing the file already holds.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_to_the_sequence_after_the_last_lands_at_the_tip() {
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
+                false
+            });
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(4)))
+            .await
+            .expect("the seek completes")
+            .expect("the sequence the file writes next is a position");
+
+        assert_eq!(next_body(&mut stream).await, None);
+    }
+
+    /// The first sequence of a stream key is the start of the file, and a seek there replays
+    /// everything from it.
+    #[tokio::test(start_paused = true)]
+    async fn a_seek_to_the_first_sequence_replays_from_the_start() {
+        let mut subscriber =
+            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
+                false
+            });
+        let seeker = subscriber.seeker();
+        let mut stream = std::pin::pin!(subscriber.stream());
+        assert_eq!(next_body(&mut stream).await, Some(1));
+        assert_eq!(next_body(&mut stream).await, Some(2));
+
+        tokio::time::timeout(STUCK, seeker.seek(FilePosition::sequence(1)))
+            .await
+            .expect("the seek completes")
+            .expect("the first sequence is a position");
+
+        for expected in 1..=3 {
+            assert_eq!(next_body(&mut stream).await, Some(expected));
+        }
         assert_eq!(next_body(&mut stream).await, None);
     }
 

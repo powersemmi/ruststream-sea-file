@@ -324,6 +324,40 @@ async fn the_end_of_stream_mark_ends_a_live_subscription_in_process() {
     }
 }
 
+/// The shutdown of a pipe ends every subscription on it, after the lines it already read, as the
+/// real transport's shutdown ends every consumer of standard input.
+#[tokio::test]
+async fn a_stdio_shutdown_ends_its_subscriptions_in_process() {
+    let connected = StdioBroker::new()
+        .loopback()
+        .connect_in_process()
+        .await
+        .expect("connects");
+    let mut lines = connected
+        .subscribe("lines")
+        .await
+        .expect("subscription opens");
+    connected
+        .publisher()
+        .publish(OutgoingMessage::new("lines", b"last".as_slice()), None)
+        .await
+        .expect("publish succeeds");
+    connected.shutdown().await.expect("shutdown");
+
+    let mut stream = pin!(lines.stream());
+    let read = stream
+        .next()
+        .now_or_never()
+        .expect("the line read before the shutdown is still there")
+        .expect("the subscription is open until its lines are read")
+        .expect("the line is readable");
+    assert_eq!(read.payload(), b"last".as_slice());
+    assert!(
+        matches!(stream.next().now_or_never(), Some(None)),
+        "the shutdown must end the subscription",
+    );
+}
+
 /// A delivery reports its sequence the way each transport numbers it: a stream file from one, a
 /// pipe from zero.
 #[tokio::test]
