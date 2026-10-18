@@ -920,3 +920,104 @@ pub mod prelude {
         FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream, Position, SeekHandle,
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use futures::future::join_all;
+    use sea_streamer_file::{
+        FileConnectOptions, FileErr, FileId, FileProducerOptions, FileStreamer, MessageSource,
+        StreamMode,
+    };
+    use sea_streamer_types::{Buffer as _, Message as _, StreamKey, Streamer as _};
+    use tokio::runtime::Runtime;
+
+    use super::append;
+
+    /// A limit small enough for a few messages to reach it.
+    const LIMIT: u64 = 8 * 1024;
+
+    /// What one publish appended: its number, so the file can be checked message by message.
+    fn body(n: usize) -> Vec<u8> {
+        let mut bytes = format!("{n:06}").into_bytes();
+        bytes.resize(300, b'.');
+        bytes
+    }
+
+    /// Every message of `key` that is wholly in the file, by its number.
+    async fn read_back(path: &str, key: &StreamKey) -> Vec<usize> {
+        let mut source = MessageSource::new(FileId::new(path), StreamMode::Replay)
+            .await
+            .expect("the file opens for a replay");
+        let mut found = Vec::new();
+        loop {
+            match source.next().await {
+                Ok(msg) if msg.message.stream_key() == *key => {
+                    let bytes = msg.message.message().as_bytes().to_vec();
+                    let n = std::str::from_utf8(&bytes[..6]).expect("a number").parse();
+                    found.push(n.expect("a number"));
+                }
+                Ok(_) => {}
+                Err(FileErr::NotEnoughBytes | FileErr::StreamEnded) => return found,
+                Err(e) => panic!("the file reads back: {e}"),
+            }
+        }
+    }
+
+    /// Publishes `count` messages through the crate's append into a file capped at [`LIMIT`],
+    /// `concurrent` at a time, and returns the numbers of the publishes that reported success.
+    async fn publish_past_the_limit(path: &str, count: usize, concurrent: usize) -> Vec<usize> {
+        let mut options = FileConnectOptions::default();
+        options.set_create_if_not_exists(true);
+        options.set_file_size_limit(LIMIT);
+        let uri = FileId::new(path).to_streamer_uri().expect("a file address");
+        let streamer = FileStreamer::connect(uri, options).await.expect("connects");
+        let producer = streamer
+            .create_generic_producer(FileProducerOptions::default())
+            .await
+            .expect("a producer");
+        let key = StreamKey::new("orders").expect("a stream key");
+        let mut succeeded = Vec::new();
+        for wave in (0..count).collect::<Vec<_>>().chunks(concurrent) {
+            let results = join_all(wave.iter().map(|&n| {
+                let (producer, key) = (&producer, &key);
+                async move { (n, append(producer, key, &body(n)).await) }
+            }))
+            .await;
+            succeeded.extend(results.into_iter().filter(|(_, r)| r.is_ok()).map(|(n, _)| n));
+        }
+        drop(producer);
+        let _ended = streamer.disconnect().await;
+        succeeded
+    }
+
+    // The client caps a stream file and cuts the message that crosses the cap. A publish this
+    // crate reports as done must be one the file holds whole: a reader of the file is the only
+    // place a message lives once the publish returned.
+    #[test]
+    fn a_publish_reported_done_is_wholly_in_the_file_at_the_size_limit() {
+        // The client's producers live on one process-wide task, spawned on the first runtime
+        // that touches them, so every case runs on this one.
+        let rt = Runtime::new().expect("a runtime");
+        rt.block_on(async {
+            for concurrent in [1, 8] {
+                let path = std::env::temp_dir()
+                    .join(format!("ruststream-sea-limit-{}-{concurrent}.ss", std::process::id()))
+                    .to_string_lossy()
+                    .into_owned();
+                let _stale = std::fs::remove_file(&path);
+                let succeeded = publish_past_the_limit(&path, 64, concurrent).await;
+                let key = StreamKey::new("orders").expect("a stream key");
+                let held = read_back(&path, &key).await;
+                std::fs::remove_file(&path).expect("the file is removed");
+                assert!(succeeded.len() < 64, "the limit refused nothing ({concurrent} at a time)");
+                for n in &succeeded {
+                    assert!(
+                        held.contains(n),
+                        "publish {n} reported success but the file does not hold it whole \
+                         ({concurrent} at a time; reported {succeeded:?}, held {held:?})"
+                    );
+                }
+            }
+        });
+    }
+}
