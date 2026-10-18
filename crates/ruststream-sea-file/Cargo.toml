@@ -302,3 +302,148 @@ name = "manual_sea_asyncapi"
 path = "examples/manual/sea_asyncapi.rs"
 required-features = ["asyncapi"]
 test = true
+
+# --- examples: publishing, settlement, headers, testing ---
+
+[[example]]
+name = "sea_publish"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_publish"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_publish"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_acknowledgement"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_retry_after"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_out_retry"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_max_attempts"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_dead_letter"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_headers"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_sequence_header"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_payloads"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_testing"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_testing_live"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_publish"
+path = "examples/manual/sea_publish.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_publish"
+path = "examples/manual/file_publish.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_publish"
+path = "examples/manual/stdio_publish.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_acknowledgement"
+path = "examples/manual/sea_acknowledgement.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_retry_after"
+path = "examples/manual/file_retry_after.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_out_retry"
+path = "examples/manual/stdio_out_retry.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_max_attempts"
+path = "examples/manual/file_max_attempts.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_dead_letter"
+path = "examples/manual/file_dead_letter.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_headers"
+path = "examples/manual/sea_headers.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_sequence_header"
+path = "examples/manual/file_sequence_header.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_payloads"
+path = "examples/manual/stdio_payloads.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_testing"
+path = "examples/manual/sea_testing.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_testing_live"
+path = "examples/manual/file_testing_live.rs"
+required-features = ["testing"]
+test = true
