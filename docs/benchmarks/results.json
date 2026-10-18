@@ -11,12 +11,12 @@
     "cores": "12 physical, 24 logical",
     "memory": "62.4 GiB",
     "memory_speed": "unknown",
-    "os": "Linux 7.2.10-x64v3-xanmod1-1",
+    "os": "Linux 7.2.11-x64v3-xanmod1-1",
     "broker": "none: the transport is a stream file on this machine's filesystem",
-    "filesystem": "btrfs on /dev/nvme1n1p1",
-    "file_size": "0.70 GiB per run at its largest",
+    "filesystem": "btrfs on /dev/nvme2n1p1",
+    "file_size": "0.71 GiB per run at its largest",
     "page_cache": "warm: every run writes its stream file immediately before reading it back, so the figures are the filesystem's rather than the device's",
-    "round_trip": "21.0 us per flushed append",
+    "round_trip": "18.0 us per flushed append",
     "rustc": "1.99.0",
     "profile": "bench, inheriting release (opt-level = 3, lto = fat, codegen-units = 16, debug = line-tables-only)",
     "features": "ruststream-sea-file default (none), ruststream macros,json",
@@ -27,53 +27,53 @@
     {
       "name": "replay of a recorded stream file, 512 B JSON",
       "unit": "msg/s",
-      "messages": 1315627,
+      "messages": 1330598,
       "pairs": 3,
       "raw": {
-        "best": 144130,
-        "median": 144062,
-        "worst": 90529
+        "best": 226428,
+        "median": 206683,
+        "worst": 204676
       },
       "adapter": {
-        "best": 218862,
-        "median": 192825,
-        "worst": 186627
+        "best": 227695,
+        "median": 225547,
+        "worst": 218984
       },
       "framework": {
-        "best": 307505,
-        "median": 304194,
-        "worst": 241033
+        "best": 320151,
+        "median": 313104,
+        "worst": 299111
       },
-      "adapter_overhead_percent": -51.9,
-      "adapter_verdict": "measured",
-      "overhead_percent": -113.4,
+      "adapter_overhead_percent": -0.6,
+      "adapter_verdict": "indistinguishable",
+      "overhead_percent": -41.4,
       "verdict": "measured",
       "broker_bound": false
     },
     {
       "name": "live tail of a file being appended to, 512 B JSON",
       "unit": "msg/s",
-      "messages": 394520,
+      "messages": 423745,
       "pairs": 3,
       "raw": {
-        "best": 61726,
-        "median": 49807,
-        "worst": 37733
+        "best": 68880,
+        "median": 68702,
+        "worst": 66731
       },
       "adapter": {
-        "best": 61652,
-        "median": 60647,
-        "worst": 46507
+        "best": 68090,
+        "median": 67417,
+        "worst": 66695
       },
       "framework": {
-        "best": 60451,
-        "median": 58491,
-        "worst": 38181
+        "best": 66630,
+        "median": 65933,
+        "worst": 65224
       },
-      "adapter_overhead_percent": 0.1,
+      "adapter_overhead_percent": 1.1,
       "adapter_verdict": "indistinguishable",
-      "overhead_percent": 2.1,
-      "verdict": "indistinguishable",
+      "overhead_percent": 3.3,
+      "verdict": "measured",
       "broker_bound": true
     }
   ],

@@ -33,9 +33,9 @@ The two scenarios are the two ways a [stream file](../transports/index.md) is re
 a file written in full before the subscription opened, and nothing paces it. A live tail follows a
 file still being appended to, and every delivery waits for an append.
 
-On the replay row both layers come out faster than the raw client. The crate's [subscription
-reads ahead](../path.md) on a task of its own, so the next message is out of the file while the
-current one is handled. The hand-written raw loop reads and handles in one task.
+On the replay row RustStream comes out faster than the raw client, and the crate's own loop matches
+it. The crate's [subscription reads ahead](../path.md) on a task of its own, so the next message is
+out of the file while the current one is handled. The hand-written raw loop reads and handles in one task.
 
 ## Cost of the code
 
