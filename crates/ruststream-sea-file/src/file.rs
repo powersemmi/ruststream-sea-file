@@ -205,10 +205,12 @@
     allow(clippy::infallible_destructuring_match)
 )]
 
+use std::collections::HashMap;
 use std::fs;
 use std::future::{Future, ready};
-use std::sync::Arc;
+use std::mem;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Weak};
 
 #[cfg(feature = "testing")]
 use ruststream::RawMessage;
@@ -228,7 +230,7 @@ use sea_streamer_types::{
     ConsumerMode, ConsumerOptions as _, Producer as _, StreamErr, StreamKey, Streamer as _,
 };
 use tokio::runtime::Handle;
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{SeaFileError, box_err};
 #[cfg(feature = "testing")]
@@ -251,16 +253,48 @@ pub(crate) struct Disk {
     pub(crate) streamer: FileStreamer,
     /// Taken out and dropped by `shutdown`, never later.
     ///
-    /// Why the lock: the client counts producer handles per path, on one process-wide task, and
-    /// applies a dropped handle to whichever writer holds the path when the drop is processed. A
-    /// handle this connection dropped after its writer ended would end the writer of the next
-    /// connection over the same path. Publishers share the connection, so `shutdown` takes the
-    /// handle out under the write lock, once the publishes in flight are done with it.
-    pub(crate) producer: RwLock<Option<FileProducer>>,
+    /// Why the lock is exclusive: once an append fails, the client's writer ends and leaves every
+    /// request queued behind the failing one unanswered, so a publish issued beside it would never
+    /// return. One append at a time keeps nothing queued behind a failure, and the failure is
+    /// recorded so no later publish reaches the ended writer. The client also counts producer
+    /// handles per path, on one process-wide task, and applies a dropped handle to whichever
+    /// writer holds the path when the drop is processed: a handle this connection dropped after
+    /// its writer ended would end the writer of the next connection over the same path, so
+    /// `shutdown` takes the handle out under the lock, once the publish in flight is done with it.
+    ///
+    /// Brokers opened on one path in one process share the client's writer, so they share this
+    /// appender too: one lock per file, not per broker.
+    pub(crate) producer: Arc<Mutex<Appender>>,
     /// The runtime `connect` ran on. Every task of this connection runs there: the subscription
     /// drivers this crate starts, and the readers the client starts when a consumer opens, so a
     /// subscription opened from another runtime does not stop when that runtime does.
     pub(crate) runtime: Handle,
+}
+
+/// The producer of a connection, from connect to shutdown.
+pub(crate) enum Appender {
+    /// Appends go through.
+    Open(FileProducer),
+    /// An append failed and the client's writer ended with it; the handle is kept for `shutdown`
+    /// to drop in order, and every later publish reports the failure.
+    Failed(FileProducer, FileErr),
+    /// `shutdown` took the handle out.
+    Closed,
+}
+
+/// The appender of every stream file a broker of this process has open, by path.
+static APPENDERS: LazyLock<Mutex<HashMap<String, Weak<Mutex<Appender>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The appender a broker opened earlier on `path` and has not shut down, which a broker opened
+/// on the same path appends through as well.
+async fn open_appender(
+    appenders: &HashMap<String, Weak<Mutex<Appender>>>,
+    path: &str,
+) -> Option<Arc<Mutex<Appender>>> {
+    let shared = appenders.get(path)?.upgrade()?;
+    let open = !matches!(*shared.lock().await, Appender::Closed);
+    open.then_some(shared)
 }
 
 /// What a connected broker and every handle paired off it speak over: the stream file, or, under
@@ -342,6 +376,10 @@ pub struct FileBroker {
     create: bool,
     end_with_eos: bool,
     beacon_interval: Option<u32>,
+    /// The size the client caps the file at, lowered only by the unit tests, which cannot write
+    /// the client's default of 16 GiB.
+    #[cfg(test)]
+    size_limit: Option<u64>,
     cell: CoreCell,
 }
 
@@ -353,8 +391,16 @@ impl FileBroker {
             create: true,
             end_with_eos: false,
             beacon_interval: None,
+            #[cfg(test)]
+            size_limit: None,
             cell: Arc::new(OnceCell::new()),
         }
+    }
+
+    #[cfg(test)]
+    const fn size_limit(mut self, bytes: u64) -> Self {
+        self.size_limit = Some(bytes);
+        self
     }
 
     /// Requires the file to exist instead of creating it on connect.
@@ -404,6 +450,10 @@ impl Broker for FileBroker {
                 if self.end_with_eos {
                     options.set_end_with_eos(true);
                 }
+                #[cfg(test)]
+                if let Some(bytes) = self.size_limit {
+                    options.set_file_size_limit(bytes);
+                }
                 if let Some(interval) = self.beacon_interval {
                     options.set_beacon_interval(interval).map_err(|e| {
                         SeaFileError::Invalid(format!("invalid beacon interval: {e}"))
@@ -426,6 +476,18 @@ impl Broker for FileBroker {
                     target: self.path.clone(),
                     source: box_err(e),
                 };
+                let mut appenders = APPENDERS.lock().await;
+                if let Some(shared) = open_appender(&appenders, &self.path).await {
+                    return Ok(Arc::new(Core {
+                        link: Link::File(Disk {
+                            streamer,
+                            producer: shared,
+                            runtime: Handle::current(),
+                        }),
+                        path: self.path.clone(),
+                        closed: AtomicBool::new(false),
+                    }));
+                }
                 let producer = streamer
                     .create_generic_producer(FileProducerOptions::default())
                     .await
@@ -445,10 +507,14 @@ impl Broker for FileBroker {
                     let mut flusher = producer.clone();
                     flusher.flush().await.map_err(connect_err)?;
                 }
+                let shared = Arc::new(Mutex::new(Appender::Open(producer)));
+                appenders.retain(|_, appender| appender.strong_count() > 0);
+                appenders.insert(self.path.clone(), Arc::downgrade(&shared));
+                drop(appenders);
                 Ok::<_, SeaFileError>(Arc::new(Core {
                     link: Link::File(Disk {
                         streamer,
-                        producer: RwLock::new(Some(producer)),
+                        producer: shared,
                         runtime: Handle::current(),
                     }),
                     path: self.path.clone(),
@@ -616,11 +682,13 @@ impl ConnectedBroker for ConnectedFileBroker {
                 return Ok(());
             }
         };
-        // The write lock waits for the publishes in flight, so every handle they cloned is dropped
-        // before the writer ends. A connection another clone of this broker already shut down
-        // holds no handle and has nothing left to end.
-        let Some(producer) = disk.producer.write().await.take() else {
-            return Ok(());
+        // The lock waits for the publish in flight. A connection that another clone of this
+        // broker, or another broker on the same path, already shut down holds no handle and has
+        // nothing left to end.
+        let taken = mem::replace(&mut *disk.producer.lock().await, Appender::Closed);
+        let producer = match taken {
+            Appender::Open(producer) | Appender::Failed(producer, _) => producer,
+            Appender::Closed => return Ok(()),
         };
         // Ends the file's shared producers (writing the end-of-stream mark when configured)
         // and flushes to disk. An already-ended producer is benign teardown noise: another
@@ -694,37 +762,74 @@ impl Publisher for FilePublisher {
         let key = StreamKey::new(msg.name())
             .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", msg.name())))?;
         let payload = wire::encode(msg.headers(), msg.payload(), false);
-        let held = match &core.link {
-            Link::File(disk) => disk.producer.read().await,
+        match &core.link {
+            Link::File(disk) => {
+                let mut appender = disk.producer.lock().await;
+                appender.append(msg.name(), &key, &payload).await
+            }
+            .map_err(|err| match err {
+                // The appender closed while this connection is open: another broker on the
+                // same path shut down and ended the file's writer.
+                SeaFileError::NotConnected if !core.closed.load(Ordering::Acquire) => {
+                    SeaFileError::Publish {
+                        stream: msg.name().to_owned(),
+                        source: box_err(FileErr::ProducerEnded),
+                    }
+                }
+                other => other,
+            }),
             #[cfg(feature = "testing")]
             Link::InProcess(file) => {
                 file.append(key, payload);
-                return Ok(());
+                Ok(())
             }
+        }
+    }
+}
+
+impl Appender {
+    /// Appends one message through an open producer, and records a failure that ended the
+    /// client's writer, so a later publish reports it instead of reaching that writer.
+    async fn append(
+        &mut self,
+        stream: &str,
+        key: &StreamKey,
+        payload: &[u8],
+    ) -> Result<(), SeaFileError> {
+        let failed = |source| SeaFileError::Publish {
+            stream: stream.to_owned(),
+            source,
         };
-        // Empty when `shutdown` ran between the open check and the lock.
-        let producer = held.as_ref().ok_or(SeaFileError::NotConnected)?;
-        let appended = append(producer, &key, &payload).await;
-        drop(held);
-        appended.map_err(|e| SeaFileError::Publish {
-            stream: msg.name().to_owned(),
-            source: box_err(e),
-        })
+        let producer = match self {
+            Self::Open(producer) => producer,
+            Self::Failed(_, err) => return Err(failed(box_err(err.take()))),
+            // A `shutdown` ran between the open check and the lock.
+            Self::Closed => return Err(SeaFileError::NotConnected),
+        };
+        let mut cause = match append(producer, key, payload).await {
+            Ok(()) => return Ok(()),
+            Err(StreamErr::Backend(cause)) => cause,
+            Err(other) => return Err(failed(box_err(other))),
+        };
+        let reported = cause.take();
+        if let Self::Open(producer) = mem::replace(self, Self::Closed) {
+            *self = Self::Failed(producer, cause);
+        }
+        Err(failed(box_err(reported)))
     }
 }
 
 /// Appends one message and flushes it to the file.
 ///
 /// The flush is per publish: the sink buffers, and live subscribers (and external tails) observe
-/// the file, not the buffer. A clone shares the same sink.
+/// the file, not the buffer.
 async fn append(
-    producer: &FileProducer,
+    producer: &mut FileProducer,
     key: &StreamKey,
     payload: &[u8],
 ) -> Result<(), StreamErr<FileErr>> {
     producer.send_to(key, payload)?.await?;
-    let mut flusher = producer.clone();
-    flusher.flush().await
+    producer.flush().await
 }
 
 /// The publish policy for [`FilePublisher`].
@@ -919,4 +1024,141 @@ pub mod prelude {
     pub use crate::{
         FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream, Position, SeekHandle,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::future::join_all;
+    use ruststream::{Broker as _, ConnectedBroker as _, OutgoingMessage, Publisher as _};
+    use sea_streamer_file::{FileErr, FileId, MessageSource, StreamMode};
+    use sea_streamer_types::{Buffer as _, Message as _, StreamKey};
+    use tokio::runtime::Runtime;
+    use tokio::time::timeout;
+
+    use super::FileBroker;
+
+    /// How long one step may take before the test calls it stuck: each is a local file write.
+    const STEP: Duration = Duration::from_secs(10);
+
+    /// A limit small enough for a few messages to reach it.
+    const LIMIT: u64 = 8 * 1024;
+
+    /// What one publish appends: its number, so the file can be checked message by message.
+    fn body(n: usize) -> Vec<u8> {
+        let mut bytes = format!("{n:06}").into_bytes();
+        bytes.resize(300, b'.');
+        bytes
+    }
+
+    /// Every message of `key` that is wholly in the file, by its number.
+    async fn read_back(path: &str, key: &StreamKey) -> Vec<usize> {
+        let mut source = MessageSource::new(FileId::new(path), StreamMode::Replay)
+            .await
+            .expect("the file opens for a replay");
+        let mut found = Vec::new();
+        loop {
+            match source.next().await {
+                Ok(msg) if msg.message.stream_key() == *key => {
+                    let bytes = msg.message.message().as_bytes().to_vec();
+                    let n = std::str::from_utf8(&bytes[..6]).expect("a number").parse();
+                    found.push(n.expect("a number"));
+                }
+                Ok(_) => {}
+                Err(FileErr::NotEnoughBytes | FileErr::StreamEnded) => return found,
+                Err(e) => panic!("the file reads back: {e}"),
+            }
+        }
+    }
+
+    /// Publishes `count` messages into a file capped at [`LIMIT`], `concurrent` at a time,
+    /// spread over `brokers` brokers opened on the file, and returns the numbers of the publishes
+    /// that reported success.
+    async fn publish_past_the_limit(
+        path: &str,
+        count: usize,
+        concurrent: usize,
+        brokers: usize,
+    ) -> Vec<usize> {
+        let mut connected = Vec::new();
+        let mut publishers = Vec::new();
+        for _ in 0..brokers {
+            let broker = FileBroker::new(path).size_limit(LIMIT);
+            connected.push(broker.clone().connect().await.expect("connects"));
+            publishers.push(broker.publisher());
+        }
+        let mut succeeded = Vec::new();
+        for wave in (0..count).collect::<Vec<_>>().chunks(concurrent) {
+            let results = join_all(wave.iter().map(|&n| {
+                let publisher = &publishers[n % brokers];
+                async move {
+                    let bytes = body(n);
+                    let publish =
+                        publisher.publish(OutgoingMessage::new("orders", &bytes[..]), None);
+                    let result = timeout(STEP, publish).await.unwrap_or_else(|_| {
+                        panic!("publish {n} never returned ({concurrent} at a time)")
+                    });
+                    (n, result)
+                }
+            }))
+            .await;
+            succeeded.extend(
+                results
+                    .into_iter()
+                    .filter(|(_, r)| r.is_ok())
+                    .map(|(n, _)| n),
+            );
+        }
+        for connected in connected {
+            let ended = timeout(STEP, connected.shutdown()).await;
+            assert!(
+                ended.is_ok(),
+                "the broker never shut down ({concurrent} at a time)"
+            );
+        }
+        succeeded
+    }
+
+    // The client caps a stream file, and once an append fails its writer takes no more. A
+    // publish must still return, and one this crate reports as done must be one the file holds
+    // whole: a reader of the file is the only place a message lives once the publish returned.
+    #[test]
+    fn a_publish_at_the_size_limit_returns_and_one_reported_done_is_whole_in_the_file() {
+        // The client's producers live on one process-wide task, spawned on the first runtime
+        // that touches them, so every case runs on this one.
+        let rt = Runtime::new().expect("a runtime");
+        rt.block_on(async {
+            // One publish at a time, eight at once through one broker, and eight at once through
+            // eight brokers opened on the one file, which share its writer.
+            for (concurrent, brokers) in [(1, 1), (8, 1), (8, 8)] {
+                let path = std::env::temp_dir()
+                    .join(format!(
+                        "ruststream-sea-limit-{}-{concurrent}-{brokers}.ss",
+                        std::process::id()
+                    ))
+                    .to_string_lossy()
+                    .into_owned();
+                let _stale = std::fs::remove_file(&path);
+                let succeeded = publish_past_the_limit(&path, 64, concurrent, brokers).await;
+                let key = StreamKey::new("orders").expect("a stream key");
+                let held = timeout(STEP, read_back(&path, &key)).await;
+                let held = held.unwrap_or_else(|_| {
+                    panic!("reading the file back never ended ({concurrent} at a time)")
+                });
+                std::fs::remove_file(&path).expect("the file is removed");
+                assert!(
+                    succeeded.len() < 64,
+                    "the limit refused nothing ({concurrent} at a time)"
+                );
+                for n in &succeeded {
+                    assert!(
+                        held.contains(n),
+                        "publish {n} reported success but the file does not hold it whole \
+                         ({concurrent} at a time; reported {succeeded:?}, held {held:?})"
+                    );
+                }
+            }
+        });
+    }
 }
