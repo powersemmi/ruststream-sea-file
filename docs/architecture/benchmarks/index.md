@@ -1,3 +1,7 @@
+---
+description: "What ruststream-sea-file and the RustStream runtime cost on every message, measured against the same work written by hand on sea-streamer-file."
+---
+
 # Benchmarks
 
 A layer between the stream file and your code costs time on every message: the subscription stream,

@@ -1,4 +1,8 @@
-# 基准测试 { #benchmarks }
+---
+description: "ruststream-sea-file 与 RustStream 运行时在每条消息上的开销，与直接在 sea-streamer-file 上手写同样的工作相比。"
+---
+
+# 基准测试 {/* #benchmarks */}
 
 在流文件和你的代码之间，任何一层都要在每条消息上花时间：订阅的流、解码、确认、分发。这一页说明它
 花了多少，参照物是同样的活用 `sea-streamer-file` 手写一遍。
@@ -15,7 +19,7 @@
 [RustStream 基准测试页](https://powersemmi.github.io/ruststream/latest/zh/benchmarks/#methodology)
 上；这一页公布它在这台机器上得出的结果。
 
-## 数字 { #the-numbers }
+## 数字 {/* #the-numbers */}
 
 三个交错轮次中的最佳值，括号里是中位的一轮。越大越好。
 
@@ -42,7 +46,7 @@
 [`benchmarks/results.json`](https://powersemmi.github.io/ruststream-sea-file/latest/benchmarks/results.json)，
 框架的站点用它拼出跨 Broker 的汇总表。
 
-## crate 自身的代码 { #the-crates-own-code }
+## crate 自身的代码 {/* #the-crates-own-code */}
 
 <div id="benchmark-code"></div>
 
@@ -68,7 +72,7 @@ C 库的内存分配器里，以及关闭不满批次的那个时限上。`just 
 而抓不到多出一次；加上 `--baseline=main` 时，指令数多出百分之六以上也算失败。改变开销的合并请求要附上
 自己的数字。
 
-## 机器 { #the-machine }
+## 机器 {/* #the-machine */}
 
 <div id="benchmark-environment"></div>
 
@@ -85,7 +89,7 @@ C 库的内存分配器里，以及关闭不满批次的那个时限上。`just 
 构建标志和数字一起公布，因为它们会改变这些数字。用 `-C target-cpu=native` 构建出的二进制给出的
 结果，换一台机器就复现不了，所以这条 recipe 在构建前先把这个变量清空。
 
-## 这些数字不代表什么 { #what-they-do-not-mean }
+## 这些数字不代表什么 {/* #what-they-do-not-mean */}
 
 这里只有一个订阅、一个流键、一个很小的消息体和一个文件。它测的是一次投递在这个 crate 里的开销，
 不是磁盘能读多快。这里的一行也不能拿去和另一个 Broker 公布的一行比较：不同的传输在每条消息上做的
@@ -101,7 +105,7 @@ C 库的内存分配器里，以及关闭不满批次的那个时限上。`just 
 这些数字是一台机器在某一天的快照。它们由人手工重测，测量期间机器只跑这一项：这一页要讲的差值，
 比与其他任务共用的机器上的噪声还小。
 
-## 自己跑一遍 { #running-it-yourself }
+## 自己跑一遍 {/* #running-it-yourself */}
 
 ```bash
 just bench
