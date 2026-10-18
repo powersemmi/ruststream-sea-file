@@ -43,8 +43,8 @@ export const stdio = {
 
 # Жизненный цикл
 
-`FileBroker::new` записывает путь, connect открывает файл, каждая подписка открывает читателя,
-а завершение работы закрывает запись. `StdioBroker` подключает каналы процесса при первом
+[`FileBroker::new`](../components/broker/file-broker.md) записывает путь, connect открывает файл, каждая подписка открывает читателя,
+а завершение работы закрывает запись. [`StdioBroker`](../components/broker/stdio-broker.md) подключает каналы процесса при первом
 использовании.
 
 <Diagram name="lifecycle" words={file} />
