@@ -223,3 +223,25 @@ name = "manual_file_broker_beacons"
 path = "examples/manual/file_broker_beacons.rs"
 required-features = ["testing"]
 test = true
+
+[[example]]
+name = "stdio_broker"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_broker"
+path = "examples/manual/stdio_broker.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_broker_loopback"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_broker_loopback"
+path = "examples/manual/stdio_broker_loopback.rs"
+required-features = ["testing"]
+test = true
