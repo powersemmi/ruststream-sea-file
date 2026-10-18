@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <b><a href="https://powersemmi.github.io/ruststream-sea-file/">Documentation</a></b>
+  <b><a href="https://powersemmi.github.io/ruststream-sea-file/latest/">Documentation</a></b>
 </p>
 
 ---
