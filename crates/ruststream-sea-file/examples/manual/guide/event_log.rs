@@ -10,16 +10,13 @@
 // A plain build runs the shop; the audit job is a program of its own, which the tests start.
 #![cfg_attr(not(test), allow(dead_code))]
 
+use std::future::{Future, ready};
 use std::process::ExitCode;
 
 use ruststream::runtime::cli::run_main;
 use ruststream::schemars::JsonSchema;
 use ruststream_sea_file::file::prelude::*;
 use serde::{Deserialize, Serialize};
-
-#[cfg(test)]
-#[path = "../../../tests/common/mod.rs"]
-mod common;
 
 // --8<-- [start:record]
 #[derive(Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -42,22 +39,22 @@ struct Receipt {
 struct Checkout;
 
 impl Handle<Order, Receipt, (), FileContext> for Checkout {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         ctx: &mut Context<'_, FileContext>,
-    ) -> Result<Receipt, HandlerOutcome> {
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
         let sequence = match ctx.context(Position) {
             FilePosition::Sequence(sequence) => sequence,
             // A delivery always sits at a sequence; the other forms name places to start from.
             FilePosition::Beginning | FilePosition::End | FilePosition::Timestamp(_) => 0,
         };
-        Ok(Receipt {
+        ready(Ok(Receipt {
             order: order.id,
             amount_cents: order.amount_cents,
             sequence,
-        })
+        }))
     }
 }
 
@@ -65,14 +62,14 @@ impl Handle<Order, Receipt, (), FileContext> for Checkout {
 struct Notify;
 
 impl Handle<Receipt> for Notify {
-    async fn handle(
+    fn handle(
         &self,
         receipt: &Receipt,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         tracing::info!(receipt.order, "customer notified");
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -97,15 +94,15 @@ fn main() -> ExitCode {
 struct Total;
 
 impl Handle<[Receipt]> for Total {
-    async fn handle(
+    fn handle(
         &self,
         batch: &[Receipt],
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), Vec<HandlerOutcome>> {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         let cents: u64 = batch.iter().map(|receipt| receipt.amount_cents).sum();
         tracing::info!(receipts = batch.len(), cents, "receipts totalled");
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -148,13 +145,13 @@ mod recorded_stream;
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::fs;
+    use std::{env, fs, process};
 
     use ruststream::testing::TestApp;
     use ruststream_sea_file::file::prelude::*;
 
     use super::recorded_stream::record;
-    use super::{Order, Receipt, audit, common, shop};
+    use super::{Order, Receipt, audit, shop};
 
     const PATH: &str = "/var/lib/shop/orders.ss";
 
@@ -218,46 +215,42 @@ mod tests {
 
     /// Two runs of the shop on one stream file: the second numbers its orders on from where the
     /// first left the file.
-    #[test]
-    fn a_restarted_shop_numbers_its_orders_on_from_the_end_of_the_file() -> Result<(), Box<dyn Error>>
-    {
-        common::rt().block_on(async {
-            let path = common::tmp_path("manual-guide-event-log");
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_restarted_shop_numbers_its_orders_on_from_the_end_of_the_file()
+    -> Result<(), Box<dyn Error>> {
+        // A file of this run's own, so nothing an earlier run appended is read.
+        let path = env::temp_dir().join(format!("manual-guide-event-log-{}.ss", process::id()));
+        let path = path.to_string_lossy().into_owned();
 
-            let first = TestApp::start_live(shop(FileBroker::new(&path))).await?;
-            for id in [1, 2] {
-                first
-                    .broker::<FileBroker>()
-                    .message(&order(id))
-                    .publish()
-                    .await?;
-            }
-            assert_eq!(
-                first
-                    .broker::<FileBroker>()
-                    .published::<Receipt>("receipts")
-                    .decoded(),
-                [receipt(1, 1), receipt(2, 2)],
-            );
-            first.shutdown().await?;
-
-            let second = TestApp::start_live(shop(FileBroker::new(&path))).await?;
-            second
+        let first = TestApp::start_live(shop(FileBroker::new(&path))).await?;
+        for id in [1, 2] {
+            first
                 .broker::<FileBroker>()
-                .message(&order(3))
+                .message(&order(id))
                 .publish()
                 .await?;
-            assert_eq!(
-                second
-                    .broker::<FileBroker>()
-                    .published::<Receipt>("receipts")
-                    .decoded(),
-                [receipt(3, 3)],
-            );
-            second.shutdown().await?;
+        }
+        first
+            .broker::<FileBroker>()
+            .published::<Receipt>("receipts")
+            .assert_called(2)
+            .with(&receipt(2, 2));
+        first.shutdown().await?;
 
-            fs::remove_file(&path)?;
-            Ok(())
-        })
+        let second = TestApp::start_live(shop(FileBroker::new(&path))).await?;
+        second
+            .broker::<FileBroker>()
+            .message(&order(3))
+            .publish()
+            .await?;
+        second
+            .broker::<FileBroker>()
+            .published::<Receipt>("receipts")
+            .assert_called_once()
+            .with(&receipt(3, 3));
+        second.shutdown().await?;
+
+        fs::remove_file(&path)?;
+        Ok(())
     }
 }
