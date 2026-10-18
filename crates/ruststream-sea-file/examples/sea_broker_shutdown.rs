@@ -68,7 +68,7 @@ mod tests {
     use ruststream::testing::TestApp;
     use ruststream_sea_file::file::prelude::*;
 
-    use super::{Order, Receipt, app, archive, common, service};
+    use super::{Order, Receipt, app, common, service};
 
     /// The body both modes run: the receipt is written, and the shutdown succeeds.
     async fn records_then_shuts_down(tb: TestApp<()>) -> Result<(), Box<dyn Error>> {
@@ -96,9 +96,7 @@ mod tests {
             let path = common::tmp_path("shutdown");
             records_then_shuts_down(TestApp::start_live(service(&path)).await?).await?;
 
-            // What the hook does once the service has stopped.
-            archive(&path)?;
-
+            // The service's own `after_shutdown` hook has moved the file aside.
             let done = format!("{path}.done");
             assert!(!Path::new(&path).exists(), "{path} is still in place");
             // The moved file is a whole stream file: a reader opens it.
