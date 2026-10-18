@@ -443,7 +443,10 @@ mod tests {
 
         read_lines(Cursor::new("[jobs] a\n"), input);
 
-        assert!(alone.rx.try_recv().is_ok(), "the line read before the end arrives");
+        assert!(
+            alone.rx.try_recv().is_ok(),
+            "the line read before the end arrives"
+        );
         assert_eq!(alone.rx.try_recv().unwrap_err(), TryRecvError::Disconnected);
         assert!(looped.rx.try_recv().is_ok());
         assert_eq!(looped.rx.try_recv().unwrap_err(), TryRecvError::Empty);

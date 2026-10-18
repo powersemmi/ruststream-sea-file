@@ -16,7 +16,9 @@ authors = ["RustStream contributors"]
 [workspace.dependencies]
 ruststream-sea-file = { path = "crates/ruststream-sea-file" }
 
-ruststream = { version = "0.7", default-features = false }
+# 0.7.5 is the first release whose health probe counts the subscriptions that still read,
+# which a pipeline stage watches to exit when its input ends.
+ruststream = { version = "0.7.5", default-features = false }
 
 # The 1.0 release-candidate line: edition 2024 and a 1.85 floor, comfortably under this
 # workspace's own (the 0.5 stable line is over a year older). Pre-releases must be pinned
