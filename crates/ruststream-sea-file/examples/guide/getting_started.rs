@@ -1,73 +1,41 @@
-//! The first service of the Getting started guide written without the macros: the handler is a
-//! type with an `impl Handle`, mounted with the `subscriber` constructor, and `main` is written by
-//! hand.
+//! The first service of the Getting started guide: one handler on the `orders` stream key of a
+//! stream file, read from the start of the file.
 //!
 //! ```text
-//! cargo run --example manual_guide_getting_started --features testing -- run
-//! cargo test --example manual_guide_getting_started --features testing
+//! cargo run --example guide_getting_started --features testing -- run
+//! cargo test --example guide_getting_started --features testing
 //! ```
-
-use std::process::ExitCode;
-
-use ruststream::runtime::cli::run_main;
-use ruststream::schemars::JsonSchema;
 
 // --8<-- [start:service]
 use ruststream_sea_file::file::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "ruststream::schemars")]
+#[derive(Debug, PartialEq, Deserialize)]
 struct Order {
     id: u64,
     amount_cents: u64,
 }
 
-struct TakeOrder;
-
-impl Handle<Order> for TakeOrder {
-    async fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
-        if order.amount_cents == 0 {
-            tracing::warn!(order.id, "order without an amount dropped");
-            return Err(HandlerOutcome::drop());
-        }
-        tracing::info!(order.id, order.amount_cents, "order taken");
-        Ok(())
+#[subscriber(FileStream::new("orders"), start_at(FilePosition::beginning()))]
+async fn take_order(order: &Order) -> HandlerOutcome {
+    if order.amount_cents == 0 {
+        tracing::warn!(order.id, "order without an amount dropped");
+        return HandlerOutcome::drop();
     }
+    tracing::info!(order.id, order.amount_cents, "order taken");
+    HandlerOutcome::ack()
 }
 
+#[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
         FileBroker::new("/tmp/orders.ss"),
         |b| {
-            b.include(
-                subscriber(FileStream::new("orders"), TakeOrder)
-                    .start_at(FilePosition::beginning())
-                    .build(),
-            );
+            b.include(take_order);
         },
     )
 }
-
-fn main() -> ExitCode {
-    run_main(app)
-}
 // --8<-- [end:service]
-
-// `#[outgoing(name = "orders")]` by hand: the type names the stream key it is published to.
-impl OutgoingDestination for Order {
-    type Form = FixedName;
-    const DESTINATION: &'static str = "orders";
-}
-
-impl MessageHeaders for Order {
-    type Contract = NoHeaders;
-}
 
 #[cfg(test)]
 mod tests {
@@ -75,23 +43,37 @@ mod tests {
 
     use ruststream::testing::TestApp;
     use ruststream_sea_file::file::prelude::*;
+    use serde::Serialize;
 
     use super::{Order, app};
+
+    /// An order as the shop that places it appends it to the file.
+    #[derive(Serialize, Outgoing)]
+    #[outgoing(name = "orders")]
+    struct Placed {
+        id: u64,
+        amount_cents: u64,
+    }
 
     #[tokio::test]
     async fn an_order_with_an_amount_is_taken() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
-        let order = Order {
-            id: 1,
-            amount_cents: 1250,
-        };
 
-        tb.broker::<FileBroker>().message(&order).publish().await?;
+        tb.broker::<FileBroker>()
+            .message(&Placed {
+                id: 1,
+                amount_cents: 1250,
+            })
+            .publish()
+            .await?;
 
         tb.broker::<FileBroker>()
             .subscriber("orders")
             .assert_called_once()
-            .with(&order)
+            .with(&Order {
+                id: 1,
+                amount_cents: 1250,
+            })
             .settled(HandlerOutcome::ack());
         tb.shutdown().await?;
         Ok(())
@@ -102,7 +84,7 @@ mod tests {
         let tb = TestApp::start(app()).await?;
 
         tb.broker::<FileBroker>()
-            .message(&Order {
+            .message(&Placed {
                 id: 2,
                 amount_cents: 0,
             })
