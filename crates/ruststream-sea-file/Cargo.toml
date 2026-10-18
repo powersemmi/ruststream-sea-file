@@ -245,3 +245,36 @@ name = "manual_stdio_broker_loopback"
 path = "examples/manual/stdio_broker_loopback.rs"
 required-features = ["testing"]
 test = true
+
+[[example]]
+name = "sea_broker_shutdown"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_broker_shutdown"
+path = "examples/manual/sea_broker_shutdown.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_broker_prelude"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_broker_prelude"
+path = "examples/manual/sea_broker_prelude.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "sea_broker_errors"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_sea_broker_errors"
+path = "examples/manual/sea_broker_errors.rs"
+required-features = ["testing"]
+test = true
