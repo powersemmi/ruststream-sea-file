@@ -24,7 +24,7 @@ describe('the transports', () => {
       quota: '/components/broker/file-broker/',
     });
     expect(hrefs('pipe')).toEqual({
-      consumers: '/components/subscriptions/lines/',
+      subscriptions: '/components/subscriptions/lines/',
       publisher: '/components/publishing/stdio-publish/',
       process: '/components/broker/shutdown/',
     });

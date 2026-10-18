@@ -33,7 +33,7 @@ export const stdio = {
   "connected": ["ConnectedStdioBroker"],
   "closed": ["Closed = ()", "没有要报告的"],
   "config": ["记录 loopback，", "不碰任何管道"],
-  "reading": ["第一个订阅：", "stdin 线程"],
+  "reading": ["第一个订阅：", "读取线程"],
   "writing": ["第一次发布：", "stdout 线程"],
   "shutdown": ["结束进程中的", "每个 stdio 流"],
   "afterShutdown": ["之前保留的发布者返回 NotConnected"],
@@ -59,4 +59,4 @@ export const stdio = {
 
 <Diagram name="stdioLifecycle" words={stdio} />
 
-connect 记录 Broker 是否回环，不碰任何管道。进程中的第一个订阅启动客户端的 stdin 线程，第一次发布启动它的 stdout 线程，[管道](transports/pipe.md)一页用图说明了这一点。两个线程服务于整个进程，因此关闭会结束其中的每个 stdio 消费者和生产者，包括其他 Broker 的。
+connect 记录 Broker 是否回环，不碰任何管道。进程中的第一个订阅启动标准输入的读取线程，第一次发布启动客户端的 stdout 线程，[管道](transports/pipe.md)一页用图说明了这一点。两个线程服务于整个进程，因此关闭会结束其中的每个 stdio 订阅和生产者，包括其他 Broker 的。标准输入结束也会结束这些订阅，`loopback` 下 Broker 的订阅除外。

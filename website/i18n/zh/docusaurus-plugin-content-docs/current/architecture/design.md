@@ -16,7 +16,7 @@ export const words = {
   "runtime": "运行时：分发、编解码器、结算、重试",
   "crate": "ruststream-sea-file",
   "fileSubscriber": ["FileSubscriber", "驱动任务"],
-  "stdioSubscriber": ["StdioSubscriber", "读取任务"],
+  "stdioSubscriber": ["StdioSubscriber", "自己读取 stdin"],
   "filePublisher": "FilePublisher",
   "stdioPublisher": "StdioPublisher",
   "fileBroker": ["FileBroker", "ConnectedFileBroker"],
@@ -38,13 +38,13 @@ export const words = {
 
 <Diagram name="design" words={words} />
 
-本 crate 在 [sea-streamer](https://github.com/SeaQL/sea-streamer) 的两个客户端之上实现核心的 Broker trait。`sea-streamer-file` 负责流文件，`sea-streamer-stdio` 负责进程的标准输入和标准输出。它上面的运行时对每个 Broker 都相同。文件或管道特有的一切都在本 crate 里：[描述符](../components/subscriptions/file-stream.md)、[位置与定位](../components/positions/index.md)、[ack 的含义](../components/settlement/index.md)、[重试副本发往何处](../components/settlement/retry-after.md)，以及消息头如何传递。
+本 crate 在 [sea-streamer](https://github.com/SeaQL/sea-streamer) 的两个客户端之上实现核心的 Broker trait。`sea-streamer-file` 负责流文件，`sea-streamer-stdio` 负责进程的标准输出和行格式；标准输入由本 crate 按同一格式自己读取。它上面的运行时对每个 Broker 都相同。文件或管道特有的一切都在本 crate 里：[描述符](../components/subscriptions/file-stream.md)、[位置与定位](../components/positions/index.md)、[ack 的含义](../components/settlement/index.md)、[重试副本发往何处](../components/settlement/retry-after.md)，以及消息头如何传递。
 
-已连接的 Broker 持有一条通往其传输的连接。对文件来说，这条连接包括客户端的 streamer、一个生产者和执行 `connect` 的运行时，每次发布都通过这个生产者追加。对 stdio 来说，它包括客户端的 streamer 和那个运行时。Broker 的每个克隆共用这条连接，因此连接两次只会连接一次。连接之前交出的发布者在第一次发布时找到它。
+已连接的 Broker 持有一条通往其传输的连接。对文件来说，这条连接包括客户端的 streamer、一个生产者和执行 `connect` 的运行时，每次发布都通过这个生产者追加。对 stdio 来说，它包括客户端的 streamer，以及 Broker 是否回环。Broker 的每个克隆共用这条连接，因此连接两次只会连接一次。连接之前交出的发布者在第一次发布时找到它。
 
-连接的每个任务都运行在执行 `connect` 的运行时上。因此，从另一个运行时打开的订阅，在那个运行时停止后仍会继续投递。
+文件连接的每个任务都运行在执行 `connect` 的运行时上，标准输入则在它自己的线程上读取。因此，从另一个运行时打开的订阅，在那个运行时停止后仍会继续投递。
 
-文件订阅是一个驱动任务，它独占客户端的消费者。原因是客户端的定位需要独占消费者，而且不能中途打断。stdio 订阅是一个读取任务。二者都通过容量为 64 的通道交出消息。两个客户端都一次读取一条消息，因此[批](../components/subscriptions/batches.md)在本 crate 中组装。不满的批在它的第一条消息到达 10 毫秒后发出。
+文件订阅是一个驱动任务，它独占客户端的消费者。原因是客户端的定位需要独占消费者，而且不能中途打断。它通过容量为 64 的通道交出消息。stdio 订阅读取进程的读取线程填充的队列。两种传输都一次读取一条消息，因此[批](../components/subscriptions/batches.md)在本 crate 中组装。不满的批在它的第一条消息到达 10 毫秒后发出。
 
 两种传输都不接受逐条消息的设置，所以发布没有选项。客户端只接受载荷，不接受消息头，所以消息头放在载荷里，在[信封](envelope.md)中传递。
 

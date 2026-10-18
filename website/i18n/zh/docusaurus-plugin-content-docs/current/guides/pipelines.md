@@ -1,7 +1,7 @@
 ---
 title: shell 管道
 sidebar_position: 4
-description: "把 RustStream 服务作为 shell 管道中的一级运行：行格式、向一级输入、读取它的输出，以及多级串联。"
+description: "把 RustStream 服务作为 shell 管道中的一级运行：行格式、向一级输入、读取它的输出、输入结束时退出，以及多级串联。"
 ---
 
 import Tabs from '@theme/Tabs';
@@ -47,7 +47,7 @@ import TabItem from '@theme/TabItem';
 消息头的每个字段都是可选的，所以生产者通常只写键：
 
 ```bash
-echo '[orders] {"id":7,"quantity":3,"unit_cents":250}' | ./pricing run
+echo '[orders] {"id":7,"quantity":3,"unit_cents":250}' | ./pricing
 ```
 
 其他键下的行会被跳过，所以多个级可以从同一个流中各取自己的键。
@@ -55,11 +55,12 @@ echo '[orders] {"id":7,"quantity":3,"unit_cents":250}' | ./pricing run
 因此，输出普通 JSON 行的工具会同时为每个处理器提供输入：
 
 ```bash
-jq -c '.[]' orders.json | ./pricing run
+jq -c '.[]' orders.json | ./pricing
 ```
 
-客户端在服务看到一行之前先解析它的消息头，无法解析的行会让整个进程停止。
-有两种行会这样：不是 UTF-8 的输入，以及开头的 `[...]` 不是消息头，例如一个 JSON 数组。
+这一级在服务看到一行之前先解析它的消息头。
+读不了的行会被跳过，日志里留下一条警告，这一级继续往下读。
+被跳过的行有两种：不是 UTF-8 的输入，以及开头的 `[...]` 不是消息头，例如一个 JSON 数组。
 产生这类载荷的生产者要在每个载荷前面写上消息头。
 
 ## 输出 {/* #the-output */}
@@ -74,7 +75,7 @@ jq -c '.[]' orders.json | ./pricing run
 读取普通 JSON 的工具取消息头之后的载荷：
 
 ```bash
-./pricing run < orders.txt | sed 's/^\[[^]]*\] //' | jq .total_cents
+./pricing < orders.txt | sed 's/^\[[^]]*\] //' | jq .total_cents
 ```
 
 文本行会改变的载荷放进[信封](../components/headers/payloads.md)发出：二进制载荷、带换行符或首尾空白的载荷，以及每条带消息头的消息。
@@ -83,10 +84,25 @@ jq -c '.[]' orders.json | ./pricing run
 日志通过 `tracing` 写到标准错误，所以从不与消息混在一起。
 用 `println!` 打印到标准输出的一行，会作为没有键的行到达下一级，那里的每个订阅都会读到它。
 
+## 输入结束时 {/* #when-the-input-ends */}
+
+{/* single-form: `main` is the same with and without the macros */}
+```rust title="src/main.rs" reference="examples/guide/pipelines.rs#exit"
+```
+
+标准输入结束时，这一级的每个订阅在交付完已经读到的行之后结束。
+`main` [启动](api:ruststream::runtime::RustStream::start)服务并观察 [`HealthProbe`](api:ruststream::runtime::HealthProbe)，它统计仍在读取的订阅。
+一个都不剩时，[`shutdown`](api:ruststream::runtime::RunningApp::shutdown) 停止服务，这一级以状态码 0 退出。
+fail-fast 失败也会结束等待，`shutdown` 把它作为错误返回，于是这一级以失败状态码退出。
+所以 `./pricing < orders.txt` 为文件里的每个订单定价，然后退出。
+
+`#[ruststream::app]` 则一直运行服务，直到收到 `SIGINT` 或 `SIGTERM`。
+这适合在整个运行期间都等待输入的一级，例如接在 `tail -f` 后面的一级。
+
 ## 多级串联 {/* #chaining-stages */}
 
 ```bash
-./intake run < orders.txt | ./pricing run | ./billing run
+./intake < orders.txt | ./pricing | ./billing
 ```
 
 每一级读取它订阅的键，并为下一级写出回复。
@@ -98,5 +114,5 @@ jq -c '.[]' orders.json | ./pricing run
 示例文件在进程内测试这一级：[`TestApp::start`](../components/testing/index.md) 运行它，`tb.broker::<StdioBroker>().message(..)` 注入一行订单，`published::<Receipt>("receipts")` 读取它写出的行。
 
 实时测试把构建好的这一级作为子进程启动，标准输入和标准输出都接到管道上。
-它们检查这一级回复 `orders` 行和没有键的行，跳过其他键，并在遇到 JSON 数组行和非 UTF-8 输入时停止。
+它们检查这一级回复 `orders` 行和没有键的行，跳过其他键、JSON 数组行和非 UTF-8 输入，并在输入结束时退出。
 [`loopback`](../components/broker/loopback.md) 把一级自己的输出交还给它，这样两级可以在一个进程中运行，由一个测试同时驱动。

@@ -2,10 +2,10 @@ import type {Box, Link} from './flow';
 import {lines, word, type Words} from './words';
 
 /*
- * How the stdio client carries lines: on the way in, one thread reads standard input and hands
- * each line to the consumers of its stream key; on the way out, one thread writes the lines of
- * every producer to standard output. Under loopback the writing thread also hands its lines to
- * this process's own consumers.
+ * How a stage carries lines: on the way in, one thread reads standard input and hands each line
+ * to the subscriptions of its stream key; on the way out, one thread writes the lines of every
+ * producer to standard output. Under loopback each written line also goes to this process's own
+ * subscriptions.
  */
 export function pipe(words: Words): {boxes: Box[]; links: Link[]} {
   const box = (id: string, x: number, y: number, fields: Partial<Box> = {}): Box => ({
@@ -24,7 +24,7 @@ export function pipe(words: Words): {boxes: Box[]; links: Link[]} {
     box('upstream', left, 0, {kind: 'service'}),
     box('stdin', left, 72),
     box('dispatch', left, 144, {h: 58}),
-    box('consumers', left, 230, {code: true, href: '/components/subscriptions/lines/'}),
+    box('subscriptions', left, 230, {code: true, href: '/components/subscriptions/lines/'}),
     box('publisher', right, 0, {code: true, href: '/components/publishing/stdio-publish/'}),
     box('stdout', right, 72),
     box('line', right, 144, {h: 58, kind: 'step', code: true}),
@@ -43,7 +43,7 @@ export function pipe(words: Words): {boxes: Box[]; links: Link[]} {
   const links: Link[] = [
     {from: 'upstream', to: 'stdin', label: word(words, 'lines')},
     {from: 'stdin', to: 'dispatch'},
-    {from: 'dispatch', to: 'consumers'},
+    {from: 'dispatch', to: 'subscriptions'},
     {from: 'publisher', to: 'stdout'},
     {from: 'stdout', to: 'line'},
     {from: 'line', to: 'downstream'},
