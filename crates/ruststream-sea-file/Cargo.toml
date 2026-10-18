@@ -67,3 +67,60 @@ tokio = { workspace = true, features = [
     # once instead of waiting out a real timeout.
     "test-util",
 ] }
+
+# --- examples: subscriptions and positions ---
+
+[[example]]
+name = "file_subscriptions"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_stream"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_replay"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "stdio_lines"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_batches"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_subscriptions"
+path = "examples/manual/file_subscriptions.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_stream"
+path = "examples/manual/file_stream.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_replay"
+path = "examples/manual/file_replay.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_stdio_lines"
+path = "examples/manual/stdio_lines.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_batches"
+path = "examples/manual/file_batches.rs"
+required-features = ["testing"]
+test = true
