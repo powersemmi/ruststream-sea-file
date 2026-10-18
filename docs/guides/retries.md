@@ -98,5 +98,5 @@ The cap and the dead-letter key work on a pipe as they do on a file; a dead lett
 
 The tests in the example file run the app in process on a paused clock, so `tb.advance(RECHECK)` lets the two seconds pass at once.
 One test clears the payment between two deliveries, and the order ships on the second.
-The dead-letter test runs both in process and on a real stream file with `TestApp::start_live`, where the delays pass on the real clock.
+The dead-letter test runs both in process and on a real stream file with [`TestApp::start_live`](../components/testing/live.md), where the delays pass on the real clock.
 [Testing a file or pipeline service](testing.md) covers the harness.

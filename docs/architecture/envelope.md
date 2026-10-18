@@ -44,6 +44,6 @@ the header block comes first, then the block, then the payload. `rs1:` writes ea
 back unchanged from such a line. `rs2:` writes each name and value with its own length, so it
 carries any bytes, and it is used for the rest.
 
-A reader opens either envelope and adds the `stream-sequence` header. Anything that is not a
+A reader opens either envelope and adds the [`stream-sequence`](../components/headers/sequence-header.md) header. Anything that is not a
 well-formed envelope reads as a payload with no headers. How a service reads and sets headers is on
 [Envelope](../components/headers/index.md) in the components.

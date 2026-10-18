@@ -94,14 +94,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_sequence_the_file_has_not_written_stops_the_service_at_startup()
+    async fn a_sequence_past_the_next_one_stops_the_service_at_startup()
     -> Result<(), Box<dyn Error>> {
         let file = FileBroker::new("/var/lib/shop/orders.ss");
         record(&file, (1..=2).map(|id| Order { id })).await?;
 
         let refused = TestApp::start(app(file, 9))
             .await
-            .expect_err("the file holds no sequence 9");
+            .expect_err("the file writes sequence 3 next, so 9 is too far ahead");
 
         assert!(refused.to_string().contains("sequence"), "{refused}");
         Ok(())

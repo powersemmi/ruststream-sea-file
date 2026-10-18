@@ -16,7 +16,7 @@ The value is the number in decimal, as each client counts.
 A stream file numbers each stream key from one and keeps counting across restarts, so the number names the message's place in the file.
 A pipe numbers the lines of each key from zero, unless a line's header names a sequence of its own.
 The reader adds the header to every delivery, so the handler reads it with `ctx.headers()` like any other header.
-On a stream file [`Ctx<Position>`](../positions/position.md) gives the same place as a [`FilePosition`](../positions/index.md), the form `start_at` and a seek take.
+On a stream file [`Ctx<Position>`](../positions/position.md) gives the same place as a [`FilePosition`](../positions/index.md), the form [`start_at`](../positions/start-at.md) and a seek take.
 
 ## Example
 

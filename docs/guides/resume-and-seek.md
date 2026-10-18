@@ -56,7 +56,7 @@ Any store the service already has works the same way: a database row, a key in a
 
 `invoicing` reads the checkpoint before the service starts and passes it to [`start_at`](../components/positions/start-at.md) at the mount site.
 The first run has no checkpoint and reads the file from the beginning.
-[`FilePosition::sequence(n)`](api:ruststream_sea_file::FilePosition::sequence) delivers message `n` itself, so a run opened at the stored sequence gets the order the last run ended on once more.
+[`FilePosition::sequence(n)`](../components/positions/index.md) delivers message `n` itself, so a run opened at the stored sequence gets the order the last run ended on once more.
 `invoice` reads the delivery's sequence with [`Ctx<Position>`](../components/positions/position.md) and drops an order at or below the checkpoint.
 Every other order is invoiced, and its sequence becomes the new checkpoint.
 
@@ -72,12 +72,12 @@ It suits a service that rebuilds its view from a point in time instead of from a
 A handler moves its own subscription with [`Ctx<SeekHandle>`](../components/positions/seek.md).
 `seek(FilePosition::end())` skips the backlog and goes on from the tip; `seek(FilePosition::sequence(n))` goes back to message `n` or forward past a run of messages known to fail.
 The deliveries already queued from the old place are discarded, and the next delivery comes from the new one.
-A seek to a sequence the file has not written is refused with an error: a live subscription then ends, and a [replay](../components/subscriptions/replay.md) stays where it was.
+A seek to a sequence past the next one the file writes is refused with an error: a live subscription then ends, and a [replay](../components/subscriptions/replay.md) stays where it was.
 A batch handler reaches the same handle through [`FileBatchContext`](../components/positions/batch-context.md).
 
 ## Testing the resume
 
 The in-process tests record five orders before the service starts and store a checkpoint of three.
 The service reads orders three to five, drops the third and invoices the other two.
-The restart test runs the service twice on one real file with `TestApp::start_live`: the second run opens at the order the first one ended on and drops it.
+The restart test runs the service twice on one real file with [`TestApp::start_live`](../components/testing/live.md): the second run opens at the order the first one ended on and drops it.
 [Testing a file or pipeline service](testing.md) covers both modes.

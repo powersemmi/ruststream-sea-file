@@ -5,8 +5,10 @@ description: "The parts of ruststream-sea-file a service on a stream file or a s
 
 # Components
 
-The parts of `ruststream-sea-file` a service uses, one page per component: the two brokers
-([`FileBroker`](api:ruststream_sea_file::file::FileBroker) on a stream file and
-[`StdioBroker`](api:ruststream_sea_file::stdio::StdioBroker) on a pipeline), their
-subscriptions, their publish policies and the in-process transport a
-[`TestApp`](api:ruststream::testing::TestApp) test runs on.
+The parts of `ruststream-sea-file` a service uses, one page per component: the two
+[brokers](./broker/index.md) ([`FileBroker`](./broker/file-broker.md) on a stream file and
+[`StdioBroker`](./broker/stdio-broker.md) on a pipeline) and their settings, their
+[subscriptions](./subscriptions/index.md), [positions](./positions/index.md) and seeking, their
+[publish policies](./publishing/index.md), [acknowledgement and retries](./settlement/index.md), the
+[headers](./headers/index.md) a message carries, the [AsyncAPI](./asyncapi/index.md) document, and
+the in-process transport a [`TestApp`](./testing/index.md) test runs on.

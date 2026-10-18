@@ -18,6 +18,7 @@ Under a cap, an immediate [`retry`](api:ruststream::runtime::HandlerOutcome::ret
 The delivery that reaches the cap is rejected and no copy follows it.
 A cap with no [dead-letter key](./dead-letters.md) beside it writes the spent delivery nowhere.
 A registration mounted by a bare stream key takes the cap the same way as one mounted by a [`FileStream`](../subscriptions/file-stream.md).
+The guide [Retries and dead letters](../../guides/retries.md) caps a service's retries on a stream file and on a pipe.
 
 ## Example
 

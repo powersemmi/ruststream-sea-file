@@ -18,7 +18,7 @@ Where reading begins is a [position](../positions/index.md), set with [`start_at
 The descriptor adds two things to the bare key.
 [`replay()`](./replay.md) reads the retained file once and completes, a reading mode a position cannot express.
 Under the `asyncapi` feature the subscription's channel carries its stream key in the `x-ruststream-file` extension of the generated document, as [Channels](../asyncapi/channels.md) shows; a bare key describes nothing there.
-A `retry_after` copy is appended under the descriptor's key, so it comes back to the same subscription with nothing named at the mount site ([retry_after](../settlement/retry-after.md)).
+A [`retry_after`](../settlement/retry-after.md) copy is appended under the descriptor's key, so it comes back to the same subscription with nothing named at the mount site ([retry_after](../settlement/retry-after.md)).
 An empty key or a key the file does not take stops the service at startup.
 The manual form passes the descriptor to [`subscriber(..)`](api:ruststream::runtime::subscriber) where a key would go.
 

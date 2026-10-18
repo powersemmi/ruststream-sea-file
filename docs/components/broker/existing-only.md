@@ -13,11 +13,11 @@ import TabItem from '@theme/TabItem';
 
 Without the setting, startup creates a missing file and the service reads an empty log.
 For a reader that is the wrong answer: a mistyped path, or a writer that has not run yet, leaves it with nothing to read and no error.
-With the setting, startup fails with [`SeaFileError::Connect`](api:ruststream_sea_file::SeaFileError::Connect), which names the path, and no file is created.
+With the setting, startup fails with [`SeaFileError::Connect`](./errors.md), which names the path, and no file is created.
 A file that is there opens as usual.
 
 In a [`TestApp`](api:ruststream::testing::TestApp) test the stream file is a log in memory, and it counts as the file the operator provisioned.
-So the refusal shows only against a real file, with `TestApp::start_live`.
+So the refusal shows only against a real file, with [`TestApp::start_live`](../testing/live.md).
 
 ## Example
 

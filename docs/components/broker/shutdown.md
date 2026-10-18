@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # Shutdown
 
-Shutdown flushes and closes the stream file; a publisher kept from before returns [`SeaFileError::NotConnected`](api:ruststream_sea_file::SeaFileError::NotConnected), and a stdio shutdown ends every stdio stream of the process.
+Shutdown flushes and closes the stream file; a publisher kept from before returns [`SeaFileError::NotConnected`](./errors.md), and a stdio shutdown ends every stdio stream of the process.
 
 The file broker's shutdown waits for the publishes in flight, then ends the file's writer.
 The writer writes the [end-of-stream mark](./end-with-eos.md) when the broker asks for one, and syncs the file to the device.

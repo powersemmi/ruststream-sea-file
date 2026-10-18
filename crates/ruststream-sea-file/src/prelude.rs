@@ -4,7 +4,9 @@
 //! the seeking capability traits and context keys, and the [`mod@file`] and [`stdio`] modules. A
 //! service on one form globs that form's prelude instead, where the policy is named by concept
 //! (`file::Publish`, `stdio::Publish`); a mount site that spans both forms writes the prefixed
-//! names, since the two forms would claim the same one here.
+//! names, since the two forms would claim the same one here. The
+//! [Prelude](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/prelude/)
+//! page shows the three preludes in a service.
 //!
 //! # Examples
 //!

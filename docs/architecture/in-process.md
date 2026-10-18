@@ -27,7 +27,7 @@ which the [test harness](../components/testing/index.md) drives with the product
 
 <Diagram name="inProcess" words={words} />
 
-`TestApp::start` connects each broker through `connect_in_process` instead of `connect`. The
+[`TestApp::start`](../components/testing/index.md) connects each broker through `connect_in_process` instead of `connect`. The
 connected broker, its subscriptions, its publishers and its deliveries are the same types, each
 with the in-memory transport as a variant of its own. The service's descriptors, publish policies
 and seeking handlers therefore run unchanged.
@@ -40,7 +40,7 @@ The in-memory file keeps a log per stream key, numbered from one. A live subscri
 tip, a replay reads the log and completes at its end, and a seek resolves against the log with the
 file's refusals. Every clone of a broker shares one file, and a new broker starts with an empty
 one. The in-memory pipe treats what the test injects as lines on standard input, and records what
-the service writes. A line comes back to the service's own subscriptions only under `loopback`.
+the service writes. A line comes back to the service's own subscriptions only under [`loopback`](../components/broker/loopback.md).
 
 The harness counts the deliveries in flight on each transport, so `tb.settle()` returns once every
 subscription has handled what reached it. What belongs to the real transport is tested

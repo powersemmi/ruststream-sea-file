@@ -15,11 +15,12 @@ import TabItem from '@theme/TabItem';
 It starts at the first message the file retains and delivers every message in order.
 It completes at the end of the file, or at the end-of-stream mark a writer left with [`end_with_eos`](../broker/end-with-eos.md), and a message appended after that point is not read.
 That suits a job over a finished log: an audit, a migration, an index rebuilt from scratch.
-`start_at(FilePosition::beginning())` on a plain descriptor reads the same messages and then goes on following new writes.
+[`start_at(FilePosition::beginning())`](../positions/start-at.md) on a plain [descriptor](./file-stream.md) reads the same messages and then goes on following new writes.
 A seek from a handler still moves a replay, one that has reached the end included, and the replay goes on from the new position ([Seek](../positions/seek.md)).
-A seek to a position the file has not written is refused, and the replay stays where it was.
-A `retry_after` copy reaches a replay while the replay is still short of the end, and is left unread once the replay has passed it.
+A seek to a position past the tip is refused, and the replay stays where it was.
+A [`retry_after`](../settlement/retry-after.md) copy reaches a replay while the replay is still short of the end, and is left unread once the replay has passed it.
 A service that only reads a finished file opens it with [`existing_only`](../broker/existing-only.md), so a wrong path stops it at startup instead of creating an empty file.
+The guide [An event log on disk](../../guides/event-log.md) totals a finished file with a replay.
 
 ## Example
 

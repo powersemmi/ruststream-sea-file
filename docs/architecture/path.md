@@ -40,7 +40,7 @@ the channel, the handler, the reply and the write.
 
 The subscription's task reads ahead of the handler. It takes each message off the client, opens
 the [envelope](envelope.md) and copies the payload into a buffer of its own. It adds the message's
-number in the `stream-sequence` header, then queues the delivery on a channel of up to 64. The
+number in the [`stream-sequence`](../components/headers/sequence-header.md) header, then queues the delivery on a channel of up to 64. The
 handler reads from that channel, so the next message is out of the file while the current one is
 handled.
 

@@ -17,7 +17,8 @@ A stream file keeps its log, so a subscription opens at a place in it with [`sta
 A stream key is numbered from one, and the numbering carries on when a later run appends to the same file.
 `FilePosition::timestamp(millis)` is the first message stamped strictly later than that instant, in milliseconds since the Unix epoch.
 A delivery reports its own place as a sequence, which [`Ctx<Position>`](./position.md) binds.
-A sequence the file has not written yet, and an instant later than every message the file holds, are refused.
+The sequence the file writes next, one after its last message, is the tip.
+A sequence further ahead, and an instant later than every message the file holds, are refused.
 A position read off a delivery, the beginning and the tip are always within the file.
 
 ## Example

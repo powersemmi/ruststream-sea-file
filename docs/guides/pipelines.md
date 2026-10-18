@@ -94,7 +94,7 @@ A stage that retries later sends its copies down the pipe under the key its moun
 
 ## Testing the stage
 
-The example file tests the stage in process: `TestApp::start` runs it, `tb.broker::<StdioBroker>().message(..)` injects an order line, and `published::<Receipt>("receipts")` reads the line it wrote.
+The example file tests the stage in process: [`TestApp::start`](../components/testing/index.md) runs it, `tb.broker::<StdioBroker>().message(..)` injects an order line, and `published::<Receipt>("receipts")` reads the line it wrote.
 
 The live tests spawn the built stage with piped standard input and output.
 They check that it answers `orders` lines and lines with no key, passes over another key, and stops on a JSON array line and on input that is not UTF-8.

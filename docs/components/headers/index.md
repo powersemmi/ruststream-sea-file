@@ -1,17 +1,17 @@
 ---
-title: Envelope
+title: Headers
 description: "Headers travel inside the payload: a message with headers is written as rs1: or rs2: plus base64, one without is written as it is."
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Envelope
+# Headers
 
 Headers travel inside the payload: a message with headers is written as `rs1:` or `rs2:` plus base64, one without is written as it is.
 
 A stream file entry and a line on a pipe carry a stream key and a payload, with no room for headers.
-So a message with headers is written as an envelope: a prefix, then base64 of a header block followed by the payload.
+So a message with headers is written as an [envelope](../../architecture/envelope.md): a prefix, then base64 of a header block followed by the payload.
 The prefix `rs1:` marks a block of `name: value` lines.
 It is used whenever every header reads back unchanged from a line, which keeps the message readable by earlier releases of this crate.
 The prefix `rs2:` marks a block where each name and value is length-prefixed.

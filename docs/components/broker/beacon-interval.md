@@ -17,7 +17,7 @@ Each beacon takes room in the file.
 The client's default is one beacon every 1 MiB.
 
 The interval is a number of bytes, a positive multiple of 1024.
-Any other value fails startup with [`SeaFileError::Invalid`](api:ruststream_sea_file::SeaFileError::Invalid), in a `TestApp` test as on a real file.
+Any other value fails startup with [`SeaFileError::Invalid`](./errors.md), in a [`TestApp`](../testing/index.md) test as on a real file.
 The interval is written into the header of a file the broker creates.
 
 ## Example

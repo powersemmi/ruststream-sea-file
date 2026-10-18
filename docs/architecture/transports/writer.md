@@ -16,7 +16,7 @@ export const words = {
   "file": ["The stream file"],
   "flush": ["flush() after", "every publish:", "to the OS"],
   "sync": ["sync_all() once,", "at shutdown:", "to the device"],
-  "quota": ["The client stops a file at 16 GiB by default:", "a publish past that size fails"]
+  "quota": ["The client stops a file at 16 GiB:", "that publish and every later one fail"]
 };
 
 # Writer
@@ -43,4 +43,4 @@ Opening a producer on a file that already holds messages scans back to the last 
 to the end, to learn where each key's numbering stands. That scan grows with the file.
 
 The client stops a file at 16 GiB unless told otherwise, and this crate leaves the limit at that
-default. A publish past that size fails.
+default. A publish that reaches the cap fails, and every later publish to that file fails too.

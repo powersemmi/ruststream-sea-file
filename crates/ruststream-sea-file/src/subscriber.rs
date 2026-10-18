@@ -55,6 +55,42 @@ pub(crate) struct Stamped {
 /// end-of-stream mark a writer left with
 /// [`end_with_eos`](crate::FileBroker::end_with_eos). A replay that ended can still be moved by
 /// its seeker until the subscriber is dropped, and its stream then delivers again.
+///
+/// A handler taking `&[T]` consumes batches of this subscription, and `batch(n)` at the mount
+/// site says how large one may be. The client reads one entry at a time, so the batch is
+/// assembled here: it holds at most the size the mount site named, and fewer when that is all the
+/// file had. A partial batch goes out 10 ms after its first delivery. The
+/// [Batches](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/batches/)
+/// page shows it in a service.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Reading {
+///     millivolts: u32,
+/// }
+///
+/// #[subscriber(FileStream::new("readings"))]
+/// async fn aggregate(batch: &[Reading]) -> Vec<HandlerOutcome> {
+///     let total: u32 = batch.iter().map(|reading| reading.millivolts).sum();
+///     tracing::info!(readings = batch.len(), total, "aggregated");
+///     batch.iter().map(|_| HandlerOutcome::ack()).collect()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("readings", "0.1.0"))
+///         .with_broker(FileBroker::new("/tmp/readings.ss"), |b| {
+///             b.include(aggregate.batch(nonzero!(4)))
+///                 .max_attempts(nonzero!(3u32))
+///                 .dead_letter("readings.dead");
+///         })
+/// }
+/// ```
 pub struct FileSubscriber {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,

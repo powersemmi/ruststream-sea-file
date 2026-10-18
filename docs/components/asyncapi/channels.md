@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # Channels
 
-A [`FileStream`](api:ruststream_sea_file::FileStream) subscription and a file publish describe their channel with the stream key; bare keys and stdio describe nothing.
+A [`FileStream`](../subscriptions/file-stream.md) subscription and a file publish describe their channel with the stream key; bare keys and stdio describe nothing.
 
 A subscription opened through `FileStream` reports the stream key it reads, as `{ "x-ruststream-file": { "streamKey": "orders" } }` in the channel's bindings.
 A subscription opened by a bare stream key, `#[subscriber("orders")]`, carries no descriptor, so its channel has no bindings.

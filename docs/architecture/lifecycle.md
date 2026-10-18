@@ -43,8 +43,8 @@ export const stdio = {
 
 # Lifecycle
 
-`FileBroker::new` records a path, connect opens the file, each subscription opens a reader, and
-shutdown ends the writer; `StdioBroker` attaches the process's pipes on first use.
+[`FileBroker::new`](../components/broker/file-broker.md) records a path, connect opens the file, each subscription opens a reader, and
+shutdown ends the writer; [`StdioBroker`](../components/broker/stdio-broker.md) attaches the process's pipes on first use.
 
 <Diagram name="lifecycle" words={file} />
 

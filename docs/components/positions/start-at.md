@@ -17,8 +17,10 @@ A subscription with no `start_at` opens at the tip.
 The file keeps no record of how far a service read, because `ack` and `nack` report `Unsupported` on this transport ([Acknowledgement](../settlement/index.md)).
 So a service that resumes where it stopped stores the sequence it reached, read with [`Ctx<Position>`](./position.md), and opens the next run at the first sequence it did not handle.
 `FilePosition::sequence(n)` delivers message `n` itself, so the stored sequence of the last handled message is the one to add one to.
-A sequence the file has not written yet stops the service at startup.
+The sequence the file writes next, one after its last message, opens the subscription at the tip, so a service that handled every message resumes there.
+A sequence further ahead stops the service at startup.
 The position applies on every startup: a subscription that starts at the beginning handles the whole retained file each time the service starts.
+The guide [Resuming and seeking](../../guides/resume-and-seek.md) builds a service that stores its sequence and resumes there.
 
 ## Example
 
