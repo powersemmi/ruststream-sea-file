@@ -180,6 +180,19 @@ path = "examples/manual/file_batch_seek.rs"
 required-features = ["testing"]
 test = true
 
+# --- examples: brokers-and-document ---
+
+[[example]]
+name = "file_service"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_service"
+path = "examples/manual/file_service.rs"
+required-features = ["testing"]
+test = true
+
 [[example]]
 name = "file_broker"
 required-features = ["testing"]
