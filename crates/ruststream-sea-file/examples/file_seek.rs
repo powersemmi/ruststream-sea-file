@@ -29,13 +29,10 @@ async fn work(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
     let Some(resume_at) = job.resume_at else {
         return HandlerOutcome::ack();
     };
-    match seeker.seek(FilePosition::sequence(resume_at)).await {
-        Ok(()) => HandlerOutcome::ack(),
-        Err(error) => {
-            tracing::warn!(job.id, resume_at, %error, "seek refused");
-            HandlerOutcome::ack()
-        }
+    if let Err(error) = seeker.seek(FilePosition::sequence(resume_at)).await {
+        tracing::warn!(job.id, resume_at, %error, "seek refused");
     }
+    HandlerOutcome::ack()
 }
 
 /// The worker on the job file `main` hands it.
