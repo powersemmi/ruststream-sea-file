@@ -46,4 +46,4 @@ carries any bytes, and it is used for the rest.
 
 A reader opens either envelope and adds the [`stream-sequence`](../components/headers/sequence-header.md) header. Anything that is not a
 well-formed envelope reads as a payload with no headers. How a service reads and sets headers is on
-[Envelope](../components/headers/index.md) in the components.
+[Headers](../components/headers/index.md) in the components.
