@@ -6,6 +6,7 @@ describe('the transports', () => {
   it('link the parts of a stream file to the settings that shape them', () => {
     expect(hrefs('streamFile')).toEqual({
       header: '/components/broker/file-broker/',
+      keys: '/components/subscriptions/file-stream/',
       beacon: '/components/broker/beacon-interval/',
       eos: '/components/broker/end-with-eos/',
     });
@@ -20,6 +21,7 @@ describe('the transports', () => {
     expect(hrefs('writer')).toEqual({
       publisher: '/components/publishing/file-publish/',
       sync: '/components/broker/shutdown/',
+      quota: '/components/broker/file-broker/',
     });
     expect(hrefs('pipe')).toEqual({
       consumers: '/components/subscriptions/lines/',

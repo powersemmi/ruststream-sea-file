@@ -27,6 +27,7 @@ A registration that names none fails startup, and the error names the subscripti
 
 The transport belongs to the whole process.
 Shutting the broker down ends every stdio subscription and publisher in the process.
+The guide [Shell pipelines](../../guides/pipelines.md) feeds a stage, reads its output and chains stages.
 
 ## Example
 

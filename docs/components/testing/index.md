@@ -27,6 +27,7 @@ Both refuse what the real transport refuses: a stream key the client does not ta
 A header crosses the same [envelope](../headers/index.md) a file or a line carries.
 A publish through the harness returns once every handler it woke has settled, so the assertions read finished state; `tb.advance(..)` on a paused clock brings a [`retry_after`](../settlement/retry-after.md) copy back.
 What only the real transport shows, such as the bytes of a `.ss` file or what a file keeps across runs, is for a [live test](./live.md).
+The guide [Testing a file or pipeline service](../../guides/testing.md) tests a whole service this way.
 
 ## Example
 

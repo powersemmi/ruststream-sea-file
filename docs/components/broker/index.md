@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Broker
 
-Two brokers and no server: [`FileBroker`](api:ruststream_sea_file::file::FileBroker) keeps a log in one `.ss` stream file, and [`StdioBroker`](api:ruststream_sea_file::stdio::StdioBroker) makes the process's standard input and output a stream.
+Two brokers and no server: [`FileBroker`](./file-broker.md) keeps a log in one `.ss` stream file, and [`StdioBroker`](./stdio-broker.md) makes the process's standard input and output a stream.
 
 A [stream file](./file-broker.md) is a log on disk.
 It keeps what was written across restarts, and a subscriber can replay it or move back to an earlier message.

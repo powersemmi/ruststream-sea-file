@@ -58,7 +58,7 @@ A long-lived log therefore moves to a new file before it reaches the cap: the se
 
 The broker's shutdown waits for the publishes in flight, writes the [end-of-stream mark](../components/broker/end-with-eos.md) when the broker asks for one, and syncs the file.
 When shutdown returns the file is closed, so an `after_shutdown` hook can move or copy it.
-`end_with_eos` suits a writer whose file is complete when it stops, such as a daily log: a replay completes at the mark, and a live reader ends on it.
+[`end_with_eos`](../components/broker/end-with-eos.md) suits a writer whose file is complete when it stops, such as a daily log: a replay completes at the mark, and a live reader ends on it.
 A publisher kept from before the shutdown returns [`SeaFileError::NotConnected`](../components/broker/errors.md) and never writes to the closed file.
 
 ## A pipeline stage
@@ -74,5 +74,5 @@ The document is shared with the people who read it, so the path is too.
 
 ## Testing the configuration
 
-The tests start the production `app` under `TestApp::start`, so the settings are checked the way startup checks them, without a file.
+The tests start the production `app` under [`TestApp::start`](../components/testing/index.md), so the settings are checked the way startup checks them, without a file.
 A beacon interval that is not a multiple of 1024 fails the start in the test as it does on a real file.

@@ -14,7 +14,7 @@ On a pipe a deferred copy goes to the next stage, so the mount site names it wit
 [`out_retry(policy)`](api:ruststream::runtime::Mounting::out_retry) names the publisher the runtime's deferred copies leave through, and `.to(key)` names the stream key they go to.
 Standard output reaches the next process in the pipeline and never this one's standard input.
 So a copy cannot come back to the stage that deferred it, and the stage says where it goes.
-Every registration on [`StdioBroker`](../broker/stdio-broker.md) names it, because a handler may answer `retry_after` on any delivery.
+Every registration on [`StdioBroker`](../broker/stdio-broker.md) names it, because a handler may answer [`retry_after`](./retry-after.md) on any delivery.
 A registration that names none stops the service at startup, with an error that names the subscription and the `.to(..)` step that fixes it.
 The copy leaves once the delay is over, and a downstream stage reads it under that key, for example to feed it back to the start of the pipeline.
 On a stream file the copy needs no destination ([retry_after](./retry-after.md)), and `out_retry(Publish)` there only replaces the publisher.

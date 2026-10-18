@@ -44,7 +44,7 @@ writing to the second, and prints the line. It skips an empty payload, so the
 reporting a line that never left. A payload a line would change goes inside the
 [envelope](../envelope.md).
 
-The dashed arrow is `loopback`: the stdout thread also hands each line to this process's own
+The dashed arrow is [`loopback`](../../components/broker/loopback.md): the stdout thread also hands each line to this process's own
 consumers. It runs a stdio service in one process, as a test does.
 
 Both threads belong to the process, not to a broker. A [shutdown](../../components/broker/shutdown.md)

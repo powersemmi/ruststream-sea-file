@@ -20,6 +20,7 @@ So a service that resumes where it stopped stores the sequence it reached, read 
 The sequence the file writes next, one after its last message, opens the subscription at the tip, so a service that handled every message resumes there.
 A sequence further ahead stops the service at startup.
 The position applies on every startup: a subscription that starts at the beginning handles the whole retained file each time the service starts.
+The guide [Resuming and seeking](../../guides/resume-and-seek.md) builds a service that stores its sequence and resumes there.
 
 ## Example
 

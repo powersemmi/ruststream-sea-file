@@ -81,7 +81,7 @@ A new file also holds one message under the key `ruststream-internal`, which the
 ## The first test
 
 The example file also holds two tests.
-Each starts the same `app` with `TestApp::start`, publishes an order and checks how `take_order` settled it.
+Each starts the same `app` with [`TestApp::start`](../components/testing/index.md), publishes an order and checks how `take_order` settled it.
 `FileBroker` runs in process there, so the tests touch no file:
 
 ```bash
@@ -112,7 +112,7 @@ The handler stays as it is; the prelude, the broker and the subscription change.
 
 [`StdioBroker::new`](../components/broker/stdio-broker.md) takes no settings, and the subscription names the stream key alone.
 A stage names the key its deferred copies go to with [`out_retry(Publish).to(..)`](../components/settlement/out-retry.md), and it does not start without one.
-The publish policy is called `Publish` in both preludes, so code that publishes reads the same on either transport.
+The publish policy is called [`Publish`](../components/publishing/index.md) in both preludes, so code that publishes reads the same on either transport.
 
 Feed the stage a line:
 

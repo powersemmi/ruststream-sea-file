@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 
 A stdio subscription reads the lines of its stream key; a line with no key in its header reaches every subscription.
 
-`#[subscriber("jobs")]` on [`StdioBroker`](api:ruststream_sea_file::stdio::StdioBroker) reads the lines of standard input whose header names the key `jobs`.
+`#[subscriber("jobs")]` on [`StdioBroker`](../broker/stdio-broker.md) reads the lines of standard input whose header names the key `jobs`.
 A line is a header in square brackets, then the payload: `[timestamp | stream_key | sequence | shard_id] payload`.
 Every field of the header is optional, so `[jobs] {"id":7}` names the key alone.
 A line under another key is passed over, so a stage takes the keys it subscribed to out of a shared stream.

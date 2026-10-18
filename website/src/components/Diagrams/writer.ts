@@ -41,6 +41,7 @@ export function writer(words: Words): {boxes: Box[]; links: Link[]} {
     h: 44,
     kind: 'bad',
     lines: lines(words, 'quota'),
+    href: '/components/broker/file-broker/',
   });
   // Where along the sink's right side each note meets it, level with the note's centre.
   const level = (box: Box): number => (box.y + box.h / 2 - sink.y) / sink.h;

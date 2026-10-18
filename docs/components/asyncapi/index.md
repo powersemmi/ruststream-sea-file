@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # AsyncAPI
 
-With the `asyncapi` feature each broker is a server of the generated document, and each [`FileStream`](api:ruststream_sea_file::FileStream) channel carries its stream key in the `x-ruststream-file` extension.
+With the `asyncapi` feature each broker is a server of the generated document, and each [`FileStream`](../subscriptions/file-stream.md) channel carries its stream key in the `x-ruststream-file` extension.
 
 The core builds the AsyncAPI document from the app, before anything connects.
 This crate adds what it knows about the two transports.

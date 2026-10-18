@@ -78,5 +78,5 @@ A replay completes at the mark, and a live subscription such as `notify` ends on
 
 The tests in the example file run the shop and the audit in process: an order gets its receipt and `notify` reads it, and the audit reads three recorded receipts in one batch and ignores a fourth.
 The audit's receipts are recorded on a clone of its broker before it starts, the way the shop would have left them.
-The restart test runs the shop twice on one real file with `TestApp::start_live` and checks that the second run numbers its order three.
+The restart test runs the shop twice on one real file with [`TestApp::start_live`](../components/testing/live.md) and checks that the second run numbers its order three.
 [Testing a file or pipeline service](testing.md) covers both modes.

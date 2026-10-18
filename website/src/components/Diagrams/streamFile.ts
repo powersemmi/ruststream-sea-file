@@ -76,6 +76,7 @@ export function streamFile(words: Words): {boxes: Box[]; links: Link[]} {
       h: 44,
       kind: 'note',
       lines: lines(words, 'keys'),
+      href: '/components/subscriptions/file-stream/',
     },
   ];
   const links: Link[] = [
