@@ -22,7 +22,8 @@ pub const SEQUENCE_HEADER: &str = "stream-sequence";
 /// everything retained, `End` skips to the tip, and `Timestamp` resumes at the earliest
 /// message strictly later than the instant (milliseconds since the Unix epoch).
 ///
-/// Seek to a position the stream has reached. A sequence the stream has not written yet, and an
+/// Seek to a position the stream has reached, or to the sequence it writes next, which is the tip:
+/// a service that handled every message resumes there. A sequence further ahead, and an
 /// instant later than every message it holds, are both refused - the transport reads forward
 /// looking for the message and runs out of file - and the subscription ends with that refusal
 /// rather than staying where it was. A captured position, the beginning and the tip are always

@@ -89,8 +89,9 @@ that broker opened: the transport is process-wide by the client's design.
 consumer positions, and its resumable mode is unimplemented upstream, so nothing tracks how far a
 service read. You resume explicitly: store a [`FilePosition`] read off a delivery and open the
 next run with `start_at(..)`, or replay the file from its beginning. Seek to a position the stream
-has reached: a sequence past the last one written, and an instant later than every message the
-file holds, are both refused, and the subscription ends with the refusal.
+has reached, or to the sequence it writes next, which is the tip: a service that handled every
+message resumes there. A sequence further ahead, and an instant later than every message the file
+holds, are both refused, and the subscription ends with the refusal.
 
 # Headers
 

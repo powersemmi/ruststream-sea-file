@@ -436,8 +436,9 @@ fn resolve(entries: &[SharedMessage], to: FilePosition) -> Result<u64, Unresolve
         FilePosition::Beginning => Ok(1),
         FilePosition::End => Ok(retained + 1),
         // Sequence zero is the position before the first message, which the file reads as the
-        // start; past the last one there is nothing to resume at.
-        FilePosition::Sequence(sequence) if sequence <= retained => Ok(sequence.max(1)),
+        // start. The one after the last message is the tip, where the next append arrives;
+        // further ahead there is nothing to resume at.
+        FilePosition::Sequence(sequence) if sequence <= retained + 1 => Ok(sequence.max(1)),
         FilePosition::Sequence(_) => Err(Unresolved::Refused("no message carries that sequence")),
         FilePosition::Timestamp(millis) => {
             let instant = Timestamp::from_unix_timestamp_nanos(i128::from(millis) * 1_000_000)
