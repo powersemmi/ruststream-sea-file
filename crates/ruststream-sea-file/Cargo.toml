@@ -179,3 +179,47 @@ name = "manual_file_batch_seek"
 path = "examples/manual/file_batch_seek.rs"
 required-features = ["testing"]
 test = true
+
+[[example]]
+name = "file_broker"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker"
+path = "examples/manual/file_broker.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker_existing_only"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_existing_only"
+path = "examples/manual/file_broker_existing_only.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker_eos"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_eos"
+path = "examples/manual/file_broker_eos.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "file_broker_beacons"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_beacons"
+path = "examples/manual/file_broker_beacons.rs"
+required-features = ["testing"]
+test = true
