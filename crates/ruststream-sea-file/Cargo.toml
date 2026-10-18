@@ -216,6 +216,17 @@ required-features = ["testing"]
 test = true
 
 [[example]]
+name = "file_broker_size_limit"
+required-features = ["testing"]
+test = true
+
+[[example]]
+name = "manual_file_broker_size_limit"
+path = "examples/manual/file_broker_size_limit.rs"
+required-features = ["testing"]
+test = true
+
+[[example]]
 name = "file_broker_eos"
 required-features = ["testing"]
 test = true

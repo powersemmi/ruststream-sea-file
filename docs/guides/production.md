@@ -50,9 +50,10 @@ A live reader in this process or another one sees the message from then on.
 The file is synced to the device when the broker [shuts down](../components/broker/shutdown.md).
 Between those points the operating system decides when the bytes reach the device.
 
-The file client caps a stream file at 16 GiB.
+The file grows without limit, so the disk it lives on is the limit.
+[`size_limit`](../components/broker/size-limit.md) sets a cap of its own.
 A publish that reaches the cap fails with [`SeaFileError::Publish`](../components/broker/errors.md), and so does every later publish to that file.
-A long-lived log therefore moves to a new file before it reaches the cap: the service starts on a new path, and readers of the old file finish it with a [replay](../components/subscriptions/replay.md).
+A long-lived capped log therefore moves to a new file before it reaches the cap: the service starts on a new path, and readers of the old file finish it with a [replay](../components/subscriptions/replay.md).
 
 ## Shutdown
 

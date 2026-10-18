@@ -59,9 +59,8 @@ A file that holds nothing yet gets one message under the key `ruststream-interna
 connects. The client cannot open a live consumer on a file with no content, and no subscription
 reads that key.
 
-A stream key is 1 to 249 characters: ASCII letters and digits, `.`, `_` and `-`. The client stops
-writing a file at 16 GiB: a publish that reaches the cap fails, and every later publish to that
-file fails too.
+A stream key is 1 to 249 characters: ASCII letters and digits, `.`, `_` and `-`. The file grows
+without limit, unless [`size_limit`](../../components/broker/size-limit.md) caps it.
 
 The format is `sea-streamer-file`'s own
 ([the file format](https://github.com/SeaQL/sea-streamer/blob/main/sea-streamer-file/src/format.rs),

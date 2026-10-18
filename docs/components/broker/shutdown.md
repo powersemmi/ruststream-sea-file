@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 8
 title: Shutdown
 description: "Shutdown flushes and closes the stream file; a publisher kept from before returns NotConnected, and a stdio shutdown ends every stdio stream."
 ---

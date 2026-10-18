@@ -1,5 +1,5 @@
 ---
-sidebar_position: 9
+sidebar_position: 10
 title: Errors
 description: "SeaFileError is the crate's one error type: connect, subscribe, receive, publish and seek failures, a closed broker, an invalid input."
 ---

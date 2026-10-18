@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: StdioBroker
 description: "StdioBroker reads standard input and writes standard output, so a service runs as one stage of a shell pipeline."
 ---

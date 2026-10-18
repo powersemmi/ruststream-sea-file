@@ -17,7 +17,7 @@ A service that reads a file another service writes requires it with [`existing_o
 
 A publish appends the message under its stream key and flushes it, so the bytes reach the operating system before the call returns.
 The file is synced to the device when the broker [shuts down](./shutdown.md).
-The file client caps a stream file at 16 GiB: a publish that reaches the cap fails, and every later publish to that file fails too.
+The file grows without limit, unless [`size_limit`](./size-limit.md) caps it.
 
 The file client builds on Unix systems only, so the file transport does not build on Windows.
 Two more settings shape the file itself: [`end_with_eos`](./end-with-eos.md) marks it finished at shutdown, and [`beacon_interval`](./beacon-interval.md) sets how densely it is indexed.

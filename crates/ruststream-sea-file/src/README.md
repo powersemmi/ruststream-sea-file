@@ -66,6 +66,7 @@ item's own documentation keeps the detail.
   shutdown.
 - [beacon_interval][c-beacon-interval]: [`FileBroker::beacon_interval`], how densely the file is
   indexed.
+- [size_limit][c-size-limit]: [`FileBroker::size_limit`], an opt-in cap on the file's size.
 - [loopback][c-loopback]: [`StdioBroker::loopback`], a stage's output sent back to its input.
 - [Shutdown][c-shutdown]: the file closed, and [`SeaFileError::NotConnected`] for a publisher
   used afterwards.
@@ -141,6 +142,7 @@ subscription and a file publish contribute to the generated document.
 [c-existing-only]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/existing-only/
 [c-end-with-eos]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/end-with-eos/
 [c-beacon-interval]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/beacon-interval/
+[c-size-limit]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/size-limit/
 [c-loopback]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/loopback/
 [c-shutdown]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/shutdown/
 [c-prelude]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/prelude/

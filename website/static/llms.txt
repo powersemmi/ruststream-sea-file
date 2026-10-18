@@ -21,11 +21,12 @@ This site holds the guides, one page per component and the architecture of the c
 
 - [Components](https://powersemmi.github.io/ruststream-sea-file/latest/components/): the parts of the crate a service uses, one page each
 - [Broker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/): the two brokers, `FileBroker` on a stream file and `StdioBroker` on a pipeline, and their lazy connection
-- [FileBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/file-broker/): the path of a stream file, opened at startup and created when missing; the flush on publish and the 16 GiB cap
+- [FileBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/file-broker/): the path of a stream file, opened at startup and created when missing; the flush on publish and a file with no size limit
 - [StdioBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/stdio-broker/): standard input and output as one stream, so a service is one stage of a shell pipeline
 - [existing_only](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/existing-only/): a stream file that must already exist, for a service that reads what another process writes
 - [end_with_eos](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/end-with-eos/): the end-of-stream mark at shutdown, where a live subscription ends and a replay completes
 - [beacon_interval](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/beacon-interval/): how far apart the file's beacons sit: finer seeks against a larger file
+- [size_limit](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/size-limit/): an opt-in cap on the stream file's size, and what the client does at the cap
 - [loopback](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/loopback/): a stage's own output sent back to its input, so a stdio service runs in one process
 - [Shutdown](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/shutdown/): the file synced and closed, `NotConnected` for a publisher used afterwards, and the process-wide stdio shutdown
 - [Prelude](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/prelude/): `file::prelude`, `stdio::prelude`, and the crate prelude for a service on both

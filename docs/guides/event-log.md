@@ -43,9 +43,8 @@ Each stream key is numbered from one.
 The receipt keeps the order's sequence, which [`Ctx<Position>`](../components/positions/position.md) hands the handler, so a reader can [move back](resume-and-seek.md) to that order later.
 A later run that appends to the same file carries the numbering on: after a restart the next order is number three, not one.
 
-The file client caps a stream file at 16 GiB.
-A publish that reaches the cap fails, and so does every later publish to that file.
-[Running in production](production.md) covers what that means for a long-lived file.
+The file grows without limit, unless [`size_limit`](../components/broker/size-limit.md) caps it.
+[Running in production](production.md) covers what a cap means for a long-lived file.
 
 ## A one-pass job
 

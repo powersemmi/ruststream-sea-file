@@ -51,9 +51,10 @@ import TabItem from '@theme/TabItem';
 Broker [关闭](../components/broker/shutdown.md)时，文件同步到设备。
 在这两个时间点之间，由操作系统决定字节何时到达设备。
 
-文件客户端把流文件的大小上限定为 16 GiB。
+流文件的大小没有上限，所以它所在的磁盘就是上限。
+[`size_limit`](../components/broker/size-limit.md) 可以设定自己的上限。
 达到上限的发布返回 [`SeaFileError::Publish`](../components/broker/errors.md)，之后向该文件的每次发布也都返回这个错误。
-因此，长期使用的日志要在达到上限之前换到新文件：服务在新路径上启动，旧文件的读取者用[重放](../components/subscriptions/replay.md)把它读完。
+因此，设了上限的长期日志要在达到上限之前换到新文件：服务在新路径上启动，旧文件的读取者用[重放](../components/subscriptions/replay.md)把它读完。
 
 ## 关闭 {/* #shutdown */}
 

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 7
 title: loopback
 description: "loopback sends a stage's own output back to its input, so a stdio service runs in one process; it is a test aid."
 ---
