@@ -44,9 +44,8 @@ Broker [关闭](../components/broker/shutdown.md)时，文件同步到设备。
 收据保存订单的序号，处理器通过 [`Ctx<Position>`](../components/positions/position.md) 得到它，读取者之后可以凭它[回到](resume-and-seek.md)那个订单。
 之后向同一文件追加内容的运行会延续编号：重启后，下一个订单是三号，而不是一号。
 
-文件客户端把流文件的大小上限定为 16 GiB。
-达到上限的发布会返回错误，之后向该文件的每次发布也都会返回错误。
-[在生产环境中运行](production.md)说明这对长期使用的文件意味着什么。
+流文件的大小没有上限，除非用 [`size_limit`](../components/broker/size-limit.md) 设定一个。
+[在生产环境中运行](production.md)说明上限对长期使用的文件意味着什么。
 
 ## 一次读完的作业 {/* #a-one-pass-job */}
 

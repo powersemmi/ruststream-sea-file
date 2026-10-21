@@ -16,7 +16,7 @@ export const words = {
   "file": ["The stream file"],
   "flush": ["flush() after", "every publish:", "to the OS"],
   "sync": ["sync_all() once,", "at shutdown:", "to the device"],
-  "quota": ["The client stops a file at 16 GiB:", "that publish and every later one fail"]
+  "quota": ["Under size_limit, the file stops at its cap:", "that publish and every later one fail"]
 };
 
 # Writer
@@ -43,6 +43,6 @@ Opening a producer on a file that already holds messages scans back to the last 
 to the end, to learn where each key's numbering stands. That scan grows with the file. This crate
 hands the writer one append at a time per file, so a failed append leaves no other publish waiting.
 
-The client stops a file at 16 GiB unless told otherwise, and this crate leaves the limit at that
-default. A publish that reaches the cap fails, and every later publish to that file returns that error
-at once.
+The client caps a file at 16 GiB unless told otherwise, and this crate tells it to take no cap
+unless [`size_limit`](../../components/broker/size-limit.md) sets one. A publish that reaches the
+cap fails, and every later publish to that file returns that error at once.

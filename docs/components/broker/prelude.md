@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 9
 title: Prelude
 description: "Glob file::prelude on a stream file, stdio::prelude on a pipeline, and the crate prelude only in a service that uses both."
 ---

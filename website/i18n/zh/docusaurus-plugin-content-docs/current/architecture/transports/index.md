@@ -45,6 +45,6 @@ export const words = {
 
 文件还没有任何内容时，Broker 在连接时用键 `ruststream-internal` 写入一条消息。客户端无法在没有内容的文件上打开实时消费者，而且没有订阅读取这个键。
 
-流键长 1 到 249 个字符：ASCII 字母和数字、`.`、`_` 和 `-`。客户端在文件达到 16 GiB 时停止写入：达到上限的发布会失败，之后向该文件的每次发布也都会失败。
+流键长 1 到 249 个字符：ASCII 字母和数字、`.`、`_` 和 `-`。文件的大小没有上限，除非用 [`size_limit`](../../components/broker/size-limit.md) 设定一个。
 
 这一格式是 `sea-streamer-file` 自己的格式（[文件格式](https://github.com/SeaQL/sea-streamer/blob/main/sea-streamer-file/src/format.rs)、[客户端](https://docs.rs/sea-streamer-file/1.0.0-rc.2/sea_streamer_file/)）。客户端如何读取文件，见[读取者](reader.md)；如何写入文件，见[写入者](writer.md)。

@@ -37,6 +37,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::future::{Future, ready};
 use std::mem;
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 
@@ -50,6 +51,8 @@ use ruststream::{
     AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Lend,
     OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
 };
+#[cfg(feature = "testing")]
+use sea_streamer_file::DEFAULT_BEACON_INTERVAL;
 use sea_streamer_file::{
     AutoStreamReset, FileConnectOptions, FileConsumerOptions, FileErr, FileId, FileProducer,
     FileProducerOptions, FileStreamer, MessageSource, StreamMode,
@@ -62,7 +65,7 @@ use tokio::sync::{Mutex, OnceCell};
 
 use crate::error::{SeaFileError, box_err};
 #[cfg(feature = "testing")]
-use crate::in_process::MemoryFile;
+use crate::in_process::{Budget, Fit, MemoryFile};
 use crate::stream::FileStream;
 #[cfg(feature = "asyncapi")]
 use crate::stream::channel_extension;
@@ -175,10 +178,9 @@ const PRIME_STREAM: &str = "ruststream-internal";
 ///
 /// A publish appends the message under its stream key and flushes it, so the bytes reach the
 /// operating system before the call returns; the file is synced to the device at shutdown. The
-/// file client caps a stream file at 16 GiB: a publish that reaches the cap fails, and every
-/// later publish to that file fails too. Brokers opened on one path in one process share the
-/// file's writer: once one of them shuts down, a publish through another fails with
-/// [`SeaFileError::Publish`] carrying the client's `ProducerEnded`.
+/// file grows without limit unless [`size_limit`](Self::size_limit) caps it. Brokers opened on
+/// one path in one process share the file's writer: once one of them shuts down, a publish
+/// through another fails with [`SeaFileError::Publish`] carrying the client's `ProducerEnded`.
 ///
 /// The [FileBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/file-broker/)
 /// page shows it in a service.
@@ -283,10 +285,7 @@ pub struct FileBroker {
     create: bool,
     end_with_eos: bool,
     beacon_interval: Option<u32>,
-    /// The size the client caps the file at, lowered only by the unit tests, which cannot write
-    /// the client's default of 16 GiB.
-    #[cfg(test)]
-    size_limit: Option<u64>,
+    size_limit: Option<NonZeroU64>,
     cell: CoreCell,
 }
 
@@ -298,14 +297,51 @@ impl FileBroker {
             create: true,
             end_with_eos: false,
             beacon_interval: None,
-            #[cfg(test)]
             size_limit: None,
             cell: Arc::new(OnceCell::new()),
         }
     }
 
-    #[cfg(test)]
-    const fn size_limit(mut self, bytes: u64) -> Self {
+    /// Caps the stream file at `bytes`; without it the file grows without limit.
+    ///
+    /// The cap counts every byte of the file, the bytes an earlier run wrote included. The
+    /// publish that reaches it fails with [`SeaFileError::Publish`], and so does every later
+    /// publish to the file. A message that fills the cap exactly is written whole and its
+    /// publish still fails; a message larger than the space left is not written whole. A file
+    /// already larger than the cap fails startup with [`SeaFileError::Invalid`]. Brokers opened
+    /// on one path in one process share the file's writer, and with it the cap of the first one
+    /// to connect. The
+    /// [size_limit](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/size-limit/)
+    /// page shows it in a service.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::nonzero;
+    /// use ruststream_sea_file::file::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Debug, Deserialize)]
+    /// struct Reading {
+    ///     sensor: u64,
+    /// }
+    ///
+    /// #[subscriber(FileStream::new("readings"))]
+    /// async fn record(reading: &Reading) -> HandlerOutcome {
+    ///     tracing::info!(reading.sensor, "recorded");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// #[ruststream::app]
+    /// fn app() -> impl App {
+    ///     // The disk holds 64 GiB for this log, and the service stops writing there.
+    ///     let broker = FileBroker::new("/var/lib/readings.ss").size_limit(nonzero!(64 << 30));
+    ///     RustStream::new(AppInfo::new("readings", "0.1.0")).with_broker(broker, |b| {
+    ///         b.include(record);
+    ///     })
+    /// }
+    /// ```
+    pub const fn size_limit(mut self, bytes: NonZeroU64) -> Self {
         self.size_limit = Some(bytes);
         self
     }
@@ -342,6 +378,65 @@ impl FileBroker {
     }
 }
 
+impl FileBroker {
+    /// Refuses a file already larger than the cap: the client counts the space left from the
+    /// file's size, and a file past the cap has none it can count.
+    fn check_size(&self) -> Result<(), SeaFileError> {
+        let Some(limit) = self.size_limit else {
+            return Ok(());
+        };
+        match fs::metadata(&self.path) {
+            Ok(meta) if meta.len() > limit.get() => Err(SeaFileError::Invalid(format!(
+                "the stream file '{}' holds {} bytes, more than its size limit of {limit}",
+                self.path,
+                meta.len(),
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    /// The client's settings for this broker's file.
+    fn client_options(&self) -> Result<FileConnectOptions, SeaFileError> {
+        let mut options = FileConnectOptions::default();
+        if self.create {
+            options.set_create_if_not_exists(true);
+        }
+        if self.end_with_eos {
+            options.set_end_with_eos(true);
+        }
+        // The client caps every file at 16 GiB unless told otherwise; the largest size it
+        // counts is no cap at all.
+        options.set_file_size_limit(self.size_limit.map_or(u64::MAX, NonZeroU64::get));
+        if let Some(interval) = self.beacon_interval {
+            options
+                .set_beacon_interval(interval)
+                .map_err(|e| SeaFileError::Invalid(format!("invalid beacon interval: {e}")))?;
+        }
+        Ok(options)
+    }
+}
+
+#[cfg(feature = "testing")]
+impl FileBroker {
+    /// The size limit of the in-process file, with the bytes `connect` writes into a new file
+    /// already counted: its header and the priming message. A limit those do not fit fails, as
+    /// `connect` fails on a real file.
+    fn in_process_budget(&self) -> Result<Option<Budget>, SeaFileError> {
+        let Some(limit) = self.size_limit else {
+            return Ok(None);
+        };
+        let interval = self.beacon_interval.unwrap_or(DEFAULT_BEACON_INTERVAL);
+        let mut budget = Budget::new(limit.get(), interval);
+        if budget.take(PRIME_STREAM, 1) != Fit::Kept {
+            return Err(SeaFileError::Connect {
+                target: self.path.clone(),
+                source: box_err(FileErr::FileLimitExceeded),
+            });
+        }
+        Ok(Some(budget))
+    }
+}
+
 impl Broker for FileBroker {
     type Error = SeaFileError;
     type Connected = ConnectedFileBroker;
@@ -350,22 +445,7 @@ impl Broker for FileBroker {
         let core = self
             .cell
             .get_or_try_init(async || {
-                let mut options = FileConnectOptions::default();
-                if self.create {
-                    options.set_create_if_not_exists(true);
-                }
-                if self.end_with_eos {
-                    options.set_end_with_eos(true);
-                }
-                #[cfg(test)]
-                if let Some(bytes) = self.size_limit {
-                    options.set_file_size_limit(bytes);
-                }
-                if let Some(interval) = self.beacon_interval {
-                    options.set_beacon_interval(interval).map_err(|e| {
-                        SeaFileError::Invalid(format!("invalid beacon interval: {e}"))
-                    })?;
-                }
+                let options = self.client_options()?;
                 let file_id = FileId::new(self.path.clone());
                 let uri = file_id
                     .to_streamer_uri()
@@ -395,6 +475,7 @@ impl Broker for FileBroker {
                         closed: AtomicBool::new(false),
                     }));
                 }
+                self.check_size()?;
                 let producer = streamer
                     .create_generic_producer(FileProducerOptions::default())
                     .await
@@ -464,8 +545,9 @@ impl InProcess for FileBroker {
                         target: self.path.clone(),
                         source: box_err(e),
                     })?;
+                let budget = self.in_process_budget()?;
                 Ok::<_, SeaFileError>(Arc::new(Core {
-                    link: Link::InProcess(MemoryFile::new(self.end_with_eos)),
+                    link: Link::InProcess(MemoryFile::new(self.end_with_eos, budget)),
                     path: self.path.clone(),
                     closed: AtomicBool::new(false),
                 }))
@@ -726,8 +808,11 @@ impl Publisher for FilePublisher {
             }),
             #[cfg(feature = "testing")]
             Link::InProcess(file) => {
-                file.append(key, payload);
-                Ok(())
+                file.append(key, payload)
+                    .map_err(|err| SeaFileError::Publish {
+                        stream: msg.name().to_owned(),
+                        source: box_err(err),
+                    })
             }
         }
     }
@@ -861,10 +946,18 @@ impl TestableBroker for ConnectedFileBroker {
                 message.name()
             )
         });
-        file.append(
+        // An injection has no error to return, so a message the size limit refuses on a real
+        // file ends the test here rather than passing where the file fails.
+        if let Err(err) = file.append(
             key,
             wire::encode(message.headers(), message.payload(), false),
-        );
+        ) {
+            panic!(
+                "the injected message to {:?} reaches the file's size limit, where a real file \
+                 fails its publish: {err}",
+                message.name()
+            );
+        }
     }
 
     fn published(&self, name: &str) -> Vec<RawMessage> {
@@ -974,6 +1067,7 @@ pub mod prelude {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
     use std::time::Duration;
 
     use futures::future::join_all;
@@ -983,13 +1077,18 @@ mod tests {
     use tokio::runtime::Runtime;
     use tokio::time::timeout;
 
-    use super::FileBroker;
+    use super::{FileBroker, NonZeroU64, SeaFileError};
+
+    /// The runtime of every test here: the client's producers live on one process-wide task,
+    /// spawned on the first runtime that touches them, so a runtime that ends with its test would
+    /// leave the next test's publishes waiting.
+    static RT: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().expect("a runtime"));
 
     /// How long one step may take before the test calls it stuck: each is a local file write.
     const STEP: Duration = Duration::from_secs(10);
 
     /// A limit small enough for a few messages to reach it.
-    const LIMIT: u64 = 8 * 1024;
+    const LIMIT: NonZeroU64 = NonZeroU64::new(8 * 1024).unwrap();
 
     /// What one publish appends: its number, so the file can be checked message by message.
     fn body(n: usize) -> Vec<u8> {
@@ -1066,15 +1165,113 @@ mod tests {
         succeeded
     }
 
+    #[test]
+    fn a_file_is_unlimited_unless_a_limit_is_set() {
+        let options = FileBroker::new("/tmp/orders.ss")
+            .client_options()
+            .expect("valid settings");
+        assert_eq!(options.file_size_limit(), u64::MAX);
+        let options = FileBroker::new("/tmp/orders.ss")
+            .size_limit(LIMIT)
+            .client_options()
+            .expect("valid settings");
+        assert_eq!(options.file_size_limit(), LIMIT.get());
+    }
+
+    // What the client does at its cap with a message that fills it exactly: it writes the
+    // message whole, then reports the cap reached, so the publish fails for a message the file
+    // holds.
+    #[test]
+    fn a_message_that_fills_the_limit_exactly_is_in_the_file_and_its_publish_fails() {
+        RT.block_on(async {
+            let path = std::env::temp_dir()
+                .join(format!("ruststream-sea-exact-{}.ss", std::process::id()))
+                .to_string_lossy()
+                .into_owned();
+            let _stale = std::fs::remove_file(&path);
+            let broker = FileBroker::new(&path).size_limit(LIMIT);
+            let connected = broker.clone().connect().await.expect("connects");
+            let publisher = broker.publisher();
+            let size = || std::fs::metadata(&path).expect("the file is there").len();
+            let publish = async |bytes: &[u8]| {
+                let publish = publisher.publish(OutgoingMessage::new("orders", bytes), None);
+                timeout(STEP, publish).await.expect("the publish returns")
+            };
+
+            publish(&body(0)).await.expect("the first message fits");
+            let before = size();
+            publish(&body(1)).await.expect("the second message fits");
+            let framing = size() - before - body(1).len() as u64;
+            let left = LIMIT.get() - size();
+            let mut exact = body(2);
+            exact.resize(usize::try_from(left - framing).expect("a small size"), b'.');
+
+            let refused = publish(&exact).await;
+            assert!(refused.is_err(), "the publish that reached the cap failed");
+            // The client reports the cap as soon as it hands its last write to the runtime's
+            // file thread, so the bytes reach the file a moment after the publish returns.
+            timeout(STEP, async {
+                while size() < LIMIT.get() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the last write reaches the file");
+            assert_eq!(
+                size(),
+                LIMIT.get(),
+                "the message filled the file to its cap"
+            );
+            timeout(STEP, connected.shutdown())
+                .await
+                .expect("shuts down")
+                .ok();
+            let key = StreamKey::new("orders").expect("a stream key");
+            let held = timeout(STEP, read_back(&path, &key))
+                .await
+                .expect("reads back");
+            std::fs::remove_file(&path).expect("the file is removed");
+            assert_eq!(held, [0, 1, 2], "the refused message is in the file whole");
+        });
+    }
+
+    #[test]
+    fn a_file_larger_than_the_limit_fails_startup() {
+        RT.block_on(async {
+            let path = std::env::temp_dir()
+                .join(format!("ruststream-sea-over-{}.ss", std::process::id()))
+                .to_string_lossy()
+                .into_owned();
+            let _stale = std::fs::remove_file(&path);
+            let broker = FileBroker::new(&path);
+            let connected = broker.clone().connect().await.expect("connects");
+            for n in 0..4 {
+                broker
+                    .publisher()
+                    .publish(OutgoingMessage::new("orders", &body(n)[..]), None)
+                    .await
+                    .expect("an uncapped file takes the message");
+            }
+            connected.shutdown().await.expect("shuts down");
+
+            let small = NonZeroU64::new(512).unwrap();
+            let refused = timeout(STEP, FileBroker::new(&path).size_limit(small).connect())
+                .await
+                .expect("startup returns");
+            std::fs::remove_file(&path).expect("the file is removed");
+            let Err(SeaFileError::Invalid(why)) = refused else {
+                panic!("a file past its cap must not open, got {refused:?}");
+            };
+            assert!(why.contains("512"), "{why}");
+        });
+    }
+
     // The client caps a stream file, and once an append fails its writer takes no more. A
     // publish must still return, and one this crate reports as done must be one the file holds
     // whole: a reader of the file is the only place a message lives once the publish returned.
     #[test]
     fn a_publish_at_the_size_limit_returns_and_one_reported_done_is_whole_in_the_file() {
-        // The client's producers live on one process-wide task, spawned on the first runtime
-        // that touches them, so every case runs on this one.
-        let rt = Runtime::new().expect("a runtime");
-        rt.block_on(async {
+        RT.block_on(async {
             // One publish at a time, eight at once through one broker, and eight at once through
             // eight brokers opened on the one file, which share its writer.
             for (concurrent, brokers) in [(1, 1), (8, 1), (8, 8)] {
