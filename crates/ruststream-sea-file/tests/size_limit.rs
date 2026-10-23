@@ -13,7 +13,7 @@ use ruststream_sea_file::{ConnectedFileBroker, FileBroker};
 use sea_streamer_file::{FileErr, FileId, MessageSource, StreamMode};
 use sea_streamer_types::{Buffer as _, Message as _};
 
-mod common;
+use crate::common;
 
 /// How long a step on a local file may take before the test calls it stuck.
 const STEP: Duration = Duration::from_secs(10);

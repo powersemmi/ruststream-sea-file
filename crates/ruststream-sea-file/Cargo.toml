@@ -15,6 +15,10 @@ categories = ["asynchronous", "network-programming"]
 # The in-process mode and the AsyncAPI extension are off by default, so a default build on docs.rs
 # would publish a reference without the testing example and without what a subscription
 # contributes to the generated document - the parts the crate overview sends readers to.
+# Every file under `tests/` is a module of one test binary, the two stdio suites aside: one link
+# instead of one per file.
+autotests = false
+
 [package.metadata.docs.rs]
 all-features = true
 
@@ -67,6 +71,20 @@ tokio = { workspace = true, features = [
     # once instead of waiting out a real timeout.
     "test-util",
 ] }
+
+[[test]]
+name = "suite"
+path = "tests/main.rs"
+
+# The two stdio suites own their process: they attach the process's standard input and output,
+# and shutting the transport down ends every stdio consumer and producer in the process.
+[[test]]
+name = "connect_runtime_stdio"
+path = "tests/connect_runtime_stdio.rs"
+
+[[test]]
+name = "stdio_retry"
+path = "tests/stdio_retry.rs"
 
 # --- examples: subscriptions and positions ---
 

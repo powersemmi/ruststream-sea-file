@@ -7,7 +7,7 @@
 
 #![cfg(feature = "testing")]
 
-mod common;
+use crate::common;
 
 use std::fmt::Display;
 
