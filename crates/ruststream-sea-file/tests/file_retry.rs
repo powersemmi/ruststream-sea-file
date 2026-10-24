@@ -10,7 +10,7 @@
 //! what it asserts is what a reader of that file sees: the audit trail one handler leaves, or the
 //! spent delivery the cap carried to the dead-letter key.
 
-mod common;
+use crate::common;
 
 use std::pin::pin;
 use std::time::Duration;

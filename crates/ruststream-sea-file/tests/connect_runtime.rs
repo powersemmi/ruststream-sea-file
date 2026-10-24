@@ -5,7 +5,7 @@
 //! This is the shape of a caller on a thread of its own, with a current-thread runtime that ends
 //! when the thread's work does, while the connection it used lives on.
 
-mod common;
+use crate::common;
 
 use std::pin::pin;
 use std::thread;
