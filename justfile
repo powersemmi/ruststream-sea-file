@@ -17,7 +17,15 @@ check:
     cargo check --workspace --no-default-features
 
 test:
-    cargo test --workspace --all-features
+    # The pipeline tests spawn these examples as the binaries a pipeline runs, and `--tests`
+    # builds no example binary.
+    cargo build -p ruststream-sea-file --all-features --example stdio_pipeline \
+        --example guide_pipelines --example manual_guide_pipelines
+    # The examples' tests are modules of one test binary, so `--tests` builds none per example;
+    # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
+    # run on their own line.
+    cargo test --workspace --all-features --tests
+    cargo test --workspace --all-features --doc
 
 # The suites that run against the real transports: stream files in the temp directory, the
 # process's own standard input and output, and the shipped pipeline stage as a child process.
