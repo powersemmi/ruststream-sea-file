@@ -1,7 +1,7 @@
 //! End-to-end checks over real stream files and the stdio loopback - all local, no external
 //! broker.
 
-mod common;
+use crate::common;
 
 use std::num::NonZeroUsize;
 use std::pin::pin;

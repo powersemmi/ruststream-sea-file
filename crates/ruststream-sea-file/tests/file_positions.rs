@@ -10,7 +10,7 @@
 //! One shared runtime, for the reason `common` gives: the file client's producer dispatcher is
 //! process-wide and outlives no per-test runtime.
 
-mod common;
+use crate::common;
 
 use std::pin::pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
