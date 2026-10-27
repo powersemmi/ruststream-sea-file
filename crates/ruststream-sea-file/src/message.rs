@@ -1,14 +1,15 @@
 //! [`SeaMessage`]: a delivered message, shared by the file and stdio transports.
 
+use std::fmt;
 use std::future::{Future, ready};
+use std::sync::OnceLock;
 
-use bytes::Bytes;
 use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Str};
-use sea_streamer_types::{Buffer as _, Message as _, SharedMessage};
+use sea_streamer_types::{MessageHeader, SharedMessage};
 
+use crate::envelope::{Envelope, Rs};
 #[cfg(feature = "testing")]
 use crate::in_process::Release;
-use crate::wire;
 
 /// Header exposing the message's sequence number within its stream.
 pub const SEQUENCE_HEADER: &str = "stream-sequence";
@@ -116,14 +117,19 @@ impl FilePosition {
 /// This is the whole delivery on standard input; a stream file wraps it in a
 /// [`FileMessage`](crate::FileMessage), which adds the subscription's reposition handle.
 ///
+/// The delivery keeps the record as it was read. The subscription's [`Envelope`] located the
+/// payload when the delivery was built, and parses the headers the first time they are read,
+/// keeping them for the rest of the delivery.
+///
 /// The transport keeps no consumer positions (its resumable mode is unimplemented upstream),
 /// so acknowledgement reports [`AckError::Unsupported`] rather than pretending; resume
 /// explicitly via the descriptor's start position or a captured [`FilePosition`].
-pub struct SeaMessage {
-    payload: Bytes,
-    headers: HeaderMap,
-    stream: String,
-    sequence: u64,
+pub struct SeaMessage<Env: Envelope = Rs> {
+    header: MessageHeader,
+    record: Vec<u8>,
+    opened: Env::Opened,
+    headers: OnceLock<HeaderMap>,
+    envelope: Env,
     /// Tells the test harness this delivery is done when it is dropped: the in-process transport
     /// counts its deliveries in flight. The field is there only with the `testing` feature.
     #[cfg(feature = "testing")]
@@ -133,28 +139,40 @@ pub struct SeaMessage {
 // The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
 // delivery exactly the fields a delivery off a file or a pipe needs.
 #[cfg(not(feature = "testing"))]
-const _: () = assert!(size_of::<SeaMessage>() == size_of::<(Bytes, HeaderMap, String, u64)>());
+const _: () = assert!(
+    size_of::<SeaMessage>()
+        == size_of::<(
+            MessageHeader,
+            Vec<u8>,
+            <Rs as Envelope>::Opened,
+            OnceLock<HeaderMap>,
+        )>()
+);
 
-impl std::fmt::Debug for SeaMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Env: Envelope> fmt::Debug for SeaMessage<Env> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SeaMessage")
-            .field("stream", &self.stream)
-            .field("sequence", &self.sequence)
-            .field("payload_len", &self.payload.len())
+            .field("stream", &self.stream())
+            .field("sequence", &self.header.sequence())
+            .field("record_len", &self.record.len())
             .finish_non_exhaustive()
     }
 }
 
-impl SeaMessage {
-    pub(crate) fn new(message: &SharedMessage) -> Self {
-        let (mut headers, payload) = wire::decode(message.message().as_bytes());
-        let sequence = message.sequence();
-        headers.insert(Str::from_static(SEQUENCE_HEADER), sequence.to_string());
+impl<Env: Envelope> SeaMessage<Env> {
+    /// Opens a record the client read: the envelope locates the payload, and leaves the headers
+    /// for the first read of them.
+    pub(crate) fn open(message: SharedMessage, envelope: &Env) -> Self {
+        // The client hands over the only reference to the bytes it read, so they move here
+        // without a copy; a record another reader still shares is copied.
+        let (header, record) = message.to_owned_message().take();
+        let opened = envelope.open(&record);
         Self {
-            payload,
-            headers,
-            stream: message.stream_key().name().to_owned(),
-            sequence,
+            header,
+            record,
+            opened,
+            headers: OnceLock::new(),
+            envelope: envelope.clone(),
             #[cfg(feature = "testing")]
             release: None,
         }
@@ -170,25 +188,32 @@ impl SeaMessage {
     /// The stream key this message was published to.
     #[must_use]
     pub fn stream(&self) -> &str {
-        &self.stream
+        self.header.stream_key().name()
     }
 }
 
-impl Positioned for SeaMessage {
+impl<Env: Envelope> Positioned for SeaMessage<Env> {
     type Position = FilePosition;
 
     fn position(&self) -> FilePosition {
-        FilePosition::Sequence(self.sequence)
+        FilePosition::Sequence(*self.header.sequence())
     }
 }
 
-impl IncomingMessage for SeaMessage {
+impl<Env: Envelope> IncomingMessage for SeaMessage<Env> {
     fn payload(&self) -> &[u8] {
-        &self.payload
+        self.envelope.payload(&self.record, &self.opened)
     }
 
     fn headers(&self) -> &HeaderMap {
-        &self.headers
+        self.headers.get_or_init(|| {
+            let mut headers = self.envelope.headers(&self.record, &self.opened);
+            headers.insert(
+                Str::from_static(SEQUENCE_HEADER),
+                self.header.sequence().to_string(),
+            );
+            headers
+        })
     }
 
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
@@ -197,5 +222,81 @@ impl IncomingMessage for SeaMessage {
 
     fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         ready(Err(AckError::Unsupported))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use sea_streamer_types::{ShardId, StreamKey, Timestamp};
+
+    use super::*;
+    use crate::envelope::{Medium, SealError};
+
+    /// The default envelope, counting how often it parses headers.
+    #[derive(Debug, Clone, Default)]
+    struct Counting(Arc<AtomicUsize>);
+
+    impl Envelope for Counting {
+        type Opened = <Rs as Envelope>::Opened;
+
+        fn seal<'p>(
+            &self,
+            headers: &HeaderMap,
+            payload: &'p [u8],
+            medium: Medium,
+        ) -> Result<Cow<'p, [u8]>, SealError> {
+            Rs.seal(headers, payload, medium)
+        }
+
+        fn open(&self, record: &[u8]) -> Self::Opened {
+            Rs.open(record)
+        }
+
+        fn payload<'r>(&self, record: &'r [u8], opened: &'r Self::Opened) -> &'r [u8] {
+            Rs.payload(record, opened)
+        }
+
+        fn headers(&self, record: &[u8], opened: &Self::Opened) -> HeaderMap {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Rs.headers(record, opened)
+        }
+    }
+
+    fn delivery(envelope: &Counting, headers: &HeaderMap, payload: &[u8]) -> SeaMessage<Counting> {
+        let record = envelope
+            .seal(headers, payload, Medium::File)
+            .expect("the default envelope seals")
+            .into_owned();
+        let length = record.len();
+        let header = MessageHeader::new(
+            StreamKey::new("orders").expect("the key is valid"),
+            ShardId::new(0),
+            7,
+            Timestamp::now_utc(),
+        );
+        SeaMessage::open(SharedMessage::new(header, record, 0, length), envelope)
+    }
+
+    #[test]
+    fn headers_are_parsed_once_and_only_when_read() {
+        let envelope = Counting::default();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-tenant", "acme");
+        let message = delivery(&envelope, &headers, b"{\"id\":1}");
+
+        assert_eq!(message.payload(), b"{\"id\":1}");
+        assert_eq!(
+            envelope.0.load(Ordering::Relaxed),
+            0,
+            "the payload parsed the headers"
+        );
+
+        assert_eq!(message.headers().get_str("x-tenant"), Some("acme"));
+        assert_eq!(message.headers().get_str(SEQUENCE_HEADER), Some("7"));
+        assert_eq!(envelope.0.load(Ordering::Relaxed), 1);
     }
 }

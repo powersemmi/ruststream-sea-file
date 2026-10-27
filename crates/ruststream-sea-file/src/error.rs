@@ -2,6 +2,8 @@
 
 use std::error::Error as StdError;
 
+use crate::envelope::SealError;
+
 /// Errors returned by the file and stdio transports.
 ///
 /// One enum for the whole crate, variants by source, per the `RustStream` broker conventions.
@@ -58,6 +60,16 @@ pub enum SeaFileError {
         /// The client's failure.
         #[source]
         source: Box<dyn StdError + Send + Sync>,
+    },
+
+    /// The publish's envelope could not write the message into a record.
+    #[error("cannot publish to '{stream}': {source}")]
+    Seal {
+        /// The stream key the message targeted.
+        stream: String,
+        /// Why the envelope refused it.
+        #[source]
+        source: SealError,
     },
 
     /// The handle is used before `connect` filled the shared state, or after `shutdown`.

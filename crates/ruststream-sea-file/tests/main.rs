@@ -7,6 +7,7 @@ mod asyncapi;
 mod both_modes;
 mod conformance_sea;
 mod connect_runtime;
+mod envelopes;
 mod file_positions;
 mod file_retry;
 mod in_process;

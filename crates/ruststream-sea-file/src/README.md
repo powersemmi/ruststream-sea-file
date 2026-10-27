@@ -93,9 +93,9 @@ item's own documentation keeps the detail.
 
 ## Publishing
 
-- [Publish][c-publishing]: [`file::Publish`] and [`stdio::Publish`], each form's one policy.
-- [FilePublish][c-file-publish]: [`FilePublish`] and its live [`FilePublisher`].
-- [StdioPublish][c-stdio-publish]: [`StdioPublish`] and its live [`StdioPublisher`].
+- [Publish][c-publishing]: [`file::Publish`](struct@file::Publish) and [`stdio::Publish`](struct@stdio::Publish), each form's one policy.
+- [FilePublish][c-file-publish]: [`FilePublish`](struct@FilePublish) and its live [`FilePublisher`].
+- [StdioPublish][c-stdio-publish]: [`StdioPublish`](struct@StdioPublish) and its live [`StdioPublisher`].
 
 ## Settlement
 
@@ -108,6 +108,8 @@ item's own documentation keeps the detail.
 ## Headers
 
 - [Headers][c-headers]: the envelope headers travel in, inside the payload.
+- [Envelopes][c-envelopes]: [`Envelope`] and its formats [`Rs`], [`Framed`] and [`NoOp`], chosen
+  on the broker, a [`FileStream`] or a publish policy.
 - [Payloads][c-payloads]: binary, multi-line and padded payloads on a pipe.
 - [SEQUENCE_HEADER][c-sequence-header]: [`SEQUENCE_HEADER`], the sequence of every delivery.
 
@@ -121,10 +123,11 @@ item's own documentation keeps the detail.
 
 # Cargo features
 
-Both are off by default; the crate needs neither to run a service. `testing` adds the in-process
-mode of both brokers, which `TestApp::start` connects in place of the file and the pipe; a
-service enables it in its `[dev-dependencies]`. `asyncapi` adds what a [`FileStream`]
-subscription and a file publish contribute to the generated document.
+All are off by default; the crate needs none of them to run a service. `testing` adds the
+in-process mode of both brokers, which `TestApp::start` connects in place of the file and the
+pipe; a service enables it in its `[dev-dependencies]`. `json`, `cbor` and `msgpack` add that mode
+for a broker whose envelope is [`Framed`] over the core's codec of that name. `asyncapi` adds
+what a [`FileStream`] subscription and a publish contribute to the generated document.
 
 [guides]: https://powersemmi.github.io/ruststream-sea-file/latest/
 [g-start]: https://powersemmi.github.io/ruststream-sea-file/latest/guides/getting-started/
@@ -166,6 +169,7 @@ subscription and a file publish contribute to the generated document.
 [c-out-retry]: https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/out-retry/
 [c-dead-letters]: https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/dead-letters/
 [c-headers]: https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/
+[c-envelopes]: https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/envelopes/
 [c-payloads]: https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/payloads/
 [c-sequence-header]: https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/sequence-header/
 [c-asyncapi]: https://powersemmi.github.io/ruststream-sea-file/latest/components/asyncapi/

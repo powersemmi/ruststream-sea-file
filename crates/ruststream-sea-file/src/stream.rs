@@ -9,6 +9,7 @@ use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscr
 #[cfg(feature = "asyncapi")]
 use serde::Serialize;
 
+use crate::envelope::{Envelope, EnvelopeChoice, FromBroker};
 use crate::error::SeaFileError;
 use crate::file::ConnectedFileBroker;
 use crate::subscriber::FileSubscriber;
@@ -56,9 +57,10 @@ use crate::subscriber::FileSubscriber;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
-pub struct FileStream {
+pub struct FileStream<Choice = FromBroker> {
     stream: String,
     replay: bool,
+    envelope: Choice,
 }
 
 impl FileStream {
@@ -67,7 +69,114 @@ impl FileStream {
         Self {
             stream: stream.into(),
             replay: false,
+            envelope: FromBroker,
         }
+    }
+}
+
+/// A [`FileStream`] whose type names its envelope: `FileStream::<NoOp>::new("readings")`.
+///
+/// `#[subscriber]` takes the descriptor's type from the constructor at the head of the
+/// expression, so a subscription that reads in an envelope of its own names it there. The
+/// envelope is its type's default value; [`FileStream::envelope`] after the constructor sets
+/// another value of the same type.
+///
+/// # Examples
+///
+/// A feed another tool writes, one bare reading per record, in a file whose other keys carry
+/// headers:
+///
+/// ```
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Reading {
+///     millivolts: u32,
+/// }
+///
+/// #[subscriber(FileStream::<NoOp>::new("readings"))]
+/// async fn on_reading(reading: &Reading) -> HandlerOutcome {
+///     tracing::info!(reading.millivolts, "read");
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("readings", "0.1.0"))
+///         .with_broker(FileBroker::new("/var/lib/plant.ss"), |b| {
+///             b.include(on_reading);
+///         })
+/// }
+/// ```
+pub trait EnvelopedStream: Sized {
+    /// Names the stream key, read in the envelope the type names.
+    fn new(stream: impl Into<String>) -> Self;
+}
+
+impl<Env: Envelope + Default> EnvelopedStream for FileStream<Env> {
+    fn new(stream: impl Into<String>) -> Self {
+        Self {
+            stream: stream.into(),
+            replay: false,
+            envelope: Env::default(),
+        }
+    }
+}
+
+impl<Choice> FileStream<Choice> {
+    /// Reads this stream key in `envelope`, whatever the broker's is.
+    ///
+    /// # Examples
+    ///
+    /// A feed another tool writes, one bare reading per record, in a file whose other keys carry
+    /// headers, mounted without the macros:
+    ///
+    /// ```
+    /// use ruststream::schemars::JsonSchema;
+    /// use ruststream_sea_file::file::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Debug, Deserialize, JsonSchema)]
+    /// #[schemars(crate = "ruststream::schemars")]
+    /// struct Reading {
+    ///     millivolts: u32,
+    /// }
+    ///
+    /// struct OnReading;
+    ///
+    /// impl Handle<Reading> for OnReading {
+    ///     async fn handle(
+    ///         &self,
+    ///         reading: &Reading,
+    ///         _outs: &(),
+    ///         _ctx: &mut Context<'_>,
+    ///     ) -> Result<(), HandlerOutcome> {
+    ///         tracing::info!(reading.millivolts, "read");
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// fn app() -> impl App<State = ()> {
+    ///     RustStream::new(AppInfo::new("readings", "0.1.0"))
+    ///         .with_broker(FileBroker::new("/var/lib/plant.ss"), |b| {
+    ///             b.include(
+    ///                 subscriber(FileStream::new("readings").envelope(NoOp), OnReading).build(),
+    ///             );
+    ///         })
+    /// }
+    /// # let _ = app;
+    /// ```
+    pub fn envelope<Chosen: Envelope>(self, envelope: Chosen) -> FileStream<Chosen> {
+        FileStream {
+            stream: self.stream,
+            replay: self.replay,
+            envelope,
+        }
+    }
+
+    pub(crate) const fn envelope_choice(&self) -> &Choice {
+        &self.envelope
     }
 
     /// Replays the retained file from the beginning instead of following live writes; the
@@ -103,12 +212,6 @@ impl FileStream {
         RedeliveryAddress::new(self.stream.clone())
     }
 
-    /// What this subscription adds to its channel in the generated `AsyncAPI` document.
-    #[cfg(feature = "asyncapi")]
-    fn channel_extension(&self) -> Bindings {
-        channel_extension(self.stream())
-    }
-
     /// Rejects descriptors that cannot form a subscription, before any I/O.
     pub(crate) fn validate(&self) -> Result<(), SeaFileError> {
         if self.stream.is_empty() {
@@ -128,9 +231,28 @@ const FILE_EXTENSION: &str = "x-ruststream-file";
 #[serde(rename_all = "camelCase")]
 struct FileChannel<'a> {
     stream_key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    envelope: Option<EnvelopeSpec>,
 }
 
-/// What a file channel adds to the generated `AsyncAPI` document: the stream key it resolves to.
+/// What the document reports about the envelope of a channel: the media type of its records.
+#[cfg(feature = "asyncapi")]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EnvelopeSpec {
+    content_type: &'static str,
+}
+
+#[cfg(feature = "asyncapi")]
+impl EnvelopeSpec {
+    /// The description of an envelope whose records have `content_type`.
+    pub(crate) const fn new(content_type: &'static str) -> Self {
+        Self { content_type }
+    }
+}
+
+/// What a file channel adds to the generated `AsyncAPI` document: the stream key it resolves to,
+/// and the media type of its envelope's records when they have one of their own.
 ///
 /// The specification lists no binding for a file transport and its protocol keys are a closed
 /// list, so an `x-` extension is the only lawful place for what a stream file knows. The path of
@@ -140,8 +262,11 @@ struct FileChannel<'a> {
 /// names, a publish policy passes the destination the mount site resolved. One stream key is both
 /// ends of the file, so the two descriptions agree by construction.
 #[cfg(feature = "asyncapi")]
-pub(crate) fn channel_extension(stream_key: &str) -> Bindings {
-    let body = FileChannel { stream_key };
+pub(crate) fn channel_extension(stream_key: &str, envelope: Option<&'static str>) -> Bindings {
+    let body = FileChannel {
+        stream_key,
+        envelope: envelope.map(EnvelopeSpec::new),
+    };
     // A binding that fails to build is a binding the document goes without: a broker never holds
     // up a service over a description of itself.
     Binding::extension(FILE_EXTENSION, &body)
@@ -149,7 +274,7 @@ pub(crate) fn channel_extension(stream_key: &str) -> Bindings {
         .unwrap_or_default()
 }
 
-impl IntoSource for FileStream {
+impl<Choice> IntoSource for FileStream<Choice> {
     type Source = Self;
 
     fn into_source(self) -> Self {
@@ -157,8 +282,12 @@ impl IntoSource for FileStream {
     }
 }
 
-impl SubscriptionSource<ConnectedFileBroker> for FileStream {
-    type Subscriber = FileSubscriber;
+impl<Env, Choice> SubscriptionSource<ConnectedFileBroker<Env>> for FileStream<Choice>
+where
+    Env: Envelope,
+    Choice: EnvelopeChoice<Env>,
+{
+    type Subscriber = FileSubscriber<Choice::Envelope>;
     // One stream key is both ends of the file: a publisher appends under it and this
     // subscription reads the append, so the runtime's deferred copies have an address.
     type Copies = AddressedCopies;
@@ -169,21 +298,27 @@ impl SubscriptionSource<ConnectedFileBroker> for FileStream {
 
     async fn subscribe(
         self,
-        connected: &ConnectedFileBroker,
-    ) -> Result<FileSubscriber, SeaFileError> {
+        connected: &ConnectedFileBroker<Env>,
+    ) -> Result<FileSubscriber<Choice::Envelope>, SeaFileError> {
         connected.subscribe_stream(self).await
     }
 
+    /// The stream key, and the media type of the envelope the subscription reads in when its
+    /// records have one.
     #[cfg(feature = "asyncapi")]
     fn channel_bindings(&self) -> Bindings {
-        self.channel_extension()
+        channel_extension(self.stream(), <Choice::Envelope as Envelope>::CONTENT_TYPE)
     }
 }
 
-impl RedeliveryAddressed<ConnectedFileBroker> for FileStream {
+impl<Env, Choice> RedeliveryAddressed<ConnectedFileBroker<Env>> for FileStream<Choice>
+where
+    Env: Envelope,
+    Choice: EnvelopeChoice<Env>,
+{
     fn redelivery_address(
         &self,
-        _connected: &ConnectedFileBroker,
+        _connected: &ConnectedFileBroker<Env>,
     ) -> impl Future<Output = Result<RedeliveryAddress, SeaFileError>> {
         // The descriptor already knows the answer; nothing is asked of the connection.
         ready(Ok(self.redelivery_address_value()))

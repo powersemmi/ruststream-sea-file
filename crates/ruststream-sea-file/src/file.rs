@@ -2,7 +2,7 @@
 //!
 //! [`FileBroker`] records the path of a `.ss` file and opens it on [`Broker::connect`], which
 //! yields [`ConnectedFileBroker`]; [`ConnectedBroker::shutdown`] syncs and closes it. A service on
-//! stream files globs this form's [`prelude`] and names its policy [`Publish`].
+//! stream files globs this form's [`prelude`] and names its policy [`Publish`](struct@Publish).
 //!
 //! - [FileBroker][file-broker]: [`FileBroker`] and its settings
 //!   [`existing_only`](FileBroker::existing_only), [`end_with_eos`](FileBroker::end_with_eos)
@@ -12,8 +12,11 @@
 //! - [FilePosition][positions]: [`FilePosition`](crate::FilePosition), opened with
 //!   [`start_at`][start-at] and moved with [`SeekHandle`](crate::SeekHandle) ([Seek][seek]).
 //! - [Batches][batches]: a slice handler over [`FileSubscriber`].
-//! - [FilePublish][file-publish]: [`Publish`] and its live [`FilePublisher`].
+//! - [FilePublish][file-publish]: [`Publish`](struct@Publish) and its live [`FilePublisher`].
 //! - [retry_after][retry-after]: a deferred copy appended under the key the subscription reads.
+//! - [Envelopes][envelopes]: [`envelope`](FileBroker::envelope),
+//!   [`FileStream::envelope`](crate::FileStream::envelope) and
+//!   [`Publish::envelope`](FilePublish::envelope), the format a record is written in.
 //! - [Shutdown][shutdown]: the file closed, and the publishers handed out before it.
 //!
 //! [file-broker]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/file-broker/
@@ -25,6 +28,7 @@
 //! [file-publish]: https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/file-publish/
 //! [retry-after]: https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/retry-after/
 //! [shutdown]: https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/shutdown/
+//! [envelopes]: https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/envelopes/
 
 // Without the `testing` feature a link has one variant, so a `match` on it has a single arm; the
 // matches stay so that the in-process arm has its place when the feature is on.
@@ -35,22 +39,24 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::future::{Future, ready};
 use std::mem;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 
 #[cfg(feature = "testing")]
-use ruststream::RawMessage;
-#[cfg(feature = "asyncapi")]
-use ruststream::asyncapi::Bindings;
+use bytes::Bytes;
+#[cfg(all(feature = "testing", feature = "cbor"))]
+use ruststream::codec::CborCodec;
+#[cfg(all(feature = "testing", feature = "json"))]
+use ruststream::codec::JsonCodec;
+#[cfg(all(feature = "testing", feature = "msgpack"))]
+use ruststream::codec::MsgpackCodec;
 #[cfg(feature = "testing")]
 use ruststream::testing::{Coordinator, InProcess, TestableBroker};
-use ruststream::{
-    AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, Lend,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
-};
+use ruststream::{AddressedCopies, Broker, ConnectedBroker, DescribeServer, ServerSpec, Subscribe};
+#[cfg(feature = "testing")]
+use ruststream::{OutgoingMessage, RawMessage};
 #[cfg(feature = "testing")]
 use sea_streamer_file::DEFAULT_BEACON_INTERVAL;
 use sea_streamer_file::{
@@ -63,14 +69,23 @@ use sea_streamer_types::{
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, OnceCell};
 
+#[cfg(all(
+    feature = "testing",
+    any(feature = "json", feature = "cbor", feature = "msgpack")
+))]
+use crate::envelope::Framed;
+#[cfg(feature = "testing")]
+use crate::envelope::{self, Medium, NoOp};
+use crate::envelope::{Envelope, EnvelopeChoice, Rs};
 use crate::error::{SeaFileError, box_err};
 #[cfg(feature = "testing")]
 use crate::in_process::{Budget, Fit, MemoryFile};
 use crate::stream::FileStream;
-#[cfg(feature = "asyncapi")]
-use crate::stream::channel_extension;
 use crate::subscriber::{FileSubscriber, Reader};
-use crate::wire;
+
+mod publish;
+
+pub use publish::{FilePublish, FilePublisher};
 
 pub(crate) struct Core {
     pub(crate) link: Link,
@@ -280,13 +295,14 @@ const PRIME_STREAM: &str = "ruststream-internal";
 /// ```
 #[derive(Debug, Clone)]
 #[must_use]
-pub struct FileBroker {
+pub struct FileBroker<Env: Envelope = Rs> {
     path: String,
     create: bool,
     end_with_eos: bool,
     beacon_interval: Option<u32>,
     size_limit: Option<NonZeroU64>,
     cell: CoreCell,
+    envelope: Env,
 }
 
 impl FileBroker {
@@ -299,6 +315,61 @@ impl FileBroker {
             beacon_interval: None,
             size_limit: None,
             cell: Arc::new(OnceCell::new()),
+            envelope: Rs,
+        }
+    }
+}
+
+impl<Env: Envelope> FileBroker<Env> {
+    /// The [`Envelope`] every record of this broker is written and read in, unless a subscription
+    /// or a publish policy names its own. [`Rs`] when none is named.
+    ///
+    /// A test addresses the broker by the type this returns, `tb.broker::<FileBroker<NoOp>>()`.
+    /// The harness runs the built-in envelopes in process: [`Rs`] and
+    /// [`NoOp`] always, and [`Framed`] over each
+    /// codec whose feature (`json`, `cbor`, `msgpack`) this crate has enabled.
+    ///
+    /// # Examples
+    ///
+    /// A file another tool reads as plain payloads, one JSON document per record:
+    ///
+    /// ```
+    /// use ruststream_sea_file::file::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Debug, Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Debug, Outgoing, Serialize)]
+    /// #[outgoing(name = "receipts")]
+    /// struct Receipt {
+    ///     order: u64,
+    /// }
+    ///
+    /// #[subscriber(FileStream::new("orders"), reply)]
+    /// async fn confirm(order: &Order) -> Receipt {
+    ///     Receipt { order: order.id }
+    /// }
+    ///
+    /// #[ruststream::app]
+    /// fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .with_broker(FileBroker::new("/var/lib/orders.ss").envelope(NoOp), |b| {
+    ///             b.include(confirm);
+    ///         })
+    /// }
+    /// ```
+    pub fn envelope<Chosen: Envelope>(self, envelope: Chosen) -> FileBroker<Chosen> {
+        FileBroker {
+            path: self.path,
+            create: self.create,
+            end_with_eos: self.end_with_eos,
+            beacon_interval: self.beacon_interval,
+            size_limit: self.size_limit,
+            cell: self.cell,
+            envelope,
         }
     }
 
@@ -371,14 +442,15 @@ impl FileBroker {
 
     /// A publisher sharing this broker's connection cell; buildable before `connect`.
     #[must_use]
-    pub fn publisher(&self) -> FilePublisher {
+    pub fn publisher(&self) -> FilePublisher<Env> {
         FilePublisher {
             cell: Arc::clone(&self.cell),
+            envelope: self.envelope.clone(),
         }
     }
 }
 
-impl FileBroker {
+impl<Env: Envelope> FileBroker<Env> {
     /// Refuses a file already larger than the cap: the client counts the space left from the
     /// file's size, and a file past the cap has none it can count.
     fn check_size(&self) -> Result<(), SeaFileError> {
@@ -417,7 +489,7 @@ impl FileBroker {
 }
 
 #[cfg(feature = "testing")]
-impl FileBroker {
+impl<Env: Envelope> FileBroker<Env> {
     /// The size limit of the in-process file, with the bytes `connect` writes into a new file
     /// already counted: its header and the priming message. A limit those do not fit fails, as
     /// `connect` fails on a real file.
@@ -437,9 +509,9 @@ impl FileBroker {
     }
 }
 
-impl Broker for FileBroker {
+impl<Env: Envelope> Broker for FileBroker<Env> {
     type Error = SeaFileError;
-    type Connected = ConnectedFileBroker;
+    type Connected = ConnectedFileBroker<Env>;
 
     async fn connect(self) -> Result<Self::Connected, Self::Error> {
         let core = self
@@ -514,6 +586,7 @@ impl Broker for FileBroker {
         Ok(ConnectedFileBroker {
             core,
             cell: self.cell,
+            envelope: self.envelope,
         })
     }
 }
@@ -527,7 +600,7 @@ impl Broker for FileBroker {
 /// the beacon interval must be a positive multiple of 1024. [`existing_only`](Self::existing_only)
 /// reads the in-memory file as the one the operator provisioned.
 #[cfg(feature = "testing")]
-impl InProcess for FileBroker {
+impl<Env: Envelope> InProcess for FileBroker<Env> {
     async fn connect_in_process(self) -> Result<Self::Connected, Self::Error> {
         let core = self
             .cell
@@ -557,14 +630,23 @@ impl InProcess for FileBroker {
         Ok(ConnectedFileBroker {
             core,
             cell: self.cell,
+            envelope: self.envelope,
         })
     }
 }
 
 #[cfg(feature = "testing")]
 ruststream::register_testable_broker!(FileBroker);
+#[cfg(feature = "testing")]
+ruststream::register_testable_broker!(FileBroker<NoOp>);
+#[cfg(all(feature = "testing", feature = "json"))]
+ruststream::register_testable_broker!(FileBroker<Framed<JsonCodec>>);
+#[cfg(all(feature = "testing", feature = "cbor"))]
+ruststream::register_testable_broker!(FileBroker<Framed<CborCodec>>);
+#[cfg(all(feature = "testing", feature = "msgpack"))]
+ruststream::register_testable_broker!(FileBroker<Framed<MsgpackCodec>>);
 
-impl DescribeServer for FileBroker {
+impl<Env: Envelope> DescribeServer for FileBroker<Env> {
     fn describe_server(&self) -> ServerSpec {
         ServerSpec::in_process("file").description(self.path.clone())
     }
@@ -572,18 +654,20 @@ impl DescribeServer for FileBroker {
 
 /// The typed witness that `connect` succeeded: the file is open.
 #[derive(Debug)]
-pub struct ConnectedFileBroker {
+pub struct ConnectedFileBroker<Env: Envelope = Rs> {
     pub(crate) core: Arc<Core>,
     // Keeps the cell of publishers handed out before connect alive and filled.
     cell: CoreCell,
+    envelope: Env,
 }
 
-impl ConnectedFileBroker {
-    /// A publisher from the connected form.
+impl<Env: Envelope> ConnectedFileBroker<Env> {
+    /// A publisher from the connected form, writing in the broker's envelope.
     #[must_use]
-    pub fn publisher(&self) -> FilePublisher {
+    pub fn publisher(&self) -> FilePublisher<Env> {
         FilePublisher {
             cell: Arc::clone(&self.cell),
+            envelope: self.envelope.clone(),
         }
     }
 
@@ -593,11 +677,12 @@ impl ConnectedFileBroker {
     ///
     /// Returns [`SeaFileError`] when the descriptor is invalid, the consumer cannot be
     /// created, or the broker is shut down.
-    pub async fn subscribe_stream(
+    pub async fn subscribe_stream<Choice: EnvelopeChoice<Env>>(
         &self,
-        descriptor: FileStream,
-    ) -> Result<FileSubscriber, SeaFileError> {
+        descriptor: FileStream<Choice>,
+    ) -> Result<FileSubscriber<Choice::Envelope>, SeaFileError> {
         descriptor.validate()?;
+        let envelope = descriptor.envelope_choice().resolve(&self.envelope);
         self.core.ensure_open()?;
 
         let key = StreamKey::new(descriptor.stream())
@@ -608,6 +693,7 @@ impl ConnectedFileBroker {
             Link::InProcess(file) => {
                 return Ok(FileSubscriber::in_process(
                     file.subscribe(key.name(), descriptor.replay_value()),
+                    envelope,
                 ));
             }
         };
@@ -653,11 +739,12 @@ impl ConnectedFileBroker {
             stream,
             reader,
             move || core.closed.load(Ordering::Acquire),
+            envelope,
         ))
     }
 }
 
-impl ConnectedBroker for ConnectedFileBroker {
+impl<Env: Envelope> ConnectedBroker for ConnectedFileBroker<Env> {
     type Error = SeaFileError;
     type Closed = ();
 
@@ -699,8 +786,8 @@ impl ConnectedBroker for ConnectedFileBroker {
     }
 }
 
-impl Subscribe for ConnectedFileBroker {
-    type Subscriber = FileSubscriber;
+impl<Env: Envelope> Subscribe for ConnectedFileBroker<Env> {
+    type Subscriber = FileSubscriber<Env>;
     /// A stream key is both ends of the file: a publisher on this broker appends under the key
     /// the subscription tails, so the runtime's deferred copies have an address and the mount
     /// site has nothing to name.
@@ -712,211 +799,6 @@ impl Subscribe for ConnectedFileBroker {
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
         self.subscribe_stream(FileStream::new(name)).await
     }
-}
-
-/// Publishes messages into the stream file.
-///
-/// User headers travel in a text-safe envelope applied only when headers are present, so a
-/// file written without headers stays readable as a plain payload stream by other tools.
-///
-/// A publish carries no per-message settings: an append to a stream file takes a key and a
-/// payload and nothing else, so [`Publisher::Options`] is the unit type and the publish builder
-/// gains no step from this crate.
-///
-/// A destination is a stream key inside the broker, and the file itself is named once, in
-/// [`FileBroker::new`]. The
-/// [FilePublish](https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/file-publish/)
-/// page shows it in a service.
-///
-/// # Examples
-///
-/// A reply type declares its stream key, and the subscriber carries the bare `reply` clause:
-///
-/// ```
-/// use ruststream_sea_file::file::prelude::*;
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Debug, Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[derive(Debug, Outgoing, Serialize)]
-/// #[outgoing(name = "receipts")]
-/// struct Receipt {
-///     order: u64,
-/// }
-///
-/// #[subscriber(FileStream::new("orders"), reply)]
-/// async fn confirm(order: &Order) -> Receipt {
-///     tracing::info!(order.id, "confirmed");
-///     Receipt { order: order.id }
-/// }
-///
-/// #[ruststream::app]
-/// fn app() -> impl App {
-///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-///         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-///             b.include(confirm).out_reply(Publish);
-///         })
-/// }
-/// ```
-#[derive(Clone)]
-pub struct FilePublisher {
-    cell: CoreCell,
-}
-
-impl std::fmt::Debug for FilePublisher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FilePublisher").finish_non_exhaustive()
-    }
-}
-
-impl Publisher for FilePublisher {
-    /// The append reads the bytes and keeps nothing: the client's `send_to` takes a slice, and
-    /// the envelope this crate writes is a buffer of its own anyway.
-    type Payload = Lend;
-
-    type Error = SeaFileError;
-    type Options = ();
-
-    async fn publish(
-        &self,
-        msg: OutgoingMessage<'_, &[u8]>,
-        _options: Option<&()>,
-    ) -> Result<(), Self::Error> {
-        let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
-        core.ensure_open()?;
-        let key = StreamKey::new(msg.name())
-            .map_err(|e| SeaFileError::Invalid(format!("'{}': {e}", msg.name())))?;
-        let payload = wire::encode(msg.headers(), msg.payload(), false);
-        match &core.link {
-            Link::File(disk) => {
-                let mut appender = disk.producer.lock().await;
-                appender.append(msg.name(), &key, &payload).await
-            }
-            .map_err(|err| match err {
-                // The appender closed while this connection is open: another broker on the
-                // same path shut down and ended the file's writer.
-                SeaFileError::NotConnected if !core.closed.load(Ordering::Acquire) => {
-                    SeaFileError::Publish {
-                        stream: msg.name().to_owned(),
-                        source: box_err(FileErr::ProducerEnded),
-                    }
-                }
-                other => other,
-            }),
-            #[cfg(feature = "testing")]
-            Link::InProcess(file) => {
-                file.append(key, payload)
-                    .map_err(|err| SeaFileError::Publish {
-                        stream: msg.name().to_owned(),
-                        source: box_err(err),
-                    })
-            }
-        }
-    }
-}
-
-impl Appender {
-    /// Appends one message through an open producer, and records a failure that ended the
-    /// client's writer, so a later publish reports it instead of reaching that writer.
-    async fn append(
-        &mut self,
-        stream: &str,
-        key: &StreamKey,
-        payload: &[u8],
-    ) -> Result<(), SeaFileError> {
-        let failed = |source| SeaFileError::Publish {
-            stream: stream.to_owned(),
-            source,
-        };
-        let producer = match self {
-            Self::Open(producer) => producer,
-            Self::Failed(_, err) => return Err(failed(box_err(err.take()))),
-            // A `shutdown` ran between the open check and the lock.
-            Self::Closed => return Err(SeaFileError::NotConnected),
-        };
-        let mut cause = match append(producer, key, payload).await {
-            Ok(()) => return Ok(()),
-            Err(StreamErr::Backend(cause)) => cause,
-            Err(other) => return Err(failed(box_err(other))),
-        };
-        let reported = cause.take();
-        if let Self::Open(producer) = mem::replace(self, Self::Closed) {
-            *self = Self::Failed(producer, cause);
-        }
-        Err(failed(box_err(reported)))
-    }
-}
-
-/// Appends one message and flushes it to the file.
-///
-/// The flush is per publish: the sink buffers, and live subscribers (and external tails) observe
-/// the file, not the buffer.
-async fn append(
-    producer: &mut FileProducer,
-    key: &StreamKey,
-    payload: &[u8],
-) -> Result<(), StreamErr<FileErr>> {
-    producer.send_to(key, payload)?.await?;
-    producer.flush().await
-}
-
-/// The publish policy for [`FilePublisher`].
-///
-/// # Examples
-///
-/// ```
-/// use std::io;
-///
-/// use ruststream_sea_file::prelude::*;
-/// use serde::Serialize;
-///
-/// #[derive(Debug, Outgoing, Serialize)]
-/// struct Started {
-///     service: String,
-/// }
-///
-/// #[ruststream::app]
-/// fn app() -> impl App {
-///     RustStream::new(AppInfo::new("recorder", "0.1.0"))
-///         .with_broker(FileBroker::new("/tmp/recorder.ss"), |b| {
-///             b.after_startup(FilePublish, async move |publisher| -> io::Result<()> {
-///                 publisher
-///                     .message(&Started { service: "recorder".into() })
-///                     .to("lifecycle")
-///                     .publish()
-///                     .await
-///                     .map_err(io::Error::other)
-///             });
-///         })
-/// }
-/// ```
-#[derive(Debug, Clone, Copy, Default)]
-#[must_use]
-pub struct FilePublish;
-
-impl PublishPolicy<ConnectedFileBroker> for FilePublish {
-    type Live = FilePublisher;
-
-    fn pair(
-        self,
-        connected: &ConnectedFileBroker,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.publisher()))
-    }
-
-    /// Names the stream key a publish through this policy appends under: the destination the
-    /// mount site resolved, which on this transport is the stream key itself.
-    #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self, channel: &str) -> Bindings {
-        channel_extension(channel)
-    }
-}
-
-impl DefaultPublish for ConnectedFileBroker {
-    type Policy = FilePublish;
 }
 
 /// The harness's view of the in-process transport: what it injects, what it reads back, and the
@@ -931,7 +813,7 @@ impl DefaultPublish for ConnectedFileBroker {
 /// `inject` and `published` panic on a broker connected with `connect`: the harness drives only
 /// the file `connect_in_process` produced. `inject` also panics on a stream key the file refuses.
 #[cfg(feature = "testing")]
-impl TestableBroker for ConnectedFileBroker {
+impl<Env: Envelope> TestableBroker for ConnectedFileBroker<Env> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         if let Link::InProcess(file) = &self.core.link {
             file.install(coordinator);
@@ -948,10 +830,21 @@ impl TestableBroker for ConnectedFileBroker {
         });
         // An injection has no error to return, so a message the size limit refuses on a real
         // file ends the test here rather than passing where the file fails.
-        if let Err(err) = file.append(
-            key,
-            wire::encode(message.headers(), message.payload(), false),
-        ) {
+        let record = envelope::seal(
+            &self.envelope,
+            message.headers(),
+            message.payload(),
+            Medium::File,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "the injected message to {:?} is not one the broker's envelope writes: {err}",
+                message.name()
+            )
+        });
+        let sent = RawMessage::new(message.name(), Bytes::copy_from_slice(message.payload()))
+            .with_headers(message.headers().clone());
+        if let Err(err) = file.append(key, record.into_owned(), sent) {
             panic!(
                 "the injected message to {:?} reaches the file's size limit, where a real file \
                  fails its publish: {err}",
@@ -966,7 +859,7 @@ impl TestableBroker for ConnectedFileBroker {
 }
 
 #[cfg(feature = "testing")]
-impl ConnectedFileBroker {
+impl<Env: Envelope> ConnectedFileBroker<Env> {
     /// The in-memory file, which is all the harness drives.
     fn memory_file(&self, what: &str) -> &MemoryFile {
         match &self.core.link {
@@ -983,7 +876,7 @@ impl ConnectedFileBroker {
 ///
 /// A mount site names the concept, never the transport: moving a service from one form to
 /// another changes the prelude it globs and leaves the composition root alone. The prefixed
-/// [`FilePublish`] stays at the crate root, for a service that mixes both forms.
+/// [`FilePublish`](struct@FilePublish) stays at the crate root, for a service that mixes both forms.
 ///
 /// # Examples
 ///
@@ -1020,7 +913,7 @@ pub mod prelude {
     //! The imports a service on a stream file writes every time, in one glob.
     //!
     //! The framework's prelude, this form's broker, subscription descriptor, position and seeker
-    //! types, the seeking capability traits and context keys, and [`Publish`].
+    //! types, the seeking capability traits and context keys, and [`Publish`](struct@Publish).
     //!
     //! This is the routes-side vocabulary: a mount site globs it and names policies by concept.
     //! A handler body globs `ruststream::prelude` instead and bounds an injected publisher by
@@ -1061,7 +954,8 @@ pub mod prelude {
 
     pub use crate::file::{FileBroker, Publish};
     pub use crate::{
-        FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream, Position, SeekHandle,
+        EnvelopedStream, FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream,
+        Framed, NoOp, Position, Rs, SeekHandle,
     };
 }
 

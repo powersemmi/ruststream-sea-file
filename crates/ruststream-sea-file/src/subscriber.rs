@@ -30,6 +30,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::batching::BATCH_MAX_WAIT;
+use crate::envelope::{Envelope, Rs};
 use crate::error::{SeaFileError, box_err};
 #[cfg(feature = "testing")]
 use crate::in_process::{FileQueue, LogSeeker};
@@ -43,9 +44,9 @@ pub(crate) struct SeekCmd {
     done: oneshot::Sender<Result<(), SeaFileError>>,
 }
 
-pub(crate) struct Stamped {
+pub(crate) struct Stamped<Env: Envelope> {
     epoch: u64,
-    item: Option<Result<SeaMessage, SeaFileError>>,
+    item: Option<Result<SeaMessage<Env>, SeaFileError>>,
 }
 
 /// A subscription to one stream key in the file; yields [`FileMessage`]s.
@@ -91,15 +92,15 @@ pub(crate) struct Stamped {
 ///         })
 /// }
 /// ```
-pub struct FileSubscriber {
+pub struct FileSubscriber<Env: Envelope = Rs> {
     // Kept alongside the buffer so the stream key stays readable without reaching through it.
     stream: Arc<str>,
     // The driver task's deliveries plus client-side batching: the file client reads one message
     // at a time, so batches are assembled here - see the `batching` module.
-    inner: BufferedSubscriber<Deliveries>,
+    inner: BufferedSubscriber<Deliveries<Env>>,
 }
 
-impl std::fmt::Debug for FileSubscriber {
+impl<Env: Envelope> std::fmt::Debug for FileSubscriber<Env> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileSubscriber")
             .field("stream", &self.stream)
@@ -107,7 +108,7 @@ impl std::fmt::Debug for FileSubscriber {
     }
 }
 
-impl FileSubscriber {
+impl<Env: Envelope> FileSubscriber<Env> {
     /// The stream key this subscription consumes.
     #[must_use]
     pub fn stream_key(&self) -> &str {
@@ -116,12 +117,13 @@ impl FileSubscriber {
 
     /// Starts the driver on `runtime`, the one the broker connected on, whichever runtime opens
     /// the subscription. `closed` answers whether that connection has shut down, which refuses
-    /// every seek from then on.
+    /// every seek from then on. `envelope` opens every record the driver reads.
     pub(crate) fn spawn(
         runtime: &Handle,
         stream: String,
         reader: impl Source,
         closed: impl Fn() -> bool + Send + Sync + 'static,
+        envelope: Env,
     ) -> Self {
         let (out_tx, out_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -133,6 +135,7 @@ impl FileSubscriber {
             Arc::clone(&epoch),
             stream.clone(),
             closed,
+            envelope,
         ));
         let stream: Arc<str> = Arc::from(stream);
         Self {
@@ -150,25 +153,26 @@ impl FileSubscriber {
     /// A subscription on the in-process transport, which needs no driver task: a seek is applied
     /// inside the subscription's own poll.
     #[cfg(feature = "testing")]
-    pub(crate) fn in_process(queue: FileQueue) -> Self {
+    pub(crate) fn in_process(queue: FileQueue, envelope: Env) -> Self {
         Self {
             stream: Arc::clone(queue.stream()),
-            inner: BufferedSubscriber::new(Deliveries::InProcess(queue)).max_wait(BATCH_MAX_WAIT),
+            inner: BufferedSubscriber::new(Deliveries::InProcess(queue, envelope))
+                .max_wait(BATCH_MAX_WAIT),
         }
     }
 }
 
-impl Subscriber for FileSubscriber {
-    type Message = FileMessage;
+impl<Env: Envelope> Subscriber for FileSubscriber<Env> {
+    type Message = FileMessage<Env>;
     type Error = SeaFileError;
 
-    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage<Env>, SeaFileError>> + Send + '_ {
         self.inner.stream()
     }
 }
 
-impl BatchSubscriber for FileSubscriber {
-    type Batch = Vec<FileMessage>;
+impl<Env: Envelope> BatchSubscriber for FileSubscriber<Env> {
+    type Batch = Vec<FileMessage<Env>>;
 
     fn batches(
         &mut self,
@@ -178,7 +182,7 @@ impl BatchSubscriber for FileSubscriber {
     }
 }
 
-impl Seekable for FileSubscriber {
+impl<Env: Envelope> Seekable for FileSubscriber<Env> {
     type Seeker = FileSeeker;
 
     fn seeker(&self) -> FileSeeker {
@@ -193,46 +197,46 @@ impl Seekable for FileSubscriber {
 /// Without the `testing` feature there is one variant, so the type is the driver's channel itself
 /// and every `match` on it is irrefutable: a production build carries no second transport and no
 /// branch to it.
-enum Deliveries {
+enum Deliveries<Env: Envelope> {
     /// The driver task's channel, fed from the stream file.
-    Driver(Driven),
-    /// The in-process transport's queue.
+    Driver(Driven<Env>),
+    /// The in-process transport's queue, and the envelope its records are opened with.
     #[cfg(feature = "testing")]
-    InProcess(FileQueue),
+    InProcess(FileQueue, Env),
 }
 
 // The zero-cost promise of the in-process mode, held by the compiler: a build without it gives the
 // deliveries exactly the size of the driver's channel they wrap.
 #[cfg(not(feature = "testing"))]
-const _: () = assert!(size_of::<Deliveries>() == size_of::<Driven>());
+const _: () = assert!(size_of::<Deliveries<Rs>>() == size_of::<Driven<Rs>>());
 
-impl Subscriber for Deliveries {
-    type Message = FileMessage;
+impl<Env: Envelope> Subscriber for Deliveries<Env> {
+    type Message = FileMessage<Env>;
     type Error = SeaFileError;
 
     #[cfg(not(feature = "testing"))]
-    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage<Env>, SeaFileError>> + Send + '_ {
         let Self::Driver(driven) = self;
         driven.stream()
     }
 
     #[cfg(feature = "testing")]
-    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage<Env>, SeaFileError>> + Send + '_ {
         match self {
             Self::Driver(driven) => Either::Left(driven.stream()),
-            Self::InProcess(queue) => Either::Right(in_process_stream(queue)),
+            Self::InProcess(queue, envelope) => Either::Right(in_process_stream(queue, envelope)),
         }
     }
 }
 
-impl Seekable for Deliveries {
+impl<Env: Envelope> Seekable for Deliveries<Env> {
     type Seeker = FileSeeker;
 
     fn seeker(&self) -> FileSeeker {
         match self {
             Self::Driver(driven) => driven.seeker(),
             #[cfg(feature = "testing")]
-            Self::InProcess(queue) => {
+            Self::InProcess(queue, _) => {
                 FileSeeker::in_process(Arc::clone(queue.stream()), queue.seeker())
             }
         }
@@ -241,15 +245,16 @@ impl Seekable for Deliveries {
 
 /// The in-process queue's deliveries, each carrying the subscription's seeker the way a file's do.
 #[cfg(feature = "testing")]
-fn in_process_stream(
-    queue: &mut FileQueue,
-) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+fn in_process_stream<'q, Env: Envelope>(
+    queue: &'q mut FileQueue,
+    envelope: &'q Env,
+) -> impl Stream<Item = Result<FileMessage<Env>, SeaFileError>> + Send + 'q {
     let seeker = Arc::new(FileSeeker::in_process(
         Arc::clone(queue.stream()),
         queue.seeker(),
     ));
     futures::stream::poll_fn(move |cx| {
-        queue.poll_next(cx).map(|next| {
+        queue.poll_next(cx, envelope).map(|next| {
             next.map(|message| {
                 Ok(FileMessage {
                     message,
@@ -261,15 +266,15 @@ fn in_process_stream(
 }
 
 /// The driver task's deliveries: one message per poll, in publish order.
-struct Driven {
+struct Driven<Env: Envelope> {
     stream: Arc<str>,
-    rx: mpsc::Receiver<Stamped>,
+    rx: mpsc::Receiver<Stamped<Env>>,
     cmd: mpsc::UnboundedSender<SeekCmd>,
     epoch: Arc<AtomicU64>,
 }
 
-impl Driven {
-    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage, SeaFileError>> + Send + '_ {
+impl<Env: Envelope> Driven<Env> {
+    fn stream(&mut self) -> impl Stream<Item = Result<FileMessage<Env>, SeaFileError>> + Send + '_ {
         // Minted once per opened stream, before the closure takes the receiver: every delivery
         // then carries a reference-counted clone, so the per-delivery context that reads the
         // seek handle by key allocates nothing.
@@ -315,12 +320,12 @@ impl Driven {
 /// ([`FileContext`](crate::FileContext)) buildable, and carrying it in the message type is what
 /// keeps that context off the transports that cannot seek: standard input yields a plain
 /// [`SeaMessage`], so a handler declaring the seeking context does not compile against it.
-pub struct FileMessage {
-    message: SeaMessage,
+pub struct FileMessage<Env: Envelope = Rs> {
+    message: SeaMessage<Env>,
     seeker: Arc<FileSeeker>,
 }
 
-impl std::fmt::Debug for FileMessage {
+impl<Env: Envelope> std::fmt::Debug for FileMessage<Env> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileMessage")
             .field("message", &self.message)
@@ -328,7 +333,7 @@ impl std::fmt::Debug for FileMessage {
     }
 }
 
-impl FileMessage {
+impl<Env: Envelope> FileMessage<Env> {
     /// The stream key this message was published to.
     #[must_use]
     pub fn stream(&self) -> &str {
@@ -341,7 +346,7 @@ impl FileMessage {
     }
 }
 
-impl Positioned for FileMessage {
+impl<Env: Envelope> Positioned for FileMessage<Env> {
     type Position = FilePosition;
 
     fn position(&self) -> FilePosition {
@@ -349,7 +354,7 @@ impl Positioned for FileMessage {
     }
 }
 
-impl IncomingMessage for FileMessage {
+impl<Env: Envelope> IncomingMessage for FileMessage<Env> {
     fn payload(&self) -> &[u8] {
         self.message.payload()
     }
@@ -536,13 +541,14 @@ enum After {
 }
 
 /// The delivery one outcome of the reader's `next` produces, and what the driver does after it.
-fn delivery(
+fn delivery<Env: Envelope>(
     next: Result<SharedMessage, StreamErr<FileErr>>,
     reader: &impl Source,
     stream: &str,
-) -> (Option<Result<SeaMessage, SeaFileError>>, After) {
+    envelope: &Env,
+) -> (Option<Result<SeaMessage<Env>, SeaFileError>>, After) {
     match next {
-        Ok(message) => (Some(Ok(SeaMessage::new(&message))), After::Read),
+        Ok(message) => (Some(Ok(SeaMessage::open(message, envelope))), After::Read),
         // A stream that ended is not a failure. Both endings arrive here: the writer's
         // end-of-stream mark, which is the only thing that ends a live subscription, and the end
         // of the retained file, which ends a replay.
@@ -564,13 +570,14 @@ fn delivery(
     }
 }
 
-async fn drive(
+async fn drive<Env: Envelope>(
     mut reader: impl Source,
-    out: mpsc::Sender<Stamped>,
+    out: mpsc::Sender<Stamped<Env>>,
     mut cmd_rx: mpsc::UnboundedReceiver<SeekCmd>,
     epoch: Arc<AtomicU64>,
     stream: String,
     closed: impl Fn() -> bool + Send + Sync,
+    envelope: Env,
 ) {
     // The generation the reader is positioned in, published through `epoch` to the subscription's
     // filter. Only this task advances it, and only once a reposition has run.
@@ -591,7 +598,7 @@ async fn drive(
             () = out.closed() => break,
             next = reader.next(), if !idle => next,
         };
-        let (item, after) = delivery(next, &reader, &stream);
+        let (item, after) = delivery(next, &reader, &stream, &envelope);
         let permit = match out.try_reserve() {
             Ok(permit) => permit,
             Err(TrySendError::Closed(())) => break,
@@ -705,7 +712,6 @@ mod tests {
     use sea_streamer_types::{MessageHeader, SeqNo};
 
     use super::*;
-    use crate::wire;
 
     /// Longer than anything the driver waits for on its own: on the paused clock it elapses only
     /// once the runtime has nothing left to run, so reaching it means the seek can never finish.
@@ -724,7 +730,7 @@ mod tests {
             let key = StreamKey::new("orders").expect("the key is valid");
             let messages = (1..=count)
                 .map(|body| {
-                    let bytes = wire::encode(&HeaderMap::new(), &[body], false);
+                    let bytes = vec![body];
                     let length = bytes.len();
                     SharedMessage::new(
                         MessageHeader::new(
@@ -795,6 +801,7 @@ mod tests {
             "orders".to_owned(),
             Log::of(backlog),
             || false,
+            Rs,
         );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
@@ -818,10 +825,13 @@ mod tests {
     /// and the replay goes on from the new one.
     #[tokio::test(start_paused = true)]
     async fn a_seek_after_the_replay_reached_the_end_replays_again() {
-        let mut subscriber =
-            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
-                false
-            });
+        let mut subscriber = FileSubscriber::spawn(
+            &Handle::current(),
+            "orders".to_owned(),
+            Log::of(3),
+            || false,
+            Rs,
+        );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         for expected in 1..=3 {
@@ -845,10 +855,13 @@ mod tests {
     /// the seek moves it and its stream delivers again.
     #[tokio::test(start_paused = true)]
     async fn a_seek_after_the_stream_ended_reopens_it() {
-        let mut subscriber =
-            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(2), || {
-                false
-            });
+        let mut subscriber = FileSubscriber::spawn(
+            &Handle::current(),
+            "orders".to_owned(),
+            Log::of(2),
+            || false,
+            Rs,
+        );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));
@@ -868,10 +881,13 @@ mod tests {
     /// and the subscription delivers nothing the file already holds.
     #[tokio::test(start_paused = true)]
     async fn a_seek_to_the_sequence_after_the_last_lands_at_the_tip() {
-        let mut subscriber =
-            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
-                false
-            });
+        let mut subscriber = FileSubscriber::spawn(
+            &Handle::current(),
+            "orders".to_owned(),
+            Log::of(3),
+            || false,
+            Rs,
+        );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));
@@ -888,10 +904,13 @@ mod tests {
     /// everything from it.
     #[tokio::test(start_paused = true)]
     async fn a_seek_to_the_first_sequence_replays_from_the_start() {
-        let mut subscriber =
-            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(3), || {
-                false
-            });
+        let mut subscriber = FileSubscriber::spawn(
+            &Handle::current(),
+            "orders".to_owned(),
+            Log::of(3),
+            || false,
+            Rs,
+        );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));
@@ -912,10 +931,13 @@ mod tests {
     /// for the handler is still delivered, then the rest of the file.
     #[tokio::test(start_paused = true)]
     async fn a_refused_seek_keeps_what_was_queued() {
-        let mut subscriber =
-            FileSubscriber::spawn(&Handle::current(), "orders".to_owned(), Log::of(5), || {
-                false
-            });
+        let mut subscriber = FileSubscriber::spawn(
+            &Handle::current(),
+            "orders".to_owned(),
+            Log::of(5),
+            || false,
+            Rs,
+        );
         let seeker = subscriber.seeker();
         let mut stream = std::pin::pin!(subscriber.stream());
         assert_eq!(next_body(&mut stream).await, Some(1));

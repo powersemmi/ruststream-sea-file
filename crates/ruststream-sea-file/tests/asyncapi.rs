@@ -7,9 +7,10 @@
 //! Both servers are in-process, so neither carries a host, and neither protocol has versions a
 //! client has to match, so neither carries a protocol version.
 
-#![cfg(all(feature = "testing", feature = "asyncapi"))]
+#![cfg(all(feature = "testing", feature = "asyncapi", feature = "json"))]
 
 use ruststream::asyncapi::build_spec;
+use ruststream::codec::JsonCodec;
 use ruststream::nonzero;
 use ruststream_sea_file::file::prelude::*;
 use ruststream_sea_file::{FileBroker, StdioBroker, StdioPublish};
@@ -163,5 +164,70 @@ fn a_stdio_publish_destination_describes_nothing() {
     assert!(
         reply.get("bindings").is_none(),
         "a stdio publisher has nothing of the protocol's to report: {reply}",
+    );
+}
+
+/// Reads a key of the file as JSON documents, headers inside.
+#[subscriber(FileStream::<Framed<JsonCodec>>::new("documents"))]
+async fn archive(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
+    HandlerOutcome::ack()
+}
+
+/// Reads a pipe in its default envelope and answers in JSON documents.
+#[subscriber("requests", reply("answers"))]
+async fn answer(order: &Order) -> Receipt {
+    Receipt { id: order.id }
+}
+
+fn framed_document() -> Value {
+    let app = RustStream::new(AppInfo::new("sea", "0.1.0"))
+        .with_broker_labeled("file", FileBroker::new(PATH), |b| {
+            b.include(archive)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("documents.dead");
+        })
+        .with_broker_labeled(
+            "pipe",
+            StdioBroker::new().envelope(Framed::new(JsonCodec)),
+            |b| {
+                b.include(answer)
+                    .out(Reply, StdioPublish.envelope(Rs))
+                    .out_retry(StdioPublish)
+                    .to("requests.retry");
+            },
+        );
+    let json = build_spec(&app)
+        .to_json()
+        .expect("the generated document must serialize");
+    serde_json::from_str(&json).expect("valid JSON")
+}
+
+/// A subscription that reads documents reports their media type beside its stream key, and so
+/// does a publish that inherits the broker's envelope; an envelope that writes the payload as it
+/// is reports none.
+#[test]
+fn a_channel_reports_the_media_type_of_its_envelope() {
+    let value = framed_document();
+
+    assert_eq!(
+        value["channels"]["documents"]["bindings"],
+        serde_json::json!({
+            "x-ruststream-file": {
+                "streamKey": "documents",
+                "envelope": { "contentType": "application/json" },
+            },
+        }),
+    );
+    assert_eq!(
+        value["channels"]["requests.retry"]["bindings"],
+        serde_json::json!({
+            "x-ruststream-stdio": { "envelope": { "contentType": "application/json" } },
+        }),
+    );
+    let answers = &value["channels"]["answers"];
+    assert!(
+        answers.get("bindings").is_none(),
+        "the default envelope has no media type of its own: {answers}",
     );
 }

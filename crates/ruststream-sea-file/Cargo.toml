@@ -33,7 +33,13 @@ default = []
 testing = ["ruststream/testing"]
 # What this crate adds to a generated AsyncAPI document. The specification lists no binding for a
 # file transport or for stdio, so what a subscription knows travels in an `x-` extension.
-asyncapi = ["ruststream/asyncapi", "dep:serde"]
+asyncapi = ["ruststream/asyncapi"]
+# The in-process mode of the brokers framed by the core's codecs: `TestApp::start` connects a
+# `FileBroker` or a `StdioBroker` whose envelope is `Framed` over that codec. Each enables the
+# codec in the core, and does nothing without `testing`.
+json = ["ruststream/json"]
+cbor = ["ruststream/cbor"]
+msgpack = ["ruststream/msgpack"]
 
 [dependencies]
 ruststream = { workspace = true, default-features = false }
@@ -42,7 +48,7 @@ sea-streamer-file.workspace = true
 sea-streamer-stdio.workspace = true
 base64.workspace = true
 bytes.workspace = true
-serde = { workspace = true, optional = true }
+serde.workspace = true
 futures.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

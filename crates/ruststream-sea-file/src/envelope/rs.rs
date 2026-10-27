@@ -1,4 +1,4 @@
-//! The conditional header envelope.
+//! [`Rs`]: the conditional `rs1:` / `rs2:` header envelope, the crate's default.
 //!
 //! The client's payloads are plain bytes with no header space, so user headers travel in an
 //! envelope - applied only when headers are present, so a file written without headers stays
@@ -11,27 +11,136 @@
 //! is used only for a message with a header the line form would rewrite (a value that is not
 //! UTF-8, holds a line break or begins or ends with whitespace).
 
+use std::borrow::Cow;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use bytes::Bytes;
 use ruststream::HeaderMap;
+
+use super::{Envelope, Medium, SealError, fits_a_line};
 
 /// The envelope whose header block is `name: value` lines.
 const LINES: &str = "rs1:";
 /// The envelope whose header block is length-prefixed names and values.
 const FRAMED: &str = "rs2:";
 
+/// The crate's default envelope: `rs1:` or `rs2:` plus base64 of the headers and the payload,
+/// written only for a message that needs it.
+///
+/// A message with no headers is written as it is, so a file recorded that way stays readable by
+/// any `sea-streamer` consumer and a line stays readable by any line tool. A message with headers
+/// is enveloped: `rs1:` when every header reads back unchanged from a `name: value` line, which
+/// keeps it readable by every earlier release of this crate, and `rs2:` with length-prefixed
+/// names and values otherwise. A payload that begins like an envelope is enveloped itself, and on
+/// a pipe so is a payload a line cannot carry: one that is not UTF-8, holds a line break, or
+/// begins or ends with whitespace. Every other record reads as a payload with no headers.
+///
+/// # Examples
+///
+/// A broker names the default to state it; a broker that names nothing writes the same records:
+///
+/// ```
+/// use ruststream_sea_file::file::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Tenant {
+///     tenant: String,
+/// }
+///
+/// #[subscriber(FileStream::new("orders"))]
+/// async fn handle(order: &Order, Headers(meta): Headers<Tenant>) -> HandlerOutcome {
+///     tracing::info!(order.id, tenant = %meta.tenant, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[ruststream::app]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+///         .with_broker(FileBroker::new("/var/lib/orders.ss").envelope(Rs), |b| {
+///             b.include(handle);
+///         })
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Rs;
+
+/// What [`Rs`] found in a record: an envelope, decoded, or a bare payload.
+#[derive(Debug)]
+pub struct RsOpened(Opened);
+
+#[derive(Debug)]
+enum Opened {
+    /// Not an envelope: the record is the payload.
+    Bare,
+    /// An envelope, decoded: the header block and the payload behind it.
+    Enveloped {
+        decoded: Vec<u8>,
+        /// Where the header block ends and the payload begins.
+        block_end: usize,
+        /// Whether the block is `name: value` lines, rather than length-prefixed fields.
+        lines: bool,
+    },
+}
+
+impl Envelope for Rs {
+    type Opened = RsOpened;
+
+    fn seal<'p>(
+        &self,
+        headers: &HeaderMap,
+        payload: &'p [u8],
+        medium: Medium,
+    ) -> Result<Cow<'p, [u8]>, SealError> {
+        Ok(encode(headers, payload, medium == Medium::Line))
+    }
+
+    fn open(&self, record: &[u8]) -> RsOpened {
+        RsOpened(opened(record).unwrap_or(Opened::Bare))
+    }
+
+    fn payload<'r>(&self, record: &'r [u8], opened: &'r RsOpened) -> &'r [u8] {
+        match &opened.0 {
+            Opened::Bare => record,
+            Opened::Enveloped {
+                decoded, block_end, ..
+            } => &decoded[*block_end..],
+        }
+    }
+
+    fn headers(&self, _record: &[u8], opened: &RsOpened) -> HeaderMap {
+        match &opened.0 {
+            Opened::Bare => HeaderMap::new(),
+            Opened::Enveloped {
+                decoded,
+                block_end,
+                lines: true,
+            } => lined_headers(&decoded[4..*block_end]),
+            // `open` walked the block already, so it parses.
+            Opened::Enveloped {
+                decoded, block_end, ..
+            } => framed_headers(&decoded[4..*block_end]).unwrap_or_default(),
+        }
+    }
+}
+
 /// Encodes a payload with its headers. Headerless payloads pass through untouched, unless the
 /// reader would take them for something else: a payload that begins like an envelope is
 /// enveloped itself on both transports. `force_text` marks a line of the stdio transport, which
 /// additionally envelopes a payload a line cannot carry as it is.
-pub(crate) fn encode(headers: &HeaderMap, payload: &[u8], force_text: bool) -> Vec<u8> {
+fn encode<'p>(headers: &HeaderMap, payload: &'p [u8], force_text: bool) -> Cow<'p, [u8]> {
     let needs_envelope = !headers.is_empty()
         || payload.starts_with(LINES.as_bytes())
         || payload.starts_with(FRAMED.as_bytes())
         || (force_text && !fits_a_line(payload));
     if !needs_envelope {
-        return payload.to_vec();
+        return Cow::Borrowed(payload);
     }
     let lines = headers.iter().all(|(name, value)| {
         !name.contains(':') && survives_a_line(name.as_bytes()) && survives_a_line(value)
@@ -56,7 +165,7 @@ pub(crate) fn encode(headers: &HeaderMap, payload: &[u8], force_text: bool) -> V
     let mut out = String::with_capacity(prefix.len() + framed.len().div_ceil(3) * 4);
     out.push_str(prefix);
     BASE64.encode_string(&framed, &mut out);
-    out.into_bytes()
+    Cow::Owned(out.into_bytes())
 }
 
 /// Whether a header name or value reads back unchanged from a `name: value` line: the reader
@@ -72,38 +181,39 @@ fn push_framed(block: &mut Vec<u8>, bytes: &[u8]) {
     block.extend_from_slice(bytes);
 }
 
-/// Whether a line of the stdio client carries `payload` unchanged.
-///
-/// The line is text. The client writes the payload after the line's meta fields and ends it with
-/// a newline, and the reader at the other end of the pipe splits on newlines and trims the payload
-/// it finds. So a payload that is not UTF-8, holds a newline, or begins or ends with whitespace
-/// would arrive cut into pieces or trimmed.
-fn fits_a_line(payload: &[u8]) -> bool {
-    std::str::from_utf8(payload).is_ok_and(|text| !text.contains('\n') && text.trim() == text)
-}
-
-/// Splits a payload back into headers and raw bytes; anything that is not a well-formed envelope
-/// reads as headerless.
-pub(crate) fn decode(data: &[u8]) -> (HeaderMap, Bytes) {
-    opened(data).unwrap_or_else(|| (HeaderMap::new(), Bytes::copy_from_slice(data)))
-}
-
-/// Opens an envelope of either form, or `None` for anything that is not one.
-fn opened(data: &[u8]) -> Option<(HeaderMap, Bytes)> {
-    let text = std::str::from_utf8(data).ok()?;
-    let (lines, encoded) = match text.strip_prefix(LINES) {
+/// Opens an envelope of either form, or `None` for anything that is not one. The header block is
+/// located, and walked for an `rs2:` block, but not parsed: a block that does not walk makes the
+/// record read as a bare payload rather than half-decoded.
+fn opened(record: &[u8]) -> Option<Opened> {
+    let (lines, encoded) = match record.strip_prefix(LINES.as_bytes()) {
         Some(encoded) => (true, encoded),
-        None => (false, text.strip_prefix(FRAMED)?),
+        None => (false, record.strip_prefix(FRAMED.as_bytes())?),
     };
-    let framed = BASE64.decode(encoded).ok()?;
-    let len = u32::from_be_bytes(framed.get(..4)?.try_into().ok()?) as usize;
-    let block = framed.get(4..4usize.checked_add(len)?)?;
-    let headers = if lines {
-        lined_headers(block)
-    } else {
-        framed_headers(block)?
-    };
-    Some((headers, Bytes::copy_from_slice(&framed[4 + len..])))
+    let decoded = BASE64.decode(encoded).ok()?;
+    let len = u32::from_be_bytes(decoded.get(..4)?.try_into().ok()?) as usize;
+    let block_end = 4usize.checked_add(len)?;
+    let block = decoded.get(4..block_end)?;
+    if !lines && !walks(block) {
+        return None;
+    }
+    Some(Opened::Enveloped {
+        decoded,
+        block_end,
+        lines,
+    })
+}
+
+/// Whether an `rs2:` block is whole: length-prefixed fields in pairs, every name UTF-8.
+fn walks(mut block: &[u8]) -> bool {
+    while !block.is_empty() {
+        let Some(name) = take_framed(&mut block) else {
+            return false;
+        };
+        if std::str::from_utf8(name).is_err() || take_framed(&mut block).is_none() {
+            return false;
+        }
+    }
+    true
 }
 
 /// The headers of an `rs1:` block: one `name: value` line each.
@@ -118,7 +228,7 @@ fn lined_headers(block: &[u8]) -> HeaderMap {
 }
 
 /// The headers of an `rs2:` block: length-prefixed names and values, alternating. `None` for a
-/// block that does not parse, so the message reads as headerless rather than half-decoded.
+/// block that does not parse.
 fn framed_headers(mut block: &[u8]) -> Option<HeaderMap> {
     let mut headers = HeaderMap::new();
     while !block.is_empty() {
@@ -144,12 +254,24 @@ fn take_framed<'block>(block: &mut &'block [u8]) -> Option<&'block [u8]> {
 mod tests {
     use super::*;
 
+    /// Opens a record the way a delivery does, parsing its headers too.
+    fn decode(record: &[u8]) -> (HeaderMap, Vec<u8>) {
+        let opened = Rs.open(record);
+        (
+            Rs.headers(record, &opened),
+            Rs.payload(record, &opened).to_vec(),
+        )
+    }
+
     #[test]
     fn headerless_payloads_pass_through() {
         let (headers, payload) = decode(&encode(&HeaderMap::new(), b"raw bytes", false));
         assert_eq!(headers, HeaderMap::new());
-        assert_eq!(payload.as_ref(), b"raw bytes");
-        assert_eq!(encode(&HeaderMap::new(), b"raw bytes", false), b"raw bytes");
+        assert_eq!(payload, b"raw bytes");
+        assert_eq!(
+            encode(&HeaderMap::new(), b"raw bytes", false).as_ref(),
+            b"raw bytes"
+        );
     }
 
     #[test]
@@ -165,7 +287,7 @@ mod tests {
         let (decoded, payload) = decode(&encoded);
         assert_eq!(decoded.get_str("content-type"), Some("application/json"));
         assert_eq!(decoded.get_str("x-tenant"), Some("acme"));
-        assert_eq!(payload.as_ref(), b"{\"id\":1}");
+        assert_eq!(payload, b"{\"id\":1}");
     }
 
     #[test]
@@ -182,15 +304,18 @@ mod tests {
             assert_eq!(line.trim(), line, "{line:?} would be trimmed");
             let (headers, payload) = decode(&encoded);
             assert!(headers.is_empty());
-            assert_eq!(payload.as_ref(), raw);
+            assert_eq!(payload, raw);
         }
         // A line that survives the format is written as it is, so a pipeline stays readable.
         assert_eq!(
-            encode(&HeaderMap::new(), b"{\"id\":1}", true),
+            encode(&HeaderMap::new(), b"{\"id\":1}", true).as_ref(),
             b"{\"id\":1}"
         );
         // A stream file is not a line: it keeps such payloads verbatim.
-        assert_eq!(encode(&HeaderMap::new(), b" padded\n", false), b" padded\n");
+        assert_eq!(
+            encode(&HeaderMap::new(), b" padded\n", false).as_ref(),
+            b" padded\n"
+        );
     }
 
     #[test]
@@ -201,7 +326,7 @@ mod tests {
             for force_text in [false, true] {
                 let (headers, payload) = decode(&encode(&HeaderMap::new(), raw, force_text));
                 assert!(headers.is_empty());
-                assert_eq!(payload.as_ref(), raw);
+                assert_eq!(payload, raw);
             }
         }
     }
@@ -230,7 +355,7 @@ mod tests {
                 assert_eq!(decoded.get(name), Some(value), "{name}");
                 assert_eq!(decoded.get_str("x-plain"), Some("plain"));
                 assert_eq!(decoded.iter().count(), 2);
-                assert_eq!(payload.as_ref(), b"payload");
+                assert_eq!(payload, b"payload");
             }
         }
     }
@@ -262,7 +387,7 @@ mod tests {
         BASE64.encode_string(&framed, &mut data);
         let (headers, payload) = decode(data.as_bytes());
         assert!(headers.is_empty());
-        assert_eq!(payload.as_ref(), data.as_bytes());
+        assert_eq!(payload, data.as_bytes());
     }
 
     #[test]
@@ -272,6 +397,6 @@ mod tests {
         assert!(std::str::from_utf8(&encoded).is_ok());
         let (headers, payload) = decode(&encoded);
         assert_eq!(headers, HeaderMap::new());
-        assert_eq!(payload.as_ref(), raw.as_slice());
+        assert_eq!(payload, raw.as_slice());
     }
 }
