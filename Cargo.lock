@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-sea-file"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "base64",
  "bytes",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-sea-file-bench"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "futures",
  "gungraun",

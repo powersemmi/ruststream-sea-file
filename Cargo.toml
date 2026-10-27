@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/ruststream-sea-file", "crates/ruststream-sea-file-bench"]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.7.2"
 edition = "2024"
 # The core's floor, which also covers the RustSec fix for the time crate (a sea-streamer
 # dependency) that resolves only from 1.88.
