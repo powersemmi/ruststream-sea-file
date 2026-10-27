@@ -42,7 +42,7 @@ struct Plant {
 struct Alerts;
 
 /// Reads the gateway's bare records and raises an alert on a low reading.
-#[subscriber(FileStream::<NoOp>::new("readings"))]
+#[subscriber(FileStream::new("readings"))]
 async fn watch(reading: &Reading, Out(alerts): Out<impl Publisher, Alerts>) -> HandlerOutcome {
     if reading.millivolts >= 3000 {
         return HandlerOutcome::ack();
@@ -119,7 +119,7 @@ async fn tally(reading: &Reading, Headers(plant): Headers<Plant>) -> HandlerOutc
 fn app(file: FileBroker) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("plant", "0.1.0"))
         .with_broker(file, |b| {
-            b.include(watch)
+            b.include(watch.envelope(NoOp))
                 .out(Alerts, FilePublish.envelope(Framed::new(JsonCodec)))
                 .build();
         })

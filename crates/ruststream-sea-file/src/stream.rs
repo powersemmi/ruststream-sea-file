@@ -4,7 +4,7 @@ use std::future::{Future, ready};
 
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi::{Binding, Bindings};
-use ruststream::runtime::IntoSource;
+use ruststream::runtime::{Declared, IntoSource, SubscriberBuilder, SubscriberSettings as _};
 use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource};
 #[cfg(feature = "asyncapi")]
 use serde::Serialize;
@@ -74,12 +74,15 @@ impl FileStream {
     }
 }
 
-/// A [`FileStream`] whose type names its envelope: `FileStream::<NoOp>::new("readings")`.
+/// The envelope a file subscription reads in, named at the mount site:
+/// `b.include(handler.envelope(NoOp))`.
 ///
-/// `#[subscriber]` takes the descriptor's type from the constructor at the head of the
-/// expression, so a subscription that reads in an envelope of its own names it there. The
-/// envelope is its type's default value; [`FileStream::envelope`] after the constructor sets
-/// another value of the same type.
+/// The `#[subscriber(..)]` attribute takes the descriptor's type from its constructor, so a
+/// descriptor whose envelope changes its type is named here instead, after the handler, the way
+/// the framework's own steps are. The manual path names it on the descriptor itself,
+/// [`FileStream::envelope`]. The step reads a [`FileStream`] descriptor, so it comes before a
+/// `start_at(..)` clause would wrap it: a subscription that also opens at a position is mounted
+/// on the manual path.
 ///
 /// # Examples
 ///
@@ -95,7 +98,7 @@ impl FileStream {
 ///     millivolts: u32,
 /// }
 ///
-/// #[subscriber(FileStream::<NoOp>::new("readings"))]
+/// #[subscriber(FileStream::new("readings"))]
 /// async fn on_reading(reading: &Reading) -> HandlerOutcome {
 ///     tracing::info!(reading.millivolts, "read");
 ///     HandlerOutcome::ack()
@@ -105,22 +108,28 @@ impl FileStream {
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("readings", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/plant.ss"), |b| {
-///             b.include(on_reading);
+///             b.include(on_reading.envelope(NoOp));
 ///         })
 /// }
 /// ```
-pub trait EnvelopedStream: Sized {
-    /// Names the stream key, read in the envelope the type names.
-    fn new(stream: impl Into<String>) -> Self;
+pub trait FileEnvelopeExt: Sized {
+    /// The mount chain reading in `Named`.
+    type Enveloped<Named: Envelope>;
+
+    /// Reads this subscription's records through `envelope` instead of the broker's. The
+    /// mount-site spelling of [`FileStream::envelope`].
+    #[must_use]
+    fn envelope<Named: Envelope>(self, envelope: Named) -> Self::Enveloped<Named>;
 }
 
-impl<Env: Envelope + Default> EnvelopedStream for FileStream<Env> {
-    fn new(stream: impl Into<String>) -> Self {
-        Self {
-            stream: stream.into(),
-            replay: false,
-            envelope: Env::default(),
-        }
+impl<Decl, Def, State, DefCodec, Choice> FileEnvelopeExt for Decl
+where
+    Decl: Declared<Settings = SubscriberBuilder<Def, FileStream<Choice>, State, DefCodec>>,
+{
+    type Enveloped<Named: Envelope> = SubscriberBuilder<Def, FileStream<Named>, State, DefCodec>;
+
+    fn envelope<Named: Envelope>(self, envelope: Named) -> Self::Enveloped<Named> {
+        self.map_source(|source| source.envelope(envelope))
     }
 }
 

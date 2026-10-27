@@ -240,8 +240,8 @@ async fn no_envelope_carries_a_bare_payload_through_a_pipe() -> Result<(), Box<d
     Ok(())
 }
 
-/// Reads the feed as JSON documents, whatever the broker writes.
-#[subscriber(FileStream::<Framed<JsonCodec>>::new("feed"), reply)]
+/// Reads the feed; the mount site names the envelope it reads in.
+#[subscriber(FileStream::new("feed"), reply)]
 async fn report_framed(reading: &Reading, Headers(meta): Headers<MaybeTenant>) -> Seen {
     Seen {
         millivolts: reading.millivolts,
@@ -255,7 +255,7 @@ async fn report_framed(reading: &Reading, Headers(meta): Headers<MaybeTenant>) -
 async fn a_record_of_another_format_reads_as_a_payload() -> Result<(), Box<dyn Error>> {
     let app =
         RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(FileBroker::new(FILE), |b| {
-            b.include(report_framed);
+            b.include(report_framed.envelope(Framed::new(JsonCodec)));
         });
     let tb = TestApp::start(app).await?;
 

@@ -15,6 +15,7 @@
 //! - [FilePublish][file-publish]: [`Publish`](struct@Publish) and its live [`FilePublisher`].
 //! - [retry_after][retry-after]: a deferred copy appended under the key the subscription reads.
 //! - [Envelopes][envelopes]: [`envelope`](FileBroker::envelope),
+//!   the mount-site step [`FileEnvelopeExt::envelope`](crate::FileEnvelopeExt::envelope),
 //!   [`FileStream::envelope`](crate::FileStream::envelope) and
 //!   [`Publish::envelope`](FilePublish::envelope), the format a record is written in.
 //! - [Shutdown][shutdown]: the file closed, and the publishers handed out before it.
@@ -954,7 +955,7 @@ pub mod prelude {
 
     pub use crate::file::{FileBroker, Publish};
     pub use crate::{
-        EnvelopedStream, FileBatchContext, FileContext, FilePosition, FileSeeker, FileStream,
+        FileBatchContext, FileContext, FileEnvelopeExt, FilePosition, FileSeeker, FileStream,
         Framed, NoOp, Position, Rs, SeekHandle,
     };
 }

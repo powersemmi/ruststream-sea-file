@@ -13,12 +13,12 @@ An envelope is the format a record carries headers in: [`Rs`](api:ruststream_sea
 
 The envelope is chosen like a codec, and the most specific level wins.
 The broker sets the default with `FileBroker::new(path).envelope(..)` or `StdioBroker::new().envelope(..)`.
-A subscription on a stream file reads in its own with `FileStream::<NoOp>::new("readings")`, and a publish policy writes in its own with `Publish.envelope(..)`.
+A subscription on a stream file reads in its own with `b.include(handler.envelope(NoOp))`, or `FileStream::new(key).envelope(..)` on the manual path, and a publish policy writes in its own with `Publish.envelope(..)`.
 The choice is a type, so it costs nothing per message.
 
 - `Rs` writes a message with headers as `rs1:` or `rs2:` plus base64, and a message without them as it is. This is the format of every earlier release, described on [Envelope](../../architecture/envelope.md).
 - `Framed::new(codec)` writes every message as one document of the codec, an object with the fields `headers` and `payload`. With `JsonCodec` on a pipe, each line is a JSON object any line tool reads.
-- `NoOp` writes the payload as it is. A publish that carries a header fails and names the header and the destination, and so does a payload a line on a pipe cannot carry.
+- `NoOp` writes the payload as it is, and a delivery carries no envelope headers, only the transport's own [`stream-sequence`](./sequence-header.md). A publish that carries a header fails and names the header and the destination, and so does a payload a line on a pipe cannot carry.
 
 A record that is not in the subscription's envelope reads as a payload with no headers.
 A delivery parses its headers the first time something reads them, so a handler that reads only the payload never parses the envelope.

@@ -9,7 +9,7 @@ use super::{Envelope, Medium, SealError};
 /// No envelope: a record is the payload as it is, and carries no headers.
 ///
 /// A file or a pipe written through it is readable by any tool, and any record reads as a
-/// payload. A delivery's headers hold nothing but the transport's
+/// payload. A delivery carries no envelope headers: its headers hold only the transport's own
 /// [`SEQUENCE_HEADER`](crate::SEQUENCE_HEADER). A publish that carries a header fails with
 /// [`SeaFileError::Seal`](crate::SeaFileError::Seal) naming the header and the destination, and
 /// so does a publish to a pipe whose payload a line cannot carry. The framework counts the
@@ -28,7 +28,7 @@ use super::{Envelope, Medium, SealError};
 ///     millivolts: u32,
 /// }
 ///
-/// #[subscriber(FileStream::<NoOp>::new("readings"))]
+/// #[subscriber(FileStream::new("readings"))]
 /// async fn on_reading(reading: &Reading) -> HandlerOutcome {
 ///     tracing::info!(reading.millivolts, "read");
 ///     HandlerOutcome::ack()
@@ -38,7 +38,7 @@ use super::{Envelope, Medium, SealError};
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("readings", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/readings.ss"), |b| {
-///             b.include(on_reading);
+///             b.include(on_reading.envelope(NoOp));
 ///         })
 /// }
 /// ```

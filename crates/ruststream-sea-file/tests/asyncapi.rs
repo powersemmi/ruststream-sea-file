@@ -168,7 +168,7 @@ fn a_stdio_publish_destination_describes_nothing() {
 }
 
 /// Reads a key of the file as JSON documents, headers inside.
-#[subscriber(FileStream::<Framed<JsonCodec>>::new("documents"))]
+#[subscriber(FileStream::new("documents"))]
 async fn archive(order: &Order) -> HandlerOutcome {
     let _ = order.id;
     HandlerOutcome::ack()
@@ -183,7 +183,7 @@ async fn answer(order: &Order) -> Receipt {
 fn framed_document() -> Value {
     let app = RustStream::new(AppInfo::new("sea", "0.1.0"))
         .with_broker_labeled("file", FileBroker::new(PATH), |b| {
-            b.include(archive)
+            b.include(archive.envelope(Framed::new(JsonCodec)))
                 .max_attempts(nonzero!(3u32))
                 .dead_letter("documents.dead");
         })

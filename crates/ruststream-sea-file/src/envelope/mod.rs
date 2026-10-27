@@ -6,7 +6,8 @@
 //! finds them again on delivery. It is chosen like a codec, the most specific level winning: the
 //! broker's default ([`FileBroker::envelope`](crate::FileBroker::envelope),
 //! [`StdioBroker::envelope`](crate::StdioBroker::envelope)), then a subscription's
-//! ([`FileStream::envelope`](crate::FileStream::envelope)) or a publish policy's
+//! (the mount-site step [`FileEnvelopeExt::envelope`](crate::FileEnvelopeExt::envelope), or
+//! [`FileStream::envelope`](crate::FileStream::envelope) on the manual path) or a publish policy's
 //! ([`FilePublish::envelope`](crate::FilePublish::envelope),
 //! [`StdioPublish::envelope`](crate::StdioPublish::envelope)). The choice is a type, so it costs
 //! nothing per message.

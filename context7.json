@@ -29,6 +29,6 @@
     "Take batches with a `&[T]` handler and `.batch(n)` at the mount site; the batch is assembled on the client and a partial one goes out 10 ms after its first delivery (Components > Subscriptions > Batches).",
     "Test the production app with `TestApp::start` (feature `testing`), which connects `FileBroker` and `StdioBroker` in process, addressed as `tb.broker::<FileBroker>()` (Components > Testing).",
     "Run the same test body against a real stream file with `TestApp::start_live` (Components > Testing > Live).",
-    "Choose the envelope headers travel in on the broker (`FileBroker::new(path).envelope(Framed::new(JsonCodec))`), a subscription (`FileStream::<NoOp>::new(key)`) or a policy (`Publish.envelope(NoOp)`); `Rs` is the default, and a test addresses the broker as `tb.broker::<FileBroker<NoOp>>()` (Components > Headers > Envelopes)."
+    "Choose the envelope headers travel in on the broker (`FileBroker::new(path).envelope(Framed::new(JsonCodec))`), a subscription at the mount site (`b.include(handler.envelope(NoOp))`; manual: `FileStream::new(key).envelope(NoOp)`) or a policy (`Publish.envelope(NoOp)`); `Rs` is the default, and a test addresses the broker as `tb.broker::<FileBroker<NoOp>>()` (Components > Headers > Envelopes)."
   ]
 }
