@@ -10,16 +10,33 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer};
 use serde_json::value::RawValue;
 
-use super::{HeaderValue, Opened, TextVisitor, header_map};
+use ruststream::codec::JsonCodec;
+
+use super::{FrameCodec, FramedOpened, text_headers};
 use crate::envelope::{Medium, SealError};
+
+impl FrameCodec for JsonCodec {
+    fn frame(
+        &self,
+        headers: &HeaderMap,
+        payload: &[u8],
+        medium: Medium,
+    ) -> Result<Vec<u8>, SealError> {
+        seal(headers, payload, medium)
+    }
+
+    fn frame_payload(&self, record: &[u8]) -> FramedOpened {
+        open(record).unwrap_or_else(FramedOpened::foreign)
+    }
+
+    fn frame_headers(&self, record: &[u8]) -> Option<HeaderMap> {
+        headers(record)
+    }
+}
 
 /// Writes one document. The payload is embedded only where it reads back byte for byte: a whole
 /// JSON text, and on a line one that holds no line break.
-pub(super) fn seal(
-    headers: &HeaderMap,
-    payload: &[u8],
-    medium: Medium,
-) -> Result<Vec<u8>, SealError> {
+fn seal(headers: &HeaderMap, payload: &[u8], medium: Medium) -> Result<Vec<u8>, SealError> {
     let embedded = is_json(payload) && !(medium == Medium::Line && payload.contains(&b'\n'));
     let mut out = Vec::with_capacity(payload.len().saturating_mul(4) / 3 + 64);
     out.extend_from_slice(b"{\"headers\":{");
@@ -57,12 +74,12 @@ fn is_json(payload: &[u8]) -> bool {
     serde_json::from_slice::<&RawValue>(payload).is_ok_and(|raw| raw.get().len() == payload.len())
 }
 
-/// A document read for its payload: the headers are checked for their shape and skipped.
+/// A document read for its payload: the headers are skipped, not parsed.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Located<'a> {
-    #[serde(rename = "headers", deserialize_with = "checked_headers")]
-    _headers: (),
+    #[serde(rename = "headers")]
+    _headers: IgnoredAny,
     #[serde(borrow, default, deserialize_with = "present")]
     payload: Option<&'a RawValue>,
     #[serde(borrow, default)]
@@ -73,20 +90,12 @@ struct Located<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Parsed {
-    #[serde(deserialize_with = "kept_headers")]
+    #[serde(deserialize_with = "text_headers")]
     headers: HeaderMap,
     #[serde(rename = "payload", default)]
     _payload: Option<IgnoredAny>,
     #[serde(rename = "payload_base64", default)]
     _payload_base64: Option<IgnoredAny>,
-}
-
-fn checked_headers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
-    header_map::<Text, D>(deserializer, false).map(drop)
-}
-
-fn kept_headers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<HeaderMap, D::Error> {
-    header_map::<Text, D>(deserializer, true)
 }
 
 /// A present `payload` field, `null` included: `null` is a JSON text like any other.
@@ -96,48 +105,25 @@ fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<&'de Raw
 
 /// Finds the payload of a document: inside the record for an embedded value, decoded for base64.
 /// `None` for a record that is not a document in exactly this shape.
-pub(super) fn open(record: &[u8]) -> Option<Opened> {
+fn open(record: &[u8]) -> Option<FramedOpened> {
     let located = serde_json::from_slice::<Located<'_>>(record).ok()?;
     match (located.payload, located.payload_base64) {
         (Some(raw), None) => {
             // The value is borrowed from the record, so its place there is a range of it.
             let start = raw.get().as_ptr().addr() - record.as_ptr().addr();
-            Some(Opened::InRecord(start..start + raw.get().len()))
+            Some(FramedOpened::within(start..start + raw.get().len()))
         }
-        (None, Some(encoded)) => BASE64.decode(encoded.as_bytes()).ok().map(Opened::Decoded),
+        (None, Some(encoded)) => BASE64
+            .decode(encoded.as_bytes())
+            .ok()
+            .map(FramedOpened::decoded),
         _ => None,
     }
 }
 
 /// Parses the headers of a document `open` recognised.
-pub(super) fn headers(record: &[u8]) -> Option<HeaderMap> {
+fn headers(record: &[u8]) -> Option<HeaderMap> {
     serde_json::from_slice::<Parsed>(record)
         .ok()
         .map(|parsed| parsed.headers)
-}
-
-/// A JSON header value: text.
-struct Text(String);
-
-impl<'de> Deserialize<'de> for Text {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Self)
-    }
-}
-
-/// A JSON header value checked to be text and not kept.
-struct CheckedText;
-
-impl<'de> Deserialize<'de> for CheckedText {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_str(TextVisitor).map(|()| Self)
-    }
-}
-
-impl HeaderValue for Text {
-    type Checked = CheckedText;
-
-    fn into_bytes(self) -> Vec<u8> {
-        self.0.into_bytes()
-    }
 }

@@ -114,18 +114,17 @@ impl Envelope for Rs {
         }
     }
 
-    fn headers(&self, _record: &[u8], opened: &RsOpened) -> HeaderMap {
+    fn headers(&self, _record: &[u8], opened: &RsOpened) -> Option<HeaderMap> {
         match &opened.0 {
-            Opened::Bare => HeaderMap::new(),
+            Opened::Bare => Some(HeaderMap::new()),
             Opened::Enveloped {
                 decoded,
                 block_end,
                 lines: true,
-            } => lined_headers(&decoded[4..*block_end]),
-            // `open` walked the block already, so it parses.
+            } => Some(lined_headers(&decoded[4..*block_end])),
             Opened::Enveloped {
                 decoded, block_end, ..
-            } => framed_headers(&decoded[4..*block_end]).unwrap_or_default(),
+            } => framed_headers(&decoded[4..*block_end]),
         }
     }
 }
@@ -182,8 +181,7 @@ fn push_framed(block: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 /// Opens an envelope of either form, or `None` for anything that is not one. The header block is
-/// located, and walked for an `rs2:` block, but not parsed: a block that does not walk makes the
-/// record read as a bare payload rather than half-decoded.
+/// located but not parsed; a block that does not parse reads as no headers when it is read.
 fn opened(record: &[u8]) -> Option<Opened> {
     let (lines, encoded) = match record.strip_prefix(LINES.as_bytes()) {
         Some(encoded) => (true, encoded),
@@ -192,28 +190,12 @@ fn opened(record: &[u8]) -> Option<Opened> {
     let decoded = BASE64.decode(encoded).ok()?;
     let len = u32::from_be_bytes(decoded.get(..4)?.try_into().ok()?) as usize;
     let block_end = 4usize.checked_add(len)?;
-    let block = decoded.get(4..block_end)?;
-    if !lines && !walks(block) {
-        return None;
-    }
+    decoded.get(4..block_end)?;
     Some(Opened::Enveloped {
         decoded,
         block_end,
         lines,
     })
-}
-
-/// Whether an `rs2:` block is whole: length-prefixed fields in pairs, every name UTF-8.
-fn walks(mut block: &[u8]) -> bool {
-    while !block.is_empty() {
-        let Some(name) = take_framed(&mut block) else {
-            return false;
-        };
-        if std::str::from_utf8(name).is_err() || take_framed(&mut block).is_none() {
-            return false;
-        }
-    }
-    true
 }
 
 /// The headers of an `rs1:` block: one `name: value` line each.
@@ -228,7 +210,7 @@ fn lined_headers(block: &[u8]) -> HeaderMap {
 }
 
 /// The headers of an `rs2:` block: length-prefixed names and values, alternating. `None` for a
-/// block that does not parse.
+/// block that does not parse, so a half-decoded block is never read.
 fn framed_headers(mut block: &[u8]) -> Option<HeaderMap> {
     let mut headers = HeaderMap::new();
     while !block.is_empty() {
@@ -258,7 +240,7 @@ mod tests {
     fn decode(record: &[u8]) -> (HeaderMap, Vec<u8>) {
         let opened = Rs.open(record);
         (
-            Rs.headers(record, &opened),
+            Rs.headers(record, &opened).unwrap_or_default(),
             Rs.payload(record, &opened).to_vec(),
         )
     }
@@ -378,16 +360,17 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_framed_block_reads_as_headerless() {
-        // A block that announces a name longer than itself.
+    fn a_malformed_framed_block_reads_as_no_headers_before_the_payload() {
+        // A block that announces a name longer than itself, then the payload.
         let mut framed = 8u32.to_be_bytes().to_vec();
         framed.extend_from_slice(&100u32.to_be_bytes());
         framed.extend_from_slice(b"name");
+        framed.extend_from_slice(b"payload");
         let mut data = FRAMED.to_owned();
         BASE64.encode_string(&framed, &mut data);
         let (headers, payload) = decode(data.as_bytes());
         assert!(headers.is_empty());
-        assert_eq!(payload, data.as_bytes());
+        assert_eq!(payload, b"payload");
     }
 
     #[test]

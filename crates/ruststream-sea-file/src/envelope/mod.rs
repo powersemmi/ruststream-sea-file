@@ -32,7 +32,7 @@ mod framed;
 mod noop;
 mod rs;
 
-pub use framed::{DocumentCodec, DocumentForm, Framed};
+pub use framed::{FrameCodec, Framed, FramedOpened};
 pub use noop::NoOp;
 pub use rs::Rs;
 
@@ -89,12 +89,12 @@ pub use rs::Rs;
 ///         tab.map_or(record, |tab| &record[tab + 1..])
 ///     }
 ///
-///     fn headers(&self, record: &[u8], tab: &Option<usize>) -> HeaderMap {
+///     fn headers(&self, record: &[u8], tab: &Option<usize>) -> Option<HeaderMap> {
 ///         let mut headers = HeaderMap::new();
 ///         if let Some(tab) = *tab {
 ///             headers.insert("tenant", String::from_utf8_lossy(&record[..tab]).into_owned());
 ///         }
-///         headers
+///         Some(headers)
 ///     }
 /// }
 ///
@@ -154,8 +154,12 @@ pub trait Envelope: Clone + Send + Sync + 'static {
     /// The payload of `record`, found where [`open`](Self::open) located it.
     fn payload<'r>(&self, record: &'r [u8], opened: &'r Self::Opened) -> &'r [u8];
 
-    /// Parses the headers of `record`; an empty map for a record that carries none.
-    fn headers(&self, record: &[u8], opened: &Self::Opened) -> HeaderMap;
+    /// Parses the headers of `record`: an empty map for a record that carries none, `None` for a
+    /// header block that does not parse.
+    ///
+    /// The delivery reads a `None` as no headers and logs it with the subscription and the
+    /// envelope; the payload is delivered either way.
+    fn headers(&self, record: &[u8], opened: &Self::Opened) -> Option<HeaderMap>;
 }
 
 /// What a sealed record travels on: it decides what the record must survive.

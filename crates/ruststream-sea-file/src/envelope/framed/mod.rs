@@ -1,26 +1,23 @@
 //! [`Framed`]: one document of a codec per message, headers and payload inside it.
 //!
 //! The document follows the convention of the `CloudEvents` formats: a JSON document carries a
-//! payload that is JSON as a value and any other as base64, and a binary codec carries it as a
+//! payload that is JSON as a value and any other as base64, and any other codec carries it as a
 //! byte string. Each form lives in a module of its own.
 
 use std::borrow::Cow;
 use std::fmt;
-use std::marker::PhantomData;
-#[cfg(feature = "json")]
 use std::ops::Range;
+use std::str;
 
 use bytes::Bytes;
 use ruststream::HeaderMap;
 #[cfg(feature = "cbor")]
 use ruststream::codec::CborCodec;
 use ruststream::codec::Codec;
-#[cfg(feature = "json")]
-use ruststream::codec::JsonCodec;
 #[cfg(feature = "msgpack")]
 use ruststream::codec::MsgpackCodec;
+use serde::Deserializer;
 use serde::de::{MapAccess, Visitor};
-use serde::{Deserialize, Deserializer};
 
 use super::{Envelope, Medium, SealError};
 
@@ -30,10 +27,11 @@ mod json;
 
 /// One document of a codec per message: `headers` and exactly one payload field, nothing else.
 ///
-/// The payload follows the convention of the `CloudEvents` formats. With
-/// [`JsonCodec`](ruststream::codec::JsonCodec), a payload that is a JSON text is embedded as a
-/// value in `payload`, byte for byte, and any other payload is a base64 string in
-/// `payload_base64`. Each line on a pipe is then a JSON object any line tool reads:
+/// `headers` maps each header name to its value as text. The payload follows the convention of
+/// the `CloudEvents` formats. With [`JsonCodec`](ruststream::codec::JsonCodec), a payload that is
+/// a JSON text is embedded as a value in `payload`, byte for byte, and any other payload is a
+/// base64 string in `payload_base64`. Each line on a pipe is then a JSON object any line tool
+/// reads:
 ///
 /// ```text
 /// {"headers":{"event":"created"},"payload":{"id":7}}
@@ -41,21 +39,22 @@ mod json;
 /// ```
 ///
 /// A JSON document on a pipe is one line, so a JSON payload that holds a raw line break travels
-/// as `payload_base64` there; in a stream file it is embedded. JSON header values are text, and a
-/// header whose value is not UTF-8 fails the publish with [`SealError::NotText`]. With a binary
-/// codec ([`CborCodec`](ruststream::codec::CborCodec),
-/// [`MsgpackCodec`](ruststream::codec::MsgpackCodec)) the payload and the header values are
-/// byte strings; such a document is not text, so a pipe refuses it with [`SealError::Line`].
+/// as `payload_base64` there; in a stream file it is embedded. Any other codec
+/// ([`CborCodec`](ruststream::codec::CborCodec), [`MsgpackCodec`](ruststream::codec::MsgpackCodec),
+/// a codec of the service) carries the payload as a byte string in `payload`; such a document is
+/// not text, so a pipe refuses it with [`SealError::Line`]. A header whose value is not UTF-8
+/// fails the publish with [`SealError::NotText`].
 ///
 /// Every message is framed, headers or not. A record that is not a document in exactly this shape
-/// reads as a payload with no headers. The generated `AsyncAPI` document reports the codec's media
-/// type as the envelope's. The codec is a [`DocumentCodec`], which the core's codecs are under
-/// this crate's features of the same name (`json`, `cbor`, `msgpack`).
+/// reads as a payload with no headers; a document whose header block does not parse reads as its
+/// payload with no headers, and the delivery logs it. The generated `AsyncAPI` document reports
+/// the codec's media type as the envelope's. The codec implements [`FrameCodec`].
 ///
 /// Framing costs only the subscriptions and publishers that choose it. A JSON publish checks that
 /// the payload is a JSON text, one pass over it, and a payload that is not one is base64-encoded.
 /// A JSON delivery finds an embedded payload inside the record, with no copy, and decodes a base64
-/// one into a buffer of its own; a binary delivery copies the payload out of the document.
+/// one into a buffer of its own; any other codec's delivery copies the payload out of the
+/// document.
 ///
 /// # Examples
 ///
@@ -95,7 +94,7 @@ pub struct Framed<Format> {
     codec: Format,
 }
 
-impl<Format: DocumentCodec> Framed<Format> {
+impl<Format: FrameCodec> Framed<Format> {
     /// Frames every message as one document of `codec`.
     #[must_use]
     pub const fn new(codec: Format) -> Self {
@@ -103,100 +102,124 @@ impl<Format: DocumentCodec> Framed<Format> {
     }
 }
 
-/// A codec [`Framed`] writes its documents in, and the form its documents carry the payload in.
+/// A codec [`Framed`] writes its documents in: where the payload goes in one, and how it is
+/// found again.
 ///
-/// The core's codecs implement it under this crate's features of the same name. A codec of a
-/// service's own names the form of the documents it writes.
+/// The core's JSON, CBOR and msgpack codecs implement it under this crate's features of the same
+/// name. The provided methods write the payload as a byte string in `payload`, the form of a
+/// binary codec, so a codec of the service implements the trait with an empty body. JSON
+/// overrides them with the `payload` / `payload_base64` pair of the `CloudEvents` JSON format.
 ///
 /// # Examples
 ///
-/// A JSON codec under the vendor media type a contract was published with frames its documents
-/// the way [`JsonCodec`](ruststream::codec::JsonCodec) does:
-///
 /// ```
 /// use ruststream::BytesMut;
-/// use ruststream::codec::{Codec, CodecError};
-/// use ruststream_sea_file::envelope::{DocumentCodec, DocumentForm};
+/// use ruststream::codec::{CborCodec, Codec, CodecError};
+/// use ruststream_sea_file::envelope::FrameCodec;
 /// use ruststream_sea_file::file::prelude::*;
-/// use serde::de::DeserializeOwned;
 /// use serde::Serialize;
+/// use serde::de::DeserializeOwned;
 ///
+/// /// CBOR under the media type an analytics team registered for its documents.
 /// #[derive(Debug, Clone, Copy, Default)]
-/// struct OrdersJson;
+/// struct AnalyticsCbor;
 ///
-/// impl Codec for OrdersJson {
-///     const CONTENT_TYPE: &'static str = "application/vnd.orders.v1+json";
+/// impl Codec for AnalyticsCbor {
+///     const CONTENT_TYPE: &'static str = "application/vnd.acme.analytics+cbor";
 ///
 ///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-///         let bytes =
-///             serde_json::to_vec(value).map_err(|error| CodecError::Encode(Box::new(error)))?;
-///         Ok(BytesMut::from(bytes.as_slice()))
+///         CborCodec.encode(value)
 ///     }
 ///
 ///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
-///         serde_json::from_slice(bytes).map_err(|error| CodecError::Decode(Box::new(error)))
+///         CborCodec.decode(bytes)
 ///     }
 /// }
 ///
-/// impl DocumentCodec for OrdersJson {
-///     const FORM: DocumentForm = DocumentForm::Json;
-/// }
+/// impl FrameCodec for AnalyticsCbor {}
 ///
 /// #[ruststream::app]
 /// fn app() -> impl App {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-///         FileBroker::new("/var/lib/orders.ss").envelope(Framed::new(OrdersJson)),
+///     RustStream::new(AppInfo::new("analytics", "0.1.0")).with_broker(
+///         FileBroker::new("/var/lib/analytics.ss").envelope(Framed::new(AnalyticsCbor)),
 ///         |_b| {},
 ///     )
 /// }
 /// ```
-pub trait DocumentCodec: Codec + Clone + 'static {
-    /// How the documents of this codec carry the payload.
-    const FORM: DocumentForm;
-}
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a codec `Framed` writes documents in",
+    note = "enable this crate's `json`, `cbor` or `msgpack` feature for the core's codec, or \
+            implement `ruststream_sea_file::envelope::FrameCodec` for a codec of the service"
+)]
+pub trait FrameCodec: Codec + Clone + 'static {
+    /// Writes the document of a message for `medium`. Every header value is UTF-8 by now.
+    ///
+    /// # Errors
+    ///
+    /// [`SealError::Encode`] when the codec cannot encode the document.
+    fn frame(
+        &self,
+        headers: &HeaderMap,
+        payload: &[u8],
+        medium: Medium,
+    ) -> Result<Vec<u8>, SealError> {
+        let _ = medium;
+        binary::frame(self, headers, payload)
+    }
 
-/// How a [`Framed`] document carries the payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum DocumentForm {
-    /// A JSON text as a value in `payload`, any other payload as base64 in `payload_base64`.
-    #[cfg(feature = "json")]
-    Json,
-    /// A byte string in `payload`, read and written through the codec.
-    Binary,
-}
+    /// Where the payload of a document is, or [`FramedOpened::foreign`] for a record that is no
+    /// document.
+    fn frame_payload(&self, record: &[u8]) -> FramedOpened {
+        binary::payload(self, record)
+    }
 
-#[cfg(feature = "json")]
-impl DocumentCodec for JsonCodec {
-    const FORM: DocumentForm = DocumentForm::Json;
+    /// The headers of a document; `None` for a header block that does not parse.
+    fn frame_headers(&self, record: &[u8]) -> Option<HeaderMap> {
+        binary::headers(self, record)
+    }
 }
 
 #[cfg(feature = "cbor")]
-impl DocumentCodec for CborCodec {
-    const FORM: DocumentForm = DocumentForm::Binary;
-}
+impl FrameCodec for CborCodec {}
 
 #[cfg(feature = "msgpack")]
-impl DocumentCodec for MsgpackCodec {
-    const FORM: DocumentForm = DocumentForm::Binary;
-}
+impl FrameCodec for MsgpackCodec {}
 
-/// What [`Framed`] found in a record: the payload of a document, or a bare payload.
-#[derive(Debug)]
+/// What [`Framed`] found in a record: where its payload is.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FramedOpened(Opened);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Opened {
     /// Not a document: the record is the payload.
     Foreign,
     /// A document whose payload sits inside the record, at this range.
-    #[cfg(feature = "json")]
-    InRecord(Range<usize>),
+    Within(Range<usize>),
     /// A document whose payload was decoded into a buffer of its own.
     Decoded(Vec<u8>),
 }
 
-impl<Format: DocumentCodec> Envelope for Framed<Format> {
+impl FramedOpened {
+    /// A record that is no document: the whole record is the payload, with no headers.
+    #[must_use]
+    pub const fn foreign() -> Self {
+        Self(Opened::Foreign)
+    }
+
+    /// A document whose payload is the bytes of the record at `range`.
+    #[must_use]
+    pub const fn within(range: Range<usize>) -> Self {
+        Self(Opened::Within(range))
+    }
+
+    /// A document whose payload was decoded out of the record.
+    #[must_use]
+    pub const fn decoded(payload: Vec<u8>) -> Self {
+        Self(Opened::Decoded(payload))
+    }
+}
+
+impl<Format: FrameCodec> Envelope for Framed<Format> {
     type Opened = FramedOpened;
 
     const CONTENT_TYPE: Option<&'static str> = Some(Format::CONTENT_TYPE);
@@ -207,119 +230,60 @@ impl<Format: DocumentCodec> Envelope for Framed<Format> {
         payload: &'p [u8],
         medium: Medium,
     ) -> Result<Cow<'p, [u8]>, SealError> {
-        let record = match Format::FORM {
-            #[cfg(feature = "json")]
-            DocumentForm::Json => json::seal(headers, payload, medium)?,
-            // A binary document is the same in a file and on a line; a line refuses it.
-            DocumentForm::Binary => {
-                let _ = medium;
-                binary::seal(&self.codec, headers, payload)?
-            }
-        };
-        Ok(Cow::Owned(record))
+        // Checked before encoding: a serializer that met the value half way through the document
+        // could not say which header it was.
+        if let Some((name, _)) = headers
+            .iter()
+            .find(|(_, value)| str::from_utf8(value).is_err())
+        {
+            return Err(SealError::NotText {
+                name: name.to_string(),
+            });
+        }
+        self.codec.frame(headers, payload, medium).map(Cow::Owned)
     }
 
     fn open(&self, record: &[u8]) -> FramedOpened {
-        let opened = match Format::FORM {
-            #[cfg(feature = "json")]
-            DocumentForm::Json => json::open(record),
-            DocumentForm::Binary => binary::open(&self.codec, record),
-        };
-        FramedOpened(opened.unwrap_or(Opened::Foreign))
+        self.codec.frame_payload(record)
     }
 
     fn payload<'r>(&self, record: &'r [u8], opened: &'r FramedOpened) -> &'r [u8] {
         match &opened.0 {
             Opened::Foreign => record,
-            #[cfg(feature = "json")]
-            Opened::InRecord(range) => &record[range.clone()],
+            // A range a codec of the service reported past the record reads as the whole record.
+            Opened::Within(range) => record.get(range.clone()).unwrap_or(record),
             Opened::Decoded(payload) => payload,
         }
     }
 
-    fn headers(&self, record: &[u8], opened: &FramedOpened) -> HeaderMap {
-        if matches!(opened.0, Opened::Foreign) {
-            return HeaderMap::new();
+    fn headers(&self, record: &[u8], opened: &FramedOpened) -> Option<HeaderMap> {
+        if opened.0 == Opened::Foreign {
+            return Some(HeaderMap::new());
         }
-        // `open` checked the shape of the headers already, so they parse.
-        let parsed = match Format::FORM {
-            #[cfg(feature = "json")]
-            DocumentForm::Json => json::headers(record),
-            DocumentForm::Binary => binary::headers(&self.codec, record),
-        };
-        parsed.unwrap_or_default()
+        self.codec.frame_headers(record)
     }
 }
 
-/// A header map, read one entry at a time: kept, or only checked for its shape without
-/// keeping anything.
-struct HeadersVisitor<Value> {
-    keep: bool,
-    value: PhantomData<Value>,
+/// Reads a header map of text names to text values.
+fn text_headers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<HeaderMap, D::Error> {
+    deserializer.deserialize_map(TextHeadersVisitor)
 }
 
-/// A header value as a form reads it, and the same value checked without being kept.
-trait HeaderValue: for<'de> Deserialize<'de> {
-    /// The value checked for its shape and dropped.
-    type Checked: for<'de> Deserialize<'de>;
+struct TextHeadersVisitor;
 
-    /// The bytes the header map stores.
-    fn into_bytes(self) -> Vec<u8>;
-}
-
-impl<'de, Value: HeaderValue> Visitor<'de> for HeadersVisitor<Value> {
+impl<'de> Visitor<'de> for TextHeadersVisitor {
     type Value = HeaderMap;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a map of header names to their values")
+        f.write_str("a map of header names to text values")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<HeaderMap, A::Error> {
         let mut headers = HeaderMap::new();
-        if !self.keep {
-            while map.next_entry::<CheckedName, Value::Checked>()?.is_some() {}
-            return Ok(headers);
-        }
-        while let Some((name, value)) = map.next_entry::<String, Value>()? {
+        while let Some((name, value)) = map.next_entry::<String, String>()? {
             headers.insert(name, Bytes::from(value.into_bytes()));
         }
         Ok(headers)
-    }
-}
-
-/// Reads a header map through [`HeadersVisitor`]: kept when `keep`, checked otherwise.
-fn header_map<'de, Value, D>(deserializer: D, keep: bool) -> Result<HeaderMap, D::Error>
-where
-    Value: HeaderValue,
-    D: Deserializer<'de>,
-{
-    deserializer.deserialize_map(HeadersVisitor::<Value> {
-        keep,
-        value: PhantomData,
-    })
-}
-
-/// A header name, checked to be text and not kept.
-struct CheckedName;
-
-impl<'de> Deserialize<'de> for CheckedName {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_str(TextVisitor).map(|()| Self)
-    }
-}
-
-/// Accepts text and keeps nothing of it.
-struct TextVisitor;
-
-impl Visitor<'_> for TextVisitor {
-    type Value = ();
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("text")
-    }
-
-    fn visit_str<E>(self, _text: &str) -> Result<(), E> {
-        Ok(())
     }
 }
 
@@ -343,7 +307,7 @@ mod tests {
     fn decode<Env: Envelope>(envelope: &Env, record: &[u8]) -> (HeaderMap, Vec<u8>) {
         let opened = envelope.open(record);
         (
-            envelope.headers(record, &opened),
+            envelope.headers(record, &opened).unwrap_or_default(),
             envelope.payload(record, &opened).to_vec(),
         )
     }
@@ -435,13 +399,28 @@ mod tests {
             br#"{"headers":{},"payload":1,"extra":1}"#,
             br#"{"headers":{},"payload_base64":"not base64!"}"#,
             br#"{"headers":{}}"#,
-            br#"{"headers":{"x":1},"payload":1}"#,
             br#"{"payload":1}"#,
         ] {
             let (read, payload) = decode(&JSON, foreign);
             assert!(read.is_empty(), "{foreign:?}");
             assert_eq!(payload, foreign);
         }
+    }
+
+    #[test]
+    fn a_malformed_header_block_reads_as_no_headers_before_the_payload() {
+        let record = br#"{"headers":{"x":1},"payload":{"id":7}}"#;
+        let (headers, payload) = decode(&JSON, record);
+        assert!(headers.is_empty());
+        assert_eq!(payload, br#"{"id":7}"#);
+    }
+
+    #[cfg(feature = "cbor")]
+    #[test]
+    fn a_cbor_document_carries_header_values_as_text() {
+        let record = sealed(&Framed::new(CborCodec), b"x", Medium::File);
+        // A text string of seven bytes is headed 0x67 in CBOR; a byte string would be 0x47.
+        assert!(record.windows(8).any(|window| window == b"\x67created"));
     }
 
     #[cfg(feature = "cbor")]
@@ -470,5 +449,50 @@ mod tests {
             Some("application/json")
         );
         assert_eq!(<super::super::Rs as Envelope>::CONTENT_TYPE, None);
+    }
+
+    /// A codec of the service implements the trait with an empty body and gets the byte-string
+    /// form.
+    #[cfg(feature = "cbor")]
+    #[test]
+    fn a_codec_of_the_service_frames_the_payload_as_a_byte_string() {
+        use ruststream::BytesMut;
+        use ruststream::codec::CodecError;
+        use serde::Serialize;
+        use serde::de::DeserializeOwned;
+
+        #[derive(Debug, Clone, Copy)]
+        struct Analytics;
+
+        impl Codec for Analytics {
+            const CONTENT_TYPE: &'static str = "application/vnd.acme.analytics+cbor";
+
+            fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+                CborCodec.encode(value)
+            }
+
+            fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+                CborCodec.decode(bytes)
+            }
+        }
+
+        impl FrameCodec for Analytics {}
+
+        let framed = Framed::new(Analytics);
+        let record = sealed(&framed, b"{\"id\":7}", Medium::File);
+        let mut byte_string = vec![0x48];
+        byte_string.extend_from_slice(b"{\"id\":7}");
+        assert!(
+            record
+                .windows(9)
+                .any(|window| window == byte_string.as_slice())
+        );
+        let (headers, payload) = decode(&framed, &record);
+        assert_eq!(headers.get_str("event"), Some("created"));
+        assert_eq!(payload, b"{\"id\":7}");
+        assert_eq!(
+            <Framed<Analytics> as Envelope>::CONTENT_TYPE,
+            Some("application/vnd.acme.analytics+cbor")
+        );
     }
 }

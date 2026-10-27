@@ -1,5 +1,6 @@
 //! [`SeaMessage`]: a delivered message, shared by the file and stdio transports.
 
+use std::any::type_name;
 use std::fmt;
 use std::future::{Future, ready};
 use std::sync::OnceLock;
@@ -207,7 +208,20 @@ impl<Env: Envelope> IncomingMessage for SeaMessage<Env> {
 
     fn headers(&self) -> &HeaderMap {
         self.headers.get_or_init(|| {
-            let mut headers = self.envelope.headers(&self.record, &self.opened);
+            let mut headers = self
+                .envelope
+                .headers(&self.record, &self.opened)
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        target: "ruststream_sea_file",
+                        subscription = self.stream(),
+                        envelope = type_name::<Env>(),
+                        sequence = *self.header.sequence(),
+                        "the header block of a record does not parse; the delivery carries no \
+                         headers of its own",
+                    );
+                    HeaderMap::new()
+                });
             headers.insert(
                 Str::from_static(SEQUENCE_HEADER),
                 self.header.sequence().to_string(),
@@ -260,7 +274,7 @@ mod tests {
             Rs.payload(record, opened)
         }
 
-        fn headers(&self, record: &[u8], opened: &Self::Opened) -> HeaderMap {
+        fn headers(&self, record: &[u8], opened: &Self::Opened) -> Option<HeaderMap> {
             self.0.fetch_add(1, Ordering::Relaxed);
             Rs.headers(record, opened)
         }
@@ -298,5 +312,33 @@ mod tests {
         assert_eq!(message.headers().get_str("x-tenant"), Some("acme"));
         assert_eq!(message.headers().get_str(SEQUENCE_HEADER), Some("7"));
         assert_eq!(envelope.0.load(Ordering::Relaxed), 1);
+    }
+
+    /// A header block that does not parse costs the delivery its envelope headers, never its
+    /// payload or the transport's own header.
+    #[test]
+    fn a_header_block_that_does_not_parse_reads_as_no_headers() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD;
+
+        // An `rs2:` block that announces a name longer than itself, then the payload.
+        let mut decoded = 8u32.to_be_bytes().to_vec();
+        decoded.extend_from_slice(&100u32.to_be_bytes());
+        decoded.extend_from_slice(b"name");
+        decoded.extend_from_slice(b"{\"id\":1}");
+        let mut record = b"rs2:".to_vec();
+        record.extend_from_slice(STANDARD.encode(&decoded).as_bytes());
+        let length = record.len();
+        let header = MessageHeader::new(
+            StreamKey::new("orders").expect("the key is valid"),
+            ShardId::new(0),
+            7,
+            Timestamp::now_utc(),
+        );
+        let message = SeaMessage::open(SharedMessage::new(header, record, 0, length), &Rs);
+
+        assert_eq!(message.payload(), b"{\"id\":1}");
+        assert_eq!(message.headers().iter().count(), 1);
+        assert_eq!(message.headers().get_str(SEQUENCE_HEADER), Some("7"));
     }
 }

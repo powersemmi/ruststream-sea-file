@@ -93,7 +93,7 @@ impl Envelope for PlantTab {
         tab.map_or(record, |tab| &record[tab + 1..])
     }
 
-    fn headers(&self, record: &[u8], tab: &Option<usize>) -> HeaderMap {
+    fn headers(&self, record: &[u8], tab: &Option<usize>) -> Option<HeaderMap> {
         let mut headers = HeaderMap::new();
         if let Some(tab) = *tab {
             headers.insert(
@@ -101,7 +101,7 @@ impl Envelope for PlantTab {
                 String::from_utf8_lossy(&record[..tab]).into_owned(),
             );
         }
-        headers
+        Some(headers)
     }
 }
 

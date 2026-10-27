@@ -440,7 +440,7 @@ impl Envelope for Counting {
         Rs.payload(record, opened)
     }
 
-    fn headers(&self, record: &[u8], opened: &Self::Opened) -> HeaderMap {
+    fn headers(&self, record: &[u8], opened: &Self::Opened) -> Option<HeaderMap> {
         self.0.fetch_add(1, Ordering::Relaxed);
         Rs.headers(record, opened)
     }

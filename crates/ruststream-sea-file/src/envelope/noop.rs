@@ -68,8 +68,8 @@ impl Envelope for NoOp {
         record
     }
 
-    fn headers(&self, _record: &[u8], (): &()) -> HeaderMap {
-        HeaderMap::new()
+    fn headers(&self, _record: &[u8], (): &()) -> Option<HeaderMap> {
+        Some(HeaderMap::new())
     }
 }
 
@@ -89,7 +89,7 @@ mod tests {
             assert_eq!(sealed.as_ref(), raw);
             NoOp.open(raw);
             assert_eq!(NoOp.payload(raw, &()), raw);
-            assert!(NoOp.headers(raw, &()).is_empty());
+            assert_eq!(NoOp.headers(raw, &()), Some(HeaderMap::new()));
         }
     }
 

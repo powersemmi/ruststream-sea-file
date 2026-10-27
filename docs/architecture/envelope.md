@@ -50,5 +50,6 @@ carries any bytes, and it is used for the rest.
 
 A reader finds the payload when the message arrives. It parses the header block, and adds the
 [`stream-sequence`](../components/headers/sequence-header.md) header, the first time something
-reads the headers. Anything that is not a well-formed envelope reads as a payload with no headers. How a service reads and sets headers is on
+reads the headers. A header block that does not parse reads as no headers, and the delivery
+logs it. Anything that is not a well-formed envelope reads as a payload with no headers. How a service reads and sets headers is on
 [Headers](../components/headers/index.md) in the components.
