@@ -125,8 +125,9 @@ item's own documentation keeps the detail.
 
 All are off by default; the crate needs none of them to run a service. `testing` adds the
 in-process mode of both brokers, which `TestApp::start` connects in place of the file and the
-pipe; a service enables it in its `[dev-dependencies]`. `json`, `cbor` and `msgpack` add that mode
-for a broker whose envelope is [`Framed`] over the core's codec of that name. `asyncapi` adds
+pipe; a service enables it in its `[dev-dependencies]`. `json`, `cbor` and `msgpack` make the core's codec
+of that name a [`Framed`] document codec, and with `testing` add the in-process mode of a broker
+framed by it. `asyncapi` adds
 what a [`FileStream`] subscription and a publish contribute to the generated document.
 
 [guides]: https://powersemmi.github.io/ruststream-sea-file/latest/

@@ -32,7 +32,7 @@ mod framed;
 mod noop;
 mod rs;
 
-pub use framed::Framed;
+pub use framed::{DocumentCodec, DocumentForm, Framed};
 pub use noop::NoOp;
 pub use rs::Rs;
 
@@ -185,6 +185,13 @@ pub enum SealError {
         "a line cannot carry the record: it is not UTF-8 text, holds a line break, or begins or ends with whitespace"
     )]
     Line,
+
+    /// The envelope writes header values as text, and this one is not UTF-8.
+    #[error("the envelope writes header values as text, and the header '{name}' is not UTF-8")]
+    NotText {
+        /// The header whose value is not text.
+        name: String,
+    },
 
     /// The envelope's own encoding failed.
     #[error("the envelope failed to encode the message: {0}")]

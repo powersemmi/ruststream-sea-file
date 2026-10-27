@@ -34,10 +34,10 @@ testing = ["ruststream/testing"]
 # What this crate adds to a generated AsyncAPI document. The specification lists no binding for a
 # file transport or for stdio, so what a subscription knows travels in an `x-` extension.
 asyncapi = ["ruststream/asyncapi"]
-# The in-process mode of the brokers framed by the core's codecs: `TestApp::start` connects a
-# `FileBroker` or a `StdioBroker` whose envelope is `Framed` over that codec. Each enables the
-# codec in the core, and does nothing without `testing`.
-json = ["ruststream/json"]
+# `Framed` over the core's codec of that name, and with `testing` the in-process mode of a
+# `FileBroker` or a `StdioBroker` framed by it. Each enables the codec in the core; the JSON form
+# reads and writes its documents with serde_json directly, to embed a payload byte for byte.
+json = ["ruststream/json", "dep:serde_json"]
 cbor = ["ruststream/cbor"]
 msgpack = ["ruststream/msgpack"]
 
@@ -49,6 +49,7 @@ sea-streamer-stdio.workspace = true
 base64.workspace = true
 bytes.workspace = true
 serde.workspace = true
+serde_json = { workspace = true, optional = true, features = ["raw_value"] }
 futures.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

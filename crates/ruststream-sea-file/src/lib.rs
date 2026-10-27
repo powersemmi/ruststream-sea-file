@@ -21,5 +21,5 @@ pub use error::SeaFileError;
 pub use file::{ConnectedFileBroker, FileBroker, FilePublish, FilePublisher};
 pub use message::{FilePosition, SEQUENCE_HEADER, SeaMessage};
 pub use stdio::{ConnectedStdioBroker, StdioBroker, StdioPublish, StdioPublisher, StdioSubscriber};
-pub use stream::{FileEnvelopeExt, FileStream};
+pub use stream::{FileEnvelopeExt, FileStream, Reenvelope};
 pub use subscriber::{FileMessage, FileSeeker, FileSubscriber};

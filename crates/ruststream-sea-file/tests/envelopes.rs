@@ -152,10 +152,10 @@ fn framed_json_records_on_a_real_stream_file_are_json_documents() {
         let bytes = fs::read(&path).expect("the stream file is readable");
         let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|window| window == needle);
         assert!(holds(
-            br#"{"headers":{"tenant":"acme"},"payload":"{\"id\":7}"}"#
+            br#"{"headers":{"tenant":"acme"},"payload":{"id":7}}"#
         ));
         assert!(holds(
-            br#"{"headers":{"tenant":"acme"},"payload":"{\"order\":7}"}"#
+            br#"{"headers":{"tenant":"acme"},"payload":{"order":7}}"#
         ));
         let _ = fs::remove_file(&path);
     });
@@ -511,4 +511,85 @@ async fn headers_are_parsed_only_where_a_handler_reads_them() -> Result<(), Box<
     assert_eq!(parsed.load(Ordering::Relaxed), 1);
     tb.shutdown().await?;
     Ok(())
+}
+
+/// A record as it arrived, bytes no codec touched.
+#[derive(Deserialized)]
+struct Record<'a>(&'a [u8]);
+
+/// Whether a subscription saw the default envelope's marker in the record it was handed.
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+#[outgoing(name = "verdicts")]
+struct Verdict {
+    enveloped: bool,
+}
+
+/// Reports whether the record it was handed still wears the default envelope.
+#[subscriber(FileStream::new("raw"), reply)]
+async fn inspect(record: &Record<'_>) -> Verdict {
+    Verdict {
+        enveloped: record.0.starts_with(b"rs1:"),
+    }
+}
+
+/// The same, opening at the beginning of the key from the attribute.
+#[subscriber(FileStream::new("raw"), start_at(FilePosition::beginning()), reply)]
+async fn inspect_from_start(record: &Record<'_>) -> Verdict {
+    Verdict {
+        enveloped: record.0.starts_with(b"rs1:"),
+    }
+}
+
+/// A subscription that opens at a position reads in the envelope its mount site names, whichever
+/// order the two are written in.
+async fn reads_bare_records(app: impl App<State = ()>) -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app).await?;
+
+    tb.broker::<FileBroker>()
+        .message(&Sample { millivolts: 5 })
+        .to("raw")
+        .with_headers(&acme())
+        .publish()
+        .await?;
+
+    tb.broker::<FileBroker>()
+        .published::<Verdict>("verdicts")
+        .assert_called_once()
+        .with(&Verdict { enveloped: true });
+    tb.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_envelope_composes_with_a_start_position_from_the_attribute()
+-> Result<(), Box<dyn Error>> {
+    reads_bare_records(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(
+        FileBroker::new(FILE),
+        |b| {
+            b.include(inspect_from_start.envelope(NoOp));
+        },
+    ))
+    .await
+}
+
+#[tokio::test]
+async fn the_envelope_then_a_start_position_at_the_mount_site() -> Result<(), Box<dyn Error>> {
+    reads_bare_records(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(
+        FileBroker::new(FILE),
+        |b| {
+            b.include(inspect.envelope(NoOp).start_at(FilePosition::beginning()));
+        },
+    ))
+    .await
+}
+
+#[tokio::test]
+async fn a_start_position_then_the_envelope_at_the_mount_site() -> Result<(), Box<dyn Error>> {
+    reads_bare_records(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(
+        FileBroker::new(FILE),
+        |b| {
+            b.include(inspect.start_at(FilePosition::beginning()).envelope(NoOp));
+        },
+    ))
+    .await
 }

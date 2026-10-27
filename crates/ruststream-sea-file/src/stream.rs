@@ -5,7 +5,9 @@ use std::future::{Future, ready};
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi::{Binding, Bindings};
 use ruststream::runtime::{Declared, IntoSource, SubscriberBuilder, SubscriberSettings as _};
-use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource};
+use ruststream::{
+    AddressedCopies, RedeliveryAddress, RedeliveryAddressed, StartAt, SubscriptionSource,
+};
 #[cfg(feature = "asyncapi")]
 use serde::Serialize;
 
@@ -80,9 +82,8 @@ impl FileStream {
 /// The `#[subscriber(..)]` attribute takes the descriptor's type from its constructor, so a
 /// descriptor whose envelope changes its type is named here instead, after the handler, the way
 /// the framework's own steps are. The manual path names it on the descriptor itself,
-/// [`FileStream::envelope`]. The step reads a [`FileStream`] descriptor, so it comes before a
-/// `start_at(..)` clause would wrap it: a subscription that also opens at a position is mounted
-/// on the manual path.
+/// [`FileStream::envelope`]. It composes with a start position in either order: the
+/// attribute's `start_at(..)` clause, or the mount-site `.start_at(..)` before or after it.
 ///
 /// # Examples
 ///
@@ -122,14 +123,48 @@ pub trait FileEnvelopeExt: Sized {
     fn envelope<Named: Envelope>(self, envelope: Named) -> Self::Enveloped<Named>;
 }
 
-impl<Decl, Def, State, DefCodec, Choice> FileEnvelopeExt for Decl
+impl<Decl, Def, Src, State, DefCodec> FileEnvelopeExt for Decl
 where
-    Decl: Declared<Settings = SubscriberBuilder<Def, FileStream<Choice>, State, DefCodec>>,
+    Decl: Declared<Settings = SubscriberBuilder<Def, Src, State, DefCodec>>,
+    Src: Reenvelope,
 {
-    type Enveloped<Named: Envelope> = SubscriberBuilder<Def, FileStream<Named>, State, DefCodec>;
+    type Enveloped<Named: Envelope> =
+        SubscriberBuilder<Def, Src::Reenveloped<Named>, State, DefCodec>;
 
     fn envelope<Named: Envelope>(self, envelope: Named) -> Self::Enveloped<Named> {
-        self.map_source(|source| source.envelope(envelope))
+        self.map_source(|source| source.reenvelope(envelope))
+    }
+}
+
+/// A source the mount-site envelope step reaches: a [`FileStream`], bare or opened at a position.
+///
+/// One trait over both shapes, rather than an impl per shape, because two blanket impls over the
+/// handler that differ only in the source of its settings overlap for the compiler.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a file subscription whose envelope a mount site can name",
+    note = "the step reads a `FileStream` descriptor, alone or with a `start_at(..)` position"
+)]
+pub trait Reenvelope {
+    /// The same source, reading in `Named`.
+    type Reenveloped<Named: Envelope>;
+
+    /// The same source, reading in `envelope`.
+    fn reenvelope<Named: Envelope>(self, envelope: Named) -> Self::Reenveloped<Named>;
+}
+
+impl<Choice> Reenvelope for FileStream<Choice> {
+    type Reenveloped<Named: Envelope> = FileStream<Named>;
+
+    fn reenvelope<Named: Envelope>(self, envelope: Named) -> FileStream<Named> {
+        self.envelope(envelope)
+    }
+}
+
+impl<Source: Reenvelope, Position> Reenvelope for StartAt<Source, Position> {
+    type Reenveloped<Named: Envelope> = StartAt<Source::Reenveloped<Named>, Position>;
+
+    fn reenvelope<Named: Envelope>(self, envelope: Named) -> Self::Reenveloped<Named> {
+        self.map_inner(|source| source.reenvelope(envelope))
     }
 }
 
