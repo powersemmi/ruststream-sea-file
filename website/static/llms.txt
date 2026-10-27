@@ -51,6 +51,7 @@ This site holds the guides, one page per component and the architecture of the c
 - [Dead letters](https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/dead-letters/): `dead_letter`, the stream key a spent delivery goes to
 - [Headers](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/): the envelope headers travel in, inside the payload
 - [Payloads](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/payloads/): binary, multi-line and padded payloads on a pipe
+- [Envelopes](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/envelopes/): the format a record carries its headers in, `Rs`, `Framed`, `NoOp` or a service's own
 - [SEQUENCE_HEADER](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/sequence-header/): the sequence number every delivery carries
 - [AsyncAPI](https://powersemmi.github.io/ruststream-sea-file/latest/components/asyncapi/): what the two brokers contribute to the AsyncAPI document behind the `asyncapi` feature
 - [Server](https://powersemmi.github.io/ruststream-sea-file/latest/components/asyncapi/server/): the path of the stream file, or the stdio protocol name

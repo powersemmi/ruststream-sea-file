@@ -6,6 +6,7 @@
 
 use std::borrow::Cow;
 use std::error::Error;
+use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -15,6 +16,8 @@ use ruststream::testing::TestApp;
 use ruststream_sea_file::envelope::{Envelope, Medium, SealError};
 use ruststream_sea_file::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::common;
 
 /// The header contract an order and its receipt carry.
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -117,6 +120,45 @@ async fn framed_json_carries_the_headers_through_a_stream_file() -> Result<(), B
         .with_header("tenant", "acme");
     tb.shutdown().await?;
     Ok(())
+}
+
+/// On a real stream file each record is the JSON document the page shows, and the subscription
+/// reads the order and its header back out of it.
+#[test]
+fn framed_json_records_on_a_real_stream_file_are_json_documents() {
+    common::on_a_file(async {
+        let path = common::tmp_path("envelopes");
+        let broker = FileBroker::new(&path).envelope(Framed::new(JsonCodec));
+        let app = RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(broker, |b| {
+            b.include(confirm).out(Receipts, FilePublish).build();
+        });
+        let tb = TestApp::start_live(app)
+            .await
+            .expect("start against the file");
+
+        tb.broker::<FileBroker<Framed<JsonCodec>>>()
+            .message(&Order { id: 7 })
+            .with_headers(&acme())
+            .publish()
+            .await
+            .expect("publish");
+        tb.broker::<FileBroker<Framed<JsonCodec>>>()
+            .published::<Receipt>("receipts")
+            .assert_called_once()
+            .with(&Receipt { order: 7 })
+            .with_header("tenant", "acme");
+        tb.shutdown().await.expect("shutdown");
+
+        let bytes = fs::read(&path).expect("the stream file is readable");
+        let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|window| window == needle);
+        assert!(holds(
+            br#"{"headers":{"tenant":"acme"},"payload":"{\"id\":7}"}"#
+        ));
+        assert!(holds(
+            br#"{"headers":{"tenant":"acme"},"payload":"{\"order\":7}"}"#
+        ));
+        let _ = fs::remove_file(&path);
+    });
 }
 
 #[tokio::test]

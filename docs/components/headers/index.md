@@ -19,7 +19,8 @@ It is used when a value is not UTF-8, holds a line break, or begins or ends with
 The envelope is text, so it fits on a line of a pipe.
 A message with no headers is written as it is, so a file recorded that way stays readable by any `sea-streamer` consumer, and a file another tool wrote is readable here.
 A payload that itself begins with `rs1:` or `rs2:` is enveloped, so no reader takes it for an envelope.
-The reader opens the envelope before the handler runs, so a handler reads headers with [`Headers<T>`](api:ruststream::runtime::Headers) or `ctx.headers()` as on any broker.
+This is the default envelope; a broker, a subscription or a publish policy can choose another on [Envelopes](./envelopes.md).
+A handler reads headers with [`Headers<T>`](api:ruststream::runtime::Headers) or `ctx.headers()` as on any broker, and the delivery parses them the first time they are read.
 Every delivery also carries its position in [`SEQUENCE_HEADER`](./sequence-header.md).
 
 ## Example

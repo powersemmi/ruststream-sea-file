@@ -38,24 +38,27 @@ the channel, the handler, the reply and the write.
 
 <Diagram name="path" words={words} />
 
-On a file, the subscription's task reads ahead of the handler. It takes each message off the client, opens
-the [envelope](envelope.md) and copies the payload into a buffer of its own. It adds the message's
-number in the [`stream-sequence`](../components/headers/sequence-header.md) header, then queues the delivery on a channel of up to 64. The
-handler reads from that channel, so the next message is out of the file while the current one is
-handled.
+On a file, the subscription's task reads ahead of the handler. It takes each message off the client,
+keeps the bytes it read, and lets the [envelope](envelope.md) find the payload in them. Then it
+queues the delivery on a channel of up to 64. The handler reads from that channel, so the next
+message is out of the file while the current one is handled.
 
 On a pipe, the process's reader thread reads ahead instead. It queues each line for the
-subscriptions of its key, with no bound, and the subscription opens the envelope and adds the
-header when the handler asks for the next message.
+subscriptions of its key, with no bound, and the subscription lets the envelope find the payload
+when the handler asks for the next message.
+
+On both transports the headers are parsed the first time something reads them, together with the
+message's number in the [`stream-sequence`](../components/headers/sequence-header.md) header. A
+handler that reads only the payload never parses them.
 
 On a file, every delivery carries the generation the reader was in when it read it. A
 [seek](seeking.md) opens a new generation, and the subscription drops what was queued under the old
 one. A delivery also holds a shared reference to the subscription's seeker, so building its
 context per message only counts references.
 
-The handler's reply is encoded into a buffer the dispatch loop reuses. The publisher copies those
-bytes into the message it hands the client, and wraps them in the envelope only when the message
-has headers, or on a pipe when a line would change the payload. A file publish returns once the append is flushed to the
+The handler's reply is encoded into a buffer the dispatch loop reuses. The publisher hands those
+bytes to the client as they are when the envelope leaves them alone. The default envelope wraps them
+only when the message has headers, or on a pipe when a line would change the payload. A file publish returns once the append is flushed to the
 file. A reply written to the file the subscription reads is passed over by its reader, because it
 sits under another stream key.
 
