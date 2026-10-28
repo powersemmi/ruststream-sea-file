@@ -4,14 +4,9 @@
 
 use std::collections::HashMap;
 
-use ruststream::RawMessage;
 use ruststream::testing::Coordinator;
-use sea_streamer_types::{
-    Buffer as _, Message as _, MessageHeader, SeqNo, ShardId, SharedMessage, StreamKey, Timestamp,
-};
+use sea_streamer_types::{MessageHeader, SeqNo, ShardId, SharedMessage, StreamKey, Timestamp};
 use tokio::sync::mpsc;
-
-use crate::wire;
 
 /// The shard every message is written to: both transports have one per stream key.
 const SHARD: ShardId = ShardId::new(0);
@@ -124,13 +119,6 @@ pub(crate) fn stamp(key: StreamKey, sequence: SeqNo, bytes: Vec<u8>) -> SharedMe
         0,
         length,
     )
-}
-
-/// What a test reads back from the log: the message with its envelope opened, the way a
-/// subscription would have received it.
-pub(crate) fn raw(message: &SharedMessage) -> RawMessage {
-    let (headers, payload) = wire::decode(message.message().as_bytes());
-    RawMessage::new(message.header().stream_key().name(), payload).with_headers(headers)
 }
 
 /// Releases one delivery that was counted in flight and will not be delivered.

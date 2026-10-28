@@ -25,6 +25,10 @@ export const words = {
 Headers travel inside the payload: a message that needs them is written as `rs1:` or `rs2:` and
 base64, and one that does not is written as it is.
 
+This page describes the default envelope, [`Rs`](api:ruststream_sea_file::envelope::Rs). A
+service can choose another on [Envelopes](../components/headers/envelopes.md): one codec document
+per message, the payload alone, or a format of its own.
+
 <Diagram name="envelope" words={words} />
 
 Neither client has room for headers: a message is a stream key and a payload. So the publisher
@@ -44,6 +48,8 @@ the header block comes first, then the block, then the payload. `rs1:` writes ea
 back unchanged from such a line. `rs2:` writes each name and value with its own length, so it
 carries any bytes, and it is used for the rest.
 
-A reader opens either envelope and adds the [`stream-sequence`](../components/headers/sequence-header.md) header. Anything that is not a
-well-formed envelope reads as a payload with no headers. How a service reads and sets headers is on
+A reader finds the payload when the message arrives. It parses the header block, and adds the
+[`stream-sequence`](../components/headers/sequence-header.md) header, the first time something
+reads the headers. A header block that does not parse reads as no headers, and the delivery
+logs it. Anything that is not a well-formed envelope reads as a payload with no headers. How a service reads and sets headers is on
 [Headers](../components/headers/index.md) in the components.

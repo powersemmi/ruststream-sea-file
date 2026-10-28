@@ -6,10 +6,11 @@ use std::task::{Context, Poll};
 
 use ruststream::RawMessage;
 use ruststream::testing::Coordinator;
-use sea_streamer_types::{SeqNo, SharedMessage, StreamKey};
+use sea_streamer_types::{SeqNo, StreamKey};
 
+use crate::envelope::Envelope;
 use crate::in_process::queue::{
-    Entry, EntryReceiver, Registry, Release, SubscriptionId, raw, release_queued, stamp,
+    Entry, EntryReceiver, Registry, Release, SubscriptionId, release_queued, stamp,
 };
 use crate::message::SeaMessage;
 
@@ -25,8 +26,9 @@ pub(crate) struct MemoryPipe {
 #[derive(Default)]
 struct PipeInner {
     registry: Registry,
-    /// Every line that crossed the pipe in either direction, per stream key, in order.
-    lines: HashMap<String, Vec<SharedMessage>>,
+    /// Every message that crossed the pipe in either direction, per stream key, in order, as it
+    /// was sent.
+    lines: HashMap<String, Vec<RawMessage>>,
     /// The sequence the next line on each key carries. The two directions count apart: a line on
     /// standard input carries the number its producer gave it, and a line on standard output the
     /// number this process's producer gives it, each from zero, as the client counts.
@@ -75,7 +77,8 @@ impl MemoryPipe {
     }
 
     /// A line arriving on standard input: every subscription on its key reads it.
-    pub(crate) fn feed(&self, key: StreamKey, bytes: Vec<u8>) {
+    /// `sent` is the message as it was sent, which the harness reads back.
+    pub(crate) fn feed(&self, key: StreamKey, bytes: Vec<u8>, sent: RawMessage) {
         let mut guard = self.lock();
         let inner = &mut *guard;
         let sequence = next_sequence(&mut inner.input, key.name());
@@ -87,13 +90,14 @@ impl MemoryPipe {
             .lines
             .entry(line.header().stream_key().name().to_owned())
             .or_default()
-            .push(line);
+            .push(sent);
         drop(guard);
     }
 
     /// A line the service writes to standard output. It reaches the process downstream, which
     /// is not this one, so its own subscriptions read it only under loopback.
-    pub(crate) fn write(&self, key: StreamKey, bytes: Vec<u8>) {
+    /// `sent` is the message as it was sent, which the harness reads back.
+    pub(crate) fn write(&self, key: StreamKey, bytes: Vec<u8>, sent: RawMessage) {
         let mut guard = self.lock();
         let inner = &mut *guard;
         let sequence = next_sequence(&mut inner.output, key.name());
@@ -107,17 +111,14 @@ impl MemoryPipe {
             .lines
             .entry(line.header().stream_key().name().to_owned())
             .or_default()
-            .push(line);
+            .push(sent);
         drop(guard);
     }
 
-    /// Every line that crossed the pipe under `name`, in order, with its envelope opened.
+    /// Every message that crossed the pipe under `name`, in order, as it was sent: the envelope
+    /// that sealed it is the one that opens it.
     pub(crate) fn published(&self, name: &str) -> Vec<RawMessage> {
-        self.lock()
-            .lines
-            .get(name)
-            .map(|lines| lines.iter().map(raw).collect())
-            .unwrap_or_default()
+        self.lock().lines.get(name).cloned().unwrap_or_default()
     }
 
     /// Opens a subscription on `key`. Standard input keeps nothing, so it reads what arrives from
@@ -151,10 +152,14 @@ pub(crate) struct PipeQueue {
 
 impl PipeQueue {
     /// The next line, or `None` once the subscription has ended.
-    pub(crate) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<SeaMessage>> {
+    pub(crate) fn poll_next<Env: Envelope>(
+        &mut self,
+        cx: &mut Context<'_>,
+        envelope: &Env,
+    ) -> Poll<Option<SeaMessage<Env>>> {
         match self.rx.poll_recv(cx) {
             Poll::Ready(Some(Entry::Message(line))) => Poll::Ready(Some(
-                SeaMessage::new(&line).released_by(Release::of(self.pipe.coordinator())),
+                SeaMessage::open(line, envelope).released_by(Release::of(self.pipe.coordinator())),
             )),
             Poll::Ready(Some(Entry::End) | None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,

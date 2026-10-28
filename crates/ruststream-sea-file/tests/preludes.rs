@@ -48,10 +48,20 @@ mod crate_wide {
 
 #[test]
 fn each_transport_prelude_names_its_own_policy_by_concept() {
-    assert_eq!(format!("{:?}", file_form::policy()), "FilePublish");
-    assert_eq!(format!("{:?}", stdio_form::policy()), "StdioPublish");
+    // The value a mount site names writes in the broker's envelope.
+    assert_eq!(
+        format!("{:?}", file_form::policy()),
+        "FilePublish { envelope: FromBroker }"
+    );
+    assert_eq!(
+        format!("{:?}", stdio_form::policy()),
+        "StdioPublish { envelope: FromBroker }"
+    );
 
     let (file, stdio) = crate_wide::policies();
-    assert_eq!(format!("{file:?}"), "FilePublish");
-    assert_eq!(format!("{stdio:?}"), "StdioPublish");
+    assert_eq!(format!("{file:?}"), "FilePublish { envelope: FromBroker }");
+    assert_eq!(
+        format!("{stdio:?}"),
+        "StdioPublish { envelope: FromBroker }"
+    );
 }

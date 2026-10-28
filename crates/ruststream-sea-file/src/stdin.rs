@@ -25,6 +25,7 @@ use sea_streamer_types::{
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::envelope::Envelope;
 use crate::message::SeaMessage;
 
 /// The key of a line whose header names none, as the client spells it. Such a line reaches every
@@ -124,10 +125,14 @@ pub(crate) struct InputQueue {
 
 impl InputQueue {
     /// The next line, or `None` once the subscription has ended.
-    pub(crate) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<SeaMessage>> {
+    pub(crate) fn poll_next<Env: Envelope>(
+        &mut self,
+        cx: &mut Context<'_>,
+        envelope: &Env,
+    ) -> Poll<Option<SeaMessage<Env>>> {
         self.rx
             .poll_recv(cx)
-            .map(|line| line.map(|line| SeaMessage::new(&line)))
+            .map(|line| line.map(|line| SeaMessage::open(line, envelope)))
     }
 }
 

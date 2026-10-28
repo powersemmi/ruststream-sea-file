@@ -24,6 +24,8 @@ export const words = {
 
 消息头放在载荷里传递：需要消息头的消息写成 `rs1:` 或 `rs2:` 加 base64，不需要的消息原样写入。
 
+本页介绍默认信封 [`Rs`](api:ruststream_sea_file::envelope::Rs)。服务可以在 [Envelopes](../components/headers/envelopes.md) 页面上选择别的信封：每条消息一个编解码器文档、不加信封的载荷，或者自己的格式。
+
 <Diagram name="envelope" words={words} />
 
 两个客户端都没有消息头的位置：一条消息就是一个流键和一份载荷。所以，发布者把消息头写进载荷，放在信封里，订阅再把信封打开。
@@ -34,4 +36,4 @@ export const words = {
 
 两种信封都是一个前缀加 base64，所以都能放进一行。信封内部先是消息头块的大端序长度，然后是这个块，最后是载荷。`rs1:` 把每个消息头写成一行 `name: value`，本 crate 的早期版本读取这种形式。每个消息头都能从这样的行中原样读回时，使用 `rs1:`。`rs2:` 为每个名称和值各写上自己的长度，因此能承载任意字节，其余情况都使用它。
 
-读取者能打开任一种信封，并加上 [`stream-sequence`](../components/headers/sequence-header.md) 消息头。不是格式正确的信封的内容，都读作不带消息头的载荷。服务如何读取和设置消息头，见组件中的[消息头](../components/headers/index.md)。
+消息到达时，读取者先找出载荷。消息头块要等第一次读取消息头时才解析，[`stream-sequence`](../components/headers/sequence-header.md) 消息头也在这时加上。消息头块无法解析时，这次投递不带消息头，并记录日志。不是格式正确的信封的内容，都读作不带消息头的载荷。服务如何读取和设置消息头，见组件中的[消息头](../components/headers/index.md)。

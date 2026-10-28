@@ -57,8 +57,8 @@ pub use ruststream::prelude::*;
 pub use ruststream::{Positioned, Seeker};
 
 pub use crate::{
-    FileBatchContext, FileBroker, FileContext, FilePosition, FilePublish, FileSeeker, FileStream,
-    Position, SeekHandle, StdioBroker, StdioPublish,
+    FileBatchContext, FileBroker, FileContext, FileEnvelopeExt, FilePosition, FilePublish,
+    FileSeeker, FileStream, Framed, NoOp, Position, Rs, SeekHandle, StdioBroker, StdioPublish,
 };
 pub use crate::{file, stdio};
 

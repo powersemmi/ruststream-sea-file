@@ -12,10 +12,11 @@ use sea_streamer_types::{SharedMessage, StreamKey, Timestamp};
 
 use sea_streamer_file::FileErr;
 
+use crate::envelope::Envelope;
 use crate::error::SeaFileError;
 use crate::in_process::budget::{Budget, Fit};
 use crate::in_process::queue::{
-    Entry, EntryReceiver, EntrySender, Registry, Release, SubscriptionId, raw, release_one,
+    Entry, EntryReceiver, EntrySender, Registry, Release, SubscriptionId, release_one,
     release_queued, stamp,
 };
 use crate::message::{FilePosition, SeaMessage};
@@ -35,6 +36,8 @@ struct FileInner {
     /// Every message the file holds, per stream key, in the order it was written. A message's
     /// sequence is its place in its key's list, counted from one, the way the file counts it.
     streams: HashMap<String, Vec<SharedMessage>>,
+    /// The same messages as they were sent, before an envelope sealed them.
+    sent: HashMap<String, Vec<RawMessage>>,
     /// Set once the broker's shutdown wrote the end-of-stream mark.
     marked: bool,
     /// Set by the broker's shutdown; every seek is refused from then on.
@@ -87,7 +90,14 @@ impl MemoryFile {
     /// Returns `FileLimitExceeded` when the message reaches the size limit, whether the file
     /// kept it (it filled the limit exactly) or not (it did not fit), and for every message
     /// after that.
-    pub(crate) fn append(&self, key: StreamKey, bytes: Vec<u8>) -> Result<(), FileErr> {
+    ///
+    /// `sent` is the message as it was sent, which the harness reads back.
+    pub(crate) fn append(
+        &self,
+        key: StreamKey,
+        bytes: Vec<u8>,
+        sent: RawMessage,
+    ) -> Result<(), FileErr> {
         let mut inner = self.lock();
         let fit = inner
             .budget
@@ -96,6 +106,11 @@ impl MemoryFile {
         if fit == Fit::Refused {
             return Err(FileErr::FileLimitExceeded);
         }
+        inner
+            .sent
+            .entry(key.name().to_owned())
+            .or_default()
+            .push(sent);
         let entries = inner.streams.entry(key.name().to_owned()).or_default();
         let message = stamp(key, entries.len() as u64 + 1, bytes);
         entries.push(message.clone());
@@ -111,13 +126,10 @@ impl MemoryFile {
         }
     }
 
-    /// Every message written under `name`, in order, with its envelope opened.
+    /// Every message written under `name`, in order, as it was sent: the envelope that sealed it
+    /// is the one that opens it.
     pub(crate) fn published(&self, name: &str) -> Vec<RawMessage> {
-        self.lock()
-            .streams
-            .get(name)
-            .map(|entries| entries.iter().map(raw).collect())
-            .unwrap_or_default()
+        self.lock().sent.get(name).cloned().unwrap_or_default()
     }
 
     /// Opens a subscription on `key`: at the tip of the log, or, for a replay, over everything
@@ -369,7 +381,11 @@ impl FileQueue {
 
     /// The next delivery, or `None` once the subscription has ended: at the end-of-stream mark, at
     /// the end of the file for a replay, or after a refused seek.
-    pub(crate) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<SeaMessage>> {
+    pub(crate) fn poll_next<Env: Envelope>(
+        &mut self,
+        cx: &mut Context<'_>,
+        envelope: &Env,
+    ) -> Poll<Option<SeaMessage<Env>>> {
         // Register first, then apply a pending seek, so a seek requested while the stream was
         // parked is not missed.
         self.seek.waker.register(cx.waker());
@@ -401,7 +417,8 @@ impl FileQueue {
                 }
                 Entry::Message(message) => {
                     return Poll::Ready(Some(
-                        SeaMessage::new(&message).released_by(Release::of(self.file.coordinator())),
+                        SeaMessage::open(message, envelope)
+                            .released_by(Release::of(self.file.coordinator())),
                     ));
                 }
             }
