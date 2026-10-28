@@ -1,0 +1,91 @@
+# ruststream-sea-file
+
+> `ruststream-sea-file` is the file and stdio transport for RustStream, a Rust framework for services that subscribe to message brokers and publish to them. Over `sea-streamer-file` and `sea-streamer-stdio`, a broker is a log kept in one `.ss` stream file on disk, or the process's own standard input and output, with no server anywhere.
+
+`FileBroker` is a log that survives restarts, replays what it recorded and repositions on demand. `StdioBroker` makes a service a stage of a shell pipeline. A subscription is a stream key: `FileStream::new("orders")` on a stream file, the bare name on standard input. A service globs the prelude of the form it runs on (`ruststream_sea_file::file::prelude::*` or `ruststream_sea_file::stdio::prelude::*`), which offers that form's publish policy as `Publish`; a service on both globs `ruststream_sea_file::prelude::*` and writes `FilePublish` and `StdioPublish`. `ack` and `nack` report `AckError::Unsupported`, so a service resumes from a position it stored itself, with `start_at(..)`.
+
+This site holds the guides, one page per component and the architecture of the crate; the API reference is on docs.rs, and the framework itself is documented on the RustStream site.
+
+## Guides
+
+- [Guides](https://powersemmi.github.io/ruststream-sea-file/latest/): building a service on a stream file or a shell pipeline with the crate, from a first subscriber to production
+- [Getting started](https://powersemmi.github.io/ruststream-sea-file/latest/guides/getting-started/): installation, a first service on a stream file, what the file holds, its test, and the same handler in a pipeline
+- [An event log on disk](https://powersemmi.github.io/ruststream-sea-file/latest/guides/event-log/): events recorded in a stream file, followed live from another subscription, and a finished file totalled in one pass
+- [Resuming and seeking](https://powersemmi.github.io/ruststream-sea-file/latest/guides/resume-and-seek/): a service that resumes at a stored sequence, a start at a moment in time, and a running subscription moved from its handler
+- [Shell pipelines](https://powersemmi.github.io/ruststream-sea-file/latest/guides/pipelines/): a service as one stage of a shell pipeline: the line format, feeding a stage, reading its output, exiting when the input ends and chaining stages
+- [Retries and dead letters](https://powersemmi.github.io/ruststream-sea-file/latest/guides/retries/): a retry later on a stream file or a pipe, the attempt cap and the dead-letter stream key
+- [Testing a file or pipeline service](https://powersemmi.github.io/ruststream-sea-file/latest/guides/testing/): `TestApp` on the production app with replies and delays, and the same test on a real stream file
+- [Running in production](https://powersemmi.github.io/ruststream-sea-file/latest/guides/production/): the file's path and settings, what a publish writes, the size cap, shutdown and logs
+
+## Components
+
+- [Components](https://powersemmi.github.io/ruststream-sea-file/latest/components/): the parts of the crate a service uses, one page each
+- [Broker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/): the two brokers, `FileBroker` on a stream file and `StdioBroker` on a pipeline, and their lazy connection
+- [FileBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/file-broker/): the path of a stream file, opened at startup and created when missing; the flush on publish and a file with no size limit
+- [StdioBroker](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/stdio-broker/): standard input and output as one stream, so a service is one stage of a shell pipeline
+- [existing_only](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/existing-only/): a stream file that must already exist, for a service that reads what another process writes
+- [end_with_eos](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/end-with-eos/): the end-of-stream mark at shutdown, where a live subscription ends and a replay completes
+- [beacon_interval](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/beacon-interval/): how far apart the file's beacons sit: finer seeks against a larger file
+- [size_limit](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/size-limit/): an opt-in cap on the stream file's size, and what the client does at the cap
+- [loopback](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/loopback/): a stage's own output sent back to its input, so a stdio service runs in one process
+- [Shutdown](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/shutdown/): the file synced and closed, `NotConnected` for a publisher used afterwards, and the process-wide stdio shutdown
+- [Prelude](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/prelude/): `file::prelude`, `stdio::prelude`, and the crate prelude for a service on both
+- [Errors](https://powersemmi.github.io/ruststream-sea-file/latest/components/broker/errors/): `SeaFileError`, the one error type of the crate
+- [Subscriptions](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/): a stream key in `#[subscriber]`, the subscription on both brokers
+- [FileStream](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/file-stream/): one stream key of the file, the descriptor the generated document describes
+- [replay](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/replay/): the retained file read once, completing at its end or at the end-of-stream mark
+- [Lines](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/lines/): a stdio subscription on the lines of its stream key
+- [Batches](https://powersemmi.github.io/ruststream-sea-file/latest/components/subscriptions/batches/): slice handlers over batches assembled on the client
+- [FilePosition](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/): a place in a stream key's log: the beginning, the tip, a sequence or an instant
+- [start_at](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/start-at/): a subscription opened at a position on every startup, and the stored sequence a service resumes at
+- [Position](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/position/): `Ctx<Position>`, the delivery's place in the file
+- [Seek](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/seek/): `Ctx<SeekHandle>`, a running subscription moved from its handler
+- [FileBatchContext](https://powersemmi.github.io/ruststream-sea-file/latest/components/positions/batch-context/): a batch handler's context and its seek handle
+- [Publish](https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/): each form's one publish policy and its default, with no per-message setting
+- [FilePublish](https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/file-publish/): an append under the destination's stream key, flushed before the call returns
+- [StdioPublish](https://powersemmi.github.io/ruststream-sea-file/latest/components/publishing/stdio-publish/): one line on standard output under its stream key
+- [Acknowledgement](https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/): what `ack` and `nack` report on a transport that records no positions
+- [Retries](https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/retries/): `max_attempts`, counted in the framework's retry-count header
+- [retry_after](https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/retry-after/): a deferred copy appended under the key the subscription reads
+- [out_retry](https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/out-retry/): the destination a stdio registration names for its deferred copies
+- [Dead letters](https://powersemmi.github.io/ruststream-sea-file/latest/components/settlement/dead-letters/): `dead_letter`, the stream key a spent delivery goes to
+- [Headers](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/): the envelope headers travel in, inside the payload
+- [Payloads](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/payloads/): binary, multi-line and padded payloads on a pipe
+- [Envelopes](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/envelopes/): the format a record carries its headers in, `Rs`, `Framed`, `NoOp` or a service's own
+- [SEQUENCE_HEADER](https://powersemmi.github.io/ruststream-sea-file/latest/components/headers/sequence-header/): the sequence number every delivery carries
+- [AsyncAPI](https://powersemmi.github.io/ruststream-sea-file/latest/components/asyncapi/): what the two brokers contribute to the AsyncAPI document behind the `asyncapi` feature
+- [Server](https://powersemmi.github.io/ruststream-sea-file/latest/components/asyncapi/server/): the path of the stream file, or the stdio protocol name
+- [Channels](https://powersemmi.github.io/ruststream-sea-file/latest/components/asyncapi/channels/): the stream key behind each channel
+- [Testing](https://powersemmi.github.io/ruststream-sea-file/latest/components/testing/): `TestApp::start` with `FileBroker` and `StdioBroker` in process behind the `testing` feature
+- [Live](https://powersemmi.github.io/ruststream-sea-file/latest/components/testing/live/): `TestApp::start_live`, the same test body against a real stream file
+
+## Architecture
+
+- [Architecture](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/): how a stream file and a pipe carry messages, where the crate sits between them and the RustStream runtime, and what that costs
+- [Stream file](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/transports/): the `.ss` format: a header, framed messages, beacons and the end-of-stream mark
+- [Reader](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/transports/reader/): how the file client follows a stream file and seeks by its beacons
+- [Writer](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/transports/writer/): one writer task per file, the flush on every publish and the sync at shutdown
+- [Pipe](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/transports/pipe/): the stdio client's threads, one line per message, for the whole process
+- [Design](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/design/): where the crate sits between the runtime and the two clients
+- [Lifecycle](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/lifecycle/): `new`, `connect` and `shutdown` on a stream file and on a pipe
+- [Path](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/path/): one message from the reader through the handler and the reply to the write
+- [Seeking](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/seeking/): a seek from a handler: the driver task, the client's seek and the deliveries it discards
+- [Settlement](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/settlement/): what `ack`, drop, retry and `retry_after` become on a transport that acknowledges nothing
+- [Envelope](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/envelope/): the `rs1:` and `rs2:` envelopes headers travel in
+- [In process](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/in-process/): the stream file and the pipe held in memory that the test harness drives
+- [Benchmarks](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/benchmarks/): what the crate and the framework's runtime cost over `sea-streamer-file`, and the cost of the crate's own code
+- [Benchmarks: Numbers](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/benchmarks/numbers/): what each published number measures, and what it does not allow you to conclude
+- [Benchmarks: Methodology](https://powersemmi.github.io/ruststream-sea-file/latest/architecture/benchmarks/methodology/): the three loops, the two ways of reading a stream file and the code count with `just bench` and `just bench-code`
+
+## API reference
+
+- [Overview](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/index.html): a service, and a map that links each topic to its page here
+- [The stream file](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/file/index.html): the file broker, its policy and its prelude, each linked to its page
+- [The pipeline](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/stdio/index.html): the stdio broker, its policy and its prelude, each linked to its page
+- [Prelude](https://docs.rs/ruststream-sea-file/latest/ruststream_sea_file/prelude/index.html): the one glob for a service that spans both forms
+
+## Optional
+
+- [API reference](https://docs.rs/ruststream-sea-file): the full rustdoc of the crate, whose overview maps each topic to its pages here
+- [RustStream llms.txt](https://powersemmi.github.io/ruststream/llms.txt): the index of the framework's own documentation
+- [Source](https://github.com/powersemmi/ruststream-sea-file): the crate's repository
