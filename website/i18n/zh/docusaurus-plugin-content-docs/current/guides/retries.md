@@ -61,7 +61,7 @@ import TabItem from '@theme/TabItem';
 </Tabs>
 
 [`max_attempts`](../components/settlement/retries.md) 统计一个订单的每次投递，第一次也算在内。
-第三次投递不再重试：[`dead_letter`](api:ruststream::runtime::Mounting::dead_letter) 把它追加到 `orders.dead` 下，载荷和消息头保持到达时的样子。
+第三次投递不再重试：[`dead_letter`](api:ruststream::runtime::RouterWith::dead_letter) 把它追加到 `orders.dead` 下，载荷和消息头保持到达时的样子。
 在流文件上，死信键是同一文件中的又一个流键。
 只设上限而没有死信键时，用完尝试次数的订单不会写到任何地方。
 

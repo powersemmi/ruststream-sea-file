@@ -50,10 +50,10 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("word-count", "0.1.0")).with_broker(broker, |b| {
         b.include(subscriber("lines", Count).reply().build())
             .out_retry(Publish)
-            .to("lines.retry");
-        b.include(subscriber("counts", Total).build())
+            .to("lines.retry")
+            .include(subscriber("counts", Total).build())
             .out_retry(Publish)
-            .to("counts.retry");
+            .to("counts.retry")
     })
 }
 // --8<-- [end:stage]

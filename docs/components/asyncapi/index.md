@@ -25,7 +25,7 @@ The binary `#[ruststream::app]` writes prints the document with `asyncapi gen`.
 The dependency line:
 
 ```toml
-ruststream-sea-file = { version = "0.7", features = ["asyncapi"] }
+ruststream-sea-file = { version = "0.8", features = ["asyncapi"] }
 ```
 
 The service registers its stream file under the label `file` and its pipeline under `pipe`, the keys of their servers in the document.

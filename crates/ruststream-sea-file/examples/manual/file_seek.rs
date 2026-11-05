@@ -53,7 +53,7 @@ fn app(file: FileBroker) -> impl App<State = ()> {
             subscriber(FileStream::new("jobs"), Work)
                 .start_at(FilePosition::beginning())
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:handler]

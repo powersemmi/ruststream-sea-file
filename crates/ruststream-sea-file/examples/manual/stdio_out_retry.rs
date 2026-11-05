@@ -44,7 +44,7 @@ fn app() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
         b.include(subscriber("jobs", Work).build())
             .out_retry(Publish)
-            .to("jobs.retry");
+            .to("jobs.retry")
     })
 }
 // --8<-- [end:stage]
@@ -87,9 +87,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_registration_that_names_no_destination_does_not_start() {
-        let app =
-            RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-                b.include(subscriber("jobs", Work).build());
+        let app = RustStream::new(AppInfo::new("worker", "0.1.0"))
+            .with_broker(StdioBroker::new(), |b| {
+                b.include(subscriber("jobs", Work).build())
             });
 
         let refused = TestApp::start(app)

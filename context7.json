@@ -21,6 +21,7 @@
     "Read a finished file in one pass with `FileStream::new(key).replay()`, which completes at the end of the file or at the end-of-stream mark (Components > Subscriptions > replay).",
     "Resume where a run stopped: store one past the sequence `Ctx<Position>` read last and open with `start_at(FilePosition::sequence(n))`, since `ack` and `nack` report `AckError::Unsupported` (Components > Positions > start_at).",
     "Move a running file subscription from its handler with `Ctx<SeekHandle>`; it belongs to the file transport, and a handler that reads it does not compile against `StdioBroker` (Components > Positions > Seek).",
+    "Mount through the chain the `with_broker` closure returns: `|b| b.include(handler).out_reply(Publish)`, an `after_startup(..)` step written before the `include`s, and `|b| b` for a broker the service only publishes to (Components > Broker).",
     "Name the policy `Publish` at the mount site (`.out_reply(Publish)`, `.out(Marker, Publish)`); a handler body imports `ruststream::prelude::*` and bounds a slot as `Out<impl Publisher, Marker>` (Components > Publishing).",
     "A stream file grows without limit; cap it with `FileBroker::new(path).size_limit(nonzero!(bytes))`, after which the publish that reaches the cap and every later one fail (Components > Broker > size_limit).",
     "A pipeline stage that exits when its standard input ends starts the app, waits until `health().subscriptions().active` is zero, and calls `shutdown`; `#[ruststream::app]` runs until a signal (Guides > Shell pipelines).",

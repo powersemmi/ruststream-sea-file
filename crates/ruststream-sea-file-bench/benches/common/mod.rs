@@ -65,7 +65,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
-use ruststream::runtime::{AppInfo, BrokerScope, Identity, RunningApp, RustStream};
+use ruststream::runtime::{
+    AppInfo, BrokerScope, Identity, MountChain, MountRoutes, RunningApp, RustStream,
+};
 use ruststream_sea_file::FileBroker;
 use sea_streamer_file::{FileConnectOptions, FileId, FileProducerOptions, FileStreamer};
 use sea_streamer_types::{Producer as _, StreamKey, Streamer as _};
@@ -341,11 +343,16 @@ pub struct Pending {
     messages: usize,
 }
 
-/// The mount a scenario passes in: what `with_broker` does with the scope.
-pub type Mount<'a> = &'a mut BrokerScope<FileBroker, Identity, (), Latch>;
+/// The scope a scenario's mount receives: `with_broker` hands it over by value, and the mount
+/// returns the chain its `include` opens.
+pub type Mount = BrokerScope<FileBroker, Identity, (), Latch>;
 
 /// Builds a one-handler service on a fresh stream file, ready to be started by the body.
-pub fn pending(messages: usize, mount: impl FnOnce(Mount<'_>)) -> Pending {
+pub fn pending<Chain, Routes>(messages: usize, mount: impl FnOnce(Mount) -> Chain) -> Pending
+where
+    Chain: MountChain<Routes = Routes>,
+    Routes: MountRoutes<FileBroker, Identity, Latch>,
+{
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|since| since.as_nanos())

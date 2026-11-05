@@ -60,7 +60,7 @@ A [replay](../components/subscriptions/replay.md) reads a copy only while it is 
 </Tabs>
 
 [`max_attempts`](../components/settlement/retries.md) counts every delivery of one order, the first included.
-The third delivery is not retried: [`dead_letter`](api:ruststream::runtime::Mounting::dead_letter) appends it under `orders.dead`, payload and headers as they arrived.
+The third delivery is not retried: [`dead_letter`](api:ruststream::runtime::RouterWith::dead_letter) appends it under `orders.dead`, payload and headers as they arrived.
 On a stream file the dead-letter key is one more stream key of the same file.
 A cap with no dead-letter key beside it writes the spent order nowhere.
 

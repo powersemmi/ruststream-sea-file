@@ -41,7 +41,7 @@ impl Handle<Order> for Audit {
 fn reader(path: &str) -> impl App<State = ()> {
     let broker = FileBroker::new(path).existing_only();
     RustStream::new(AppInfo::new("auditor", "0.1.0")).with_broker(broker, |b| {
-        b.include(subscriber(FileStream::new("orders"), Audit).build());
+        b.include(subscriber(FileStream::new("orders"), Audit).build())
     })
 }
 

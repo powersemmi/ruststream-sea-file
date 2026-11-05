@@ -36,12 +36,10 @@ async fn charge(payment: &Payment, ctx: &mut Context<'_>) -> HandlerOutcome {
 
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/payments.ss"),
-        |b| {
-            b.include(charge);
-        },
-    )
+    RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/payments.ss"), |b| {
+            b.include(charge)
+        })
 }
 // --8<-- [end:handler]
 

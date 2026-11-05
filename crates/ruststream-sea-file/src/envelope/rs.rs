@@ -63,9 +63,7 @@ const FRAMED: &str = "rs2:";
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-///         .with_broker(FileBroker::new("/var/lib/orders.ss").envelope(Rs), |b| {
-///             b.include(handle);
-///         })
+///         .with_broker(FileBroker::new("/var/lib/orders.ss").envelope(Rs), |b| b.include(handle))
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

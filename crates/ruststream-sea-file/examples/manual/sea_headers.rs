@@ -74,7 +74,7 @@ fn app(file: FileBroker) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| {
         b.include(subscriber(FileStream::new("orders"), Confirm).build())
             .out(Receipts, Publish)
-            .build();
+            .build()
     })
 }
 // --8<-- [end:handler]

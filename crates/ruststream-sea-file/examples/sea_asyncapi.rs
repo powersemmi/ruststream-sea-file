@@ -41,13 +41,13 @@ async fn tee(order: &Order) -> Receipt {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "1.0.0"))
         .with_broker_labeled("file", file_broker(), |b| {
-            b.include(record).out_reply(FilePublish);
+            b.include(record).out_reply(FilePublish)
         })
         .with_broker_labeled("pipe", stdio_broker(), |b| {
             b.include(tee)
                 .out_reply(StdioPublish)
                 .out_retry(StdioPublish)
-                .to("lines.retry");
+                .to("lines.retry")
         })
 }
 // --8<-- [end:app]

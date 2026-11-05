@@ -45,7 +45,7 @@ fn app(file: FileBroker) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Invoice)
                 .start_at(FilePosition::beginning())
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:handler]

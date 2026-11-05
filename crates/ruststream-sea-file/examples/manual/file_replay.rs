@@ -40,7 +40,7 @@ impl Handle<Order> for Audit {
 /// The audit of the day's file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(file, |b| {
-        b.include(subscriber(FileStream::new("orders").replay(), Audit).build());
+        b.include(subscriber(FileStream::new("orders").replay(), Audit).build())
     })
 }
 

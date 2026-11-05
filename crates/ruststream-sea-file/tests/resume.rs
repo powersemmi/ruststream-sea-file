@@ -37,7 +37,7 @@ async fn invoice(order: &Order) -> HandlerOutcome {
 /// The service, opened at the first sequence the previous run did not invoice.
 fn app(file: FileBroker, resume_at: u64) -> RustStream {
     RustStream::new(AppInfo::new("invoicing", "0.1.0")).with_broker(file, |b| {
-        b.include(invoice.start_at(FilePosition::sequence(resume_at)));
+        b.include(invoice.start_at(FilePosition::sequence(resume_at)))
     })
 }
 
@@ -96,7 +96,7 @@ async fn record_in_process(file: &FileBroker) {
 /// one.
 async fn record_on_the_file(path: &str) {
     let shop =
-        RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(FileBroker::new(path), |_| {});
+        RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(FileBroker::new(path), |b| b);
     let shop = TestApp::start_live(shop)
         .await
         .expect("the producer starts on the file");

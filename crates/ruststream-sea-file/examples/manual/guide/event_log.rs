@@ -79,8 +79,8 @@ fn shop(file: FileBroker) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Checkout)
                 .reply()
                 .build(),
-        );
-        b.include(subscriber(FileStream::new("receipts"), Notify).build());
+        )
+        .include(subscriber(FileStream::new("receipts"), Notify).build())
     })
 }
 
@@ -113,7 +113,7 @@ fn audit(file: FileBroker) -> impl App<State = ()> {
             subscriber(FileStream::new("receipts").replay(), Total)
                 .batch(nonzero!(64))
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:audit]

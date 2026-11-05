@@ -5,6 +5,9 @@
 //! cargo test --example guide_testing --features testing
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 use std::time::Duration;
 
 use ruststream_sea_file::file::prelude::*;
@@ -50,7 +53,7 @@ fn service(file: FileBroker) -> RustStream {
     RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| {
         b.include(checkout)
             .max_attempts(nonzero!(3u32))
-            .dead_letter("orders.review");
+            .dead_letter("orders.review")
     })
 }
 

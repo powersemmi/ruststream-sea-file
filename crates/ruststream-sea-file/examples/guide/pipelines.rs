@@ -44,8 +44,11 @@ async fn price(order: &Order) -> Receipt {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("pricing", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        // A deferred copy leaves on standard output under this key, for a later stage.
-        b.include(price).out_retry(Publish).to("orders.retry");
+        b
+            // A deferred copy leaves on standard output under this key, for a later stage.
+            .include(price)
+            .out_retry(Publish)
+            .to("orders.retry")
     })
 }
 // --8<-- [end:stage]

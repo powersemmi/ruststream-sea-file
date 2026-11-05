@@ -49,15 +49,16 @@ fn app() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(
         FileBroker::new("/var/lib/shop/orders.ss"),
         |b| {
-            b.include(subscriber("orders", Ship).build());
-            // Runs once the subscriptions are open; a refused append fails the startup.
-            b.after_startup(Publish, async move |file| {
-                file.message(&Started {
-                    service: "shipping".to_owned(),
+            b
+                // Runs once the subscriptions are open; a refused append fails the startup.
+                .after_startup(Publish, async move |file| {
+                    file.message(&Started {
+                        service: "shipping".to_owned(),
+                    })
+                    .publish()
+                    .await
                 })
-                .publish()
-                .await
-            });
+                .include(subscriber("orders", Ship).build())
         },
     )
 }

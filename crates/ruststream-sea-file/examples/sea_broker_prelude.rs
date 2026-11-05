@@ -24,13 +24,13 @@ async fn answer(order: &Order) -> Receipt {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .with_broker(FileBroker::new("/var/lib/orders/orders.ss"), |b| {
-            b.include(record).out_reply(FilePublish);
+            b.include(record).out_reply(FilePublish)
         })
         .with_broker(StdioBroker::new(), |b| {
             b.include(answer)
                 .out_reply(StdioPublish)
                 .out_retry(StdioPublish)
-                .to("orders.retry");
+                .to("orders.retry")
         })
 }
 // --8<-- [end:mixed]

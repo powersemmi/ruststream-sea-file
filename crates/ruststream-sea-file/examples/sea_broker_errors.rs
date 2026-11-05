@@ -33,7 +33,7 @@ fn app() -> impl App {
             .out(Notes, Publish)
             .out_retry(Publish)
             .to("jobs.retry")
-            .build();
+            .build()
     })
 }
 

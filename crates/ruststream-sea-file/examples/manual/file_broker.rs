@@ -6,6 +6,8 @@
 //! cargo test --example manual_file_broker --features testing
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 // A plain build compiles the service; the tests that use it exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -43,7 +45,7 @@ fn service(path: &str) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Confirm)
                 .reply()
                 .build(),
-        );
+        )
     })
 }
 

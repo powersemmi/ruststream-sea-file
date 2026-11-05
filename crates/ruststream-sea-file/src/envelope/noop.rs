@@ -38,7 +38,7 @@ use super::{Envelope, Medium, SealError};
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("readings", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/readings.ss"), |b| {
-///             b.include(on_reading.envelope(NoOp));
+///             b.include(on_reading.envelope(NoOp))
 ///         })
 /// }
 /// ```

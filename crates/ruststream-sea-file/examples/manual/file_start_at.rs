@@ -44,7 +44,7 @@ fn app(file: FileBroker, resume_at: u64) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Invoice)
                 .start_at(FilePosition::sequence(resume_at))
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:resume]
@@ -116,7 +116,7 @@ mod tests {
 
         // The shop appends three orders while the service is down; the file numbers them 1 to 3.
         let shop = RustStream::new(AppInfo::new("shop", "0.1.0"))
-            .with_broker(FileBroker::new(&path), |_| {});
+            .with_broker(FileBroker::new(&path), |b| b);
         let shop = TestApp::start_live(shop).await?;
         for id in 1..=3 {
             shop.broker::<FileBroker>()

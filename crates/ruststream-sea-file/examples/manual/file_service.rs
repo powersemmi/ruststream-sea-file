@@ -40,7 +40,7 @@ fn app() -> impl App {
                 subscriber(FileStream::new("orders"), Accept)
                     .start_at(FilePosition::beginning())
                     .build(),
-            );
+            )
         },
     )
 }

@@ -168,12 +168,10 @@ fn a_delayed_retry_comes_back_through_the_file() {
             .expect("subscription opens");
         let mut trail = pin!(trail.stream());
 
-        let app = RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(
-            FileBroker::new(&path),
-            |b| {
-                b.include(reconcile).out(Trail, Publish).build();
-            },
-        );
+        let app = RustStream::new(AppInfo::new("retry", "0.1.0"))
+            .with_broker(FileBroker::new(&path), |b| {
+                b.include(reconcile).out(Trail, Publish).build()
+            });
         let running = app.start().await.expect("the service starts");
 
         inject(&reader, "orders", &Order { id: 1 }).await;
@@ -220,7 +218,7 @@ fn the_cap_carries_the_spent_delivery_to_the_dead_letter_stream_key() {
                     .max_attempts(nonzero!(3u32))
                     .dead_letter("parcels.dead")
                     .out(Trail, Publish)
-                    .build();
+                    .build()
             },
         );
         let running = app.start().await.expect("the service starts");
@@ -268,7 +266,7 @@ fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
             FileBroker::new(&path),
             |b| {
                 b.include(never_ready_uncollected)
-                    .max_attempts(nonzero!(2u32));
+                    .max_attempts(nonzero!(2u32))
             },
         );
         let running = app.start().await.expect("the service starts");

@@ -102,7 +102,7 @@ fn invoicing(file: FileBroker, checkpoint: Checkpoint) -> impl App<State = Invoi
                 subscriber(FileStream::new("orders"), Invoice)
                     .start_at(start)
                     .build(),
-            );
+            )
         })
 }
 
