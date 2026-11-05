@@ -33,6 +33,7 @@ use std::time::Duration;
 use ruststream::Name;
 use ruststream::conformance::harness::InProcessBroker;
 use ruststream::conformance::in_process::{self, Refusal};
+use ruststream::conformance::lifecycle::Unsent;
 use ruststream::conformance::{capabilities, harness, lifecycle, message_shape, retry, settlement};
 use ruststream::testing::Backlog;
 use ruststream_sea_file::{
@@ -154,6 +155,45 @@ fn file_broker_passes_lifecycle_in_process() {
             || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
             |name| FileStream::new(name),
             |connected| connected.publisher(),
+        )
+        .await;
+    });
+}
+
+/// A publish the stream file refuses hands the message back: the append only reads the bytes, so
+/// the failure carries the message whole and a service can retry or route it.
+#[allow(clippy::redundant_closure_for_method_calls)]
+#[test]
+fn file_broker_returns_a_refused_message() {
+    common::on_a_file(async {
+        let path = common::tmp_path("refused-returns");
+        let file = path.clone();
+        lifecycle::refused_publish_returns_message(
+            move || FileBroker::new(file.clone()),
+            |connected| connected.publisher(),
+            Unsent::Returned,
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// The same in process, on both transports: a test of a service sees the message come back where
+/// production hands it back.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[test]
+fn both_brokers_return_a_refused_message_in_process() {
+    common::rt().block_on(async {
+        lifecycle::refused_publish_returns_message(
+            || InProcessBroker::new(FileBroker::new(IN_PROCESS_PATH)),
+            |connected| connected.publisher(),
+            Unsent::Returned,
+        )
+        .await;
+        lifecycle::refused_publish_returns_message(
+            || InProcessBroker::new(StdioBroker::new()),
+            |connected| connected.publisher(),
+            Unsent::Returned,
         )
         .await;
     });
