@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/ruststream-sea-file", "crates/ruststream-sea-file-bench"]
 
 [workspace.package]
-version = "0.7.2"
+version = "0.8.0-rc.1"
 edition = "2024"
 # The core's floor, which also covers the RustSec fix for the time crate (a sea-streamer
 # dependency) that resolves only from 1.88.
@@ -16,9 +16,8 @@ authors = ["RustStream contributors"]
 [workspace.dependencies]
 ruststream-sea-file = { path = "crates/ruststream-sea-file" }
 
-# 0.7.5 is the first release whose health probe counts the subscriptions that still read,
-# which a pipeline stage watches to exit when its input ends.
-ruststream = { version = "0.7.5", default-features = false }
+# The client runs on tokio, so every build of the library needs the tokio runner.
+ruststream = { version = "0.8.0-rc.1", default-features = false, features = ["tokio"] }
 
 # The 1.0 release-candidate line: edition 2024 and a 1.85 floor, comfortably under this
 # workspace's own (the 0.5 stable line is over a year older). Pre-releases must be pinned

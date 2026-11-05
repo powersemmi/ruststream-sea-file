@@ -12,7 +12,10 @@ use bytes::Bytes;
 use ruststream::RawMessage;
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi::Bindings;
-use ruststream::{DefaultPublish, Lend, OutgoingMessage, PairError, PublishPolicy, Publisher};
+use ruststream::{
+    DefaultPublish, Lend, OutgoingMessage, PairError, PublishMessageError, PublishOutcome,
+    PublishPolicy, Publisher,
+};
 use sea_streamer_file::{FileErr, FileProducer};
 use sea_streamer_types::{Producer as _, StreamErr, StreamKey};
 
@@ -89,11 +92,20 @@ impl<Env: Envelope> Publisher for FilePublisher<Env> {
     type Error = SeaFileError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, SeaFileError, Lend> {
+        // The client only reads the bytes, so a refused message goes back whole.
+        let sent = self.append_message(&msg).await;
+        sent.map_err(|error| PublishMessageError::with_message(error, msg))
+    }
+}
+
+impl<Env: Envelope> FilePublisher<Env> {
+    /// Appends one message to its stream file, or to the in-process log.
+    async fn append_message(&self, msg: &OutgoingMessage<'_, &[u8]>) -> Result<(), SeaFileError> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
         let key = StreamKey::new(msg.name())
@@ -121,7 +133,7 @@ impl<Env: Envelope> Publisher for FilePublisher<Env> {
             }),
             #[cfg(feature = "testing")]
             Link::InProcess(file) => {
-                file.append(key, record.into_owned(), sent(&msg))
+                file.append(key, record.into_owned(), sent(msg))
                     .map_err(|err| SeaFileError::Publish {
                         stream: msg.name().to_owned(),
                         source: box_err(err),

@@ -4,7 +4,9 @@ use std::future::{Future, ready};
 
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi::{Binding, Bindings};
-use ruststream::runtime::{Declared, IntoSource, SubscriberBuilder, SubscriberSettings as _};
+use ruststream::runtime::{
+    AsDeclared, Declared, IntoDeclared, IntoSource, SubscriberBuilder, SubscriberSettings,
+};
 use ruststream::{
     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, StartAt, SubscriptionSource,
 };
@@ -113,7 +115,7 @@ impl FileStream {
 ///         })
 /// }
 /// ```
-pub trait FileEnvelopeExt: Sized {
+pub trait FileEnvelopeExt<Mk = AsDeclared>: IntoDeclared<Mk> {
     /// The mount chain reading in `Named`.
     type Enveloped<Named: Envelope>;
 
@@ -123,16 +125,17 @@ pub trait FileEnvelopeExt: Sized {
     fn envelope<Named: Envelope>(self, envelope: Named) -> Self::Enveloped<Named>;
 }
 
-impl<Decl, Def, Src, State, DefCodec> FileEnvelopeExt for Decl
+impl<Value, Mk, Def, Src, State, DefCodec> FileEnvelopeExt<Mk> for Value
 where
-    Decl: Declared<Settings = SubscriberBuilder<Def, Src, State, DefCodec>>,
+    Value: IntoDeclared<Mk>,
+    Value::Decl: Declared<Settings = SubscriberBuilder<Def, Src, State, DefCodec>>,
     Src: Reenvelope,
 {
     type Enveloped<Named: Envelope> =
         SubscriberBuilder<Def, Src::Reenveloped<Named>, State, DefCodec>;
 
     fn envelope<Named: Envelope>(self, envelope: Named) -> Self::Enveloped<Named> {
-        self.map_source(|source| source.reenvelope(envelope))
+        SubscriberSettings::<Mk>::map_source(self, |source| source.reenvelope(envelope))
     }
 }
 
@@ -146,7 +149,7 @@ where
 )]
 pub trait Reenvelope {
     /// The same source, reading in `Named`.
-    type Reenveloped<Named: Envelope>;
+    type Reenveloped<Named: Envelope>: Clone;
 
     /// The same source, reading in `envelope`.
     fn reenvelope<Named: Envelope>(self, envelope: Named) -> Self::Reenveloped<Named>;
@@ -160,7 +163,7 @@ impl<Choice> Reenvelope for FileStream<Choice> {
     }
 }
 
-impl<Source: Reenvelope, Position> Reenvelope for StartAt<Source, Position> {
+impl<Source: Reenvelope, Position: Clone> Reenvelope for StartAt<Source, Position> {
     type Reenveloped<Named: Envelope> = StartAt<Source::Reenveloped<Named>, Position>;
 
     fn reenvelope<Named: Envelope>(self, envelope: Named) -> Self::Reenveloped<Named> {

@@ -45,9 +45,9 @@ use ruststream::RawMessage;
 #[cfg(feature = "testing")]
 use ruststream::testing::{Coordinator, InProcess, TestableBroker};
 use ruststream::{
-    BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
-    Lend, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
-    Subscriber,
+    BatchStream, BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish,
+    DescribeServer, Lend, NamedCopies, OutgoingMessage, PairError, PublishMessageError,
+    PublishOutcome, PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
 use sea_streamer_types::{Producer as _, StreamKey, Streamer as _, StreamerUri};
@@ -569,7 +569,7 @@ impl<Env: Envelope> BatchSubscriber for StdioSubscriber<Env> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = SeaFileError> + Send + '_ {
         self.inner.batches(size)
     }
 }
@@ -680,11 +680,20 @@ impl<Env: Envelope> Publisher for StdioPublisher<Env> {
     type Error = SeaFileError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, SeaFileError, Lend> {
+        // The client only reads the bytes, so a refused message goes back whole.
+        let sent = self.write_line(&msg).await;
+        sent.map_err(|error| PublishMessageError::with_message(error, msg))
+    }
+}
+
+impl<Env: Envelope> StdioPublisher<Env> {
+    /// Writes one message as a line on standard output, or to the in-process pipe.
+    async fn write_line(&self, msg: &OutgoingMessage<'_, &[u8]>) -> Result<(), SeaFileError> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
         let line = envelope::seal(&self.envelope, msg.headers(), msg.payload(), Medium::Line)

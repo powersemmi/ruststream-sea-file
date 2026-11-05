@@ -20,8 +20,8 @@ use futures::Stream;
 #[cfg(feature = "testing")]
 use futures::future::Either;
 use ruststream::{
-    AckError, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage, Positioned,
-    Seekable, Seeker, Subscriber,
+    AckError, BatchStream, BatchSubscriber, BufferedSubscriber, HeaderMap, IncomingMessage,
+    Positioned, Seekable, Seeker, Settle, Subscriber,
 };
 use sea_streamer_file::{FileConsumer, FileErr, MessageSource, SeekTarget, is_end_of_stream};
 use sea_streamer_types::{Consumer as _, ShardId, SharedMessage, StreamErr, StreamKey, Timestamp};
@@ -177,7 +177,7 @@ impl<Env: Envelope> BatchSubscriber for FileSubscriber<Env> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = SeaFileError> + Send + '_ {
         self.inner.batches(size)
     }
 }
@@ -362,7 +362,9 @@ impl<Env: Envelope> IncomingMessage for FileMessage<Env> {
     fn headers(&self) -> &HeaderMap {
         self.message.headers()
     }
+}
 
+impl<Env: Envelope> Settle for FileMessage<Env> {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         self.message.ack()
     }

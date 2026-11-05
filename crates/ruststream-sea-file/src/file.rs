@@ -966,7 +966,9 @@ mod tests {
     use std::time::Duration;
 
     use futures::future::join_all;
-    use ruststream::{Broker as _, ConnectedBroker as _, OutgoingMessage, Publisher as _};
+    use ruststream::{
+        Broker as _, ConnectedBroker as _, OutgoingMessage, PublishMessageError, Publisher as _,
+    };
     use sea_streamer_file::{FileErr, FileId, MessageSource, StreamMode};
     use sea_streamer_types::{Buffer as _, Message as _, StreamKey};
     use tokio::runtime::Runtime;
@@ -1039,7 +1041,7 @@ mod tests {
                     let result = timeout(STEP, publish).await.unwrap_or_else(|_| {
                         panic!("publish {n} never returned ({concurrent} at a time)")
                     });
-                    (n, result)
+                    (n, result.map_err(PublishMessageError::into_error))
                 }
             }))
             .await;
@@ -1090,7 +1092,10 @@ mod tests {
             let size = || std::fs::metadata(&path).expect("the file is there").len();
             let publish = async |bytes: &[u8]| {
                 let publish = publisher.publish(OutgoingMessage::new("orders", bytes), None);
-                timeout(STEP, publish).await.expect("the publish returns")
+                timeout(STEP, publish)
+                    .await
+                    .expect("the publish returns")
+                    .map_err(PublishMessageError::into_error)
             };
 
             publish(&body(0)).await.expect("the first message fits");

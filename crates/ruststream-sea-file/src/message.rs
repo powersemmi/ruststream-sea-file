@@ -5,7 +5,7 @@ use std::fmt;
 use std::future::{Future, ready};
 use std::sync::OnceLock;
 
-use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Str};
+use ruststream::{AckError, HeaderMap, IncomingMessage, Positioned, Settle, Str};
 use sea_streamer_types::{MessageHeader, SharedMessage};
 
 use crate::envelope::{Envelope, Rs};
@@ -229,7 +229,9 @@ impl<Env: Envelope> IncomingMessage for SeaMessage<Env> {
             headers
         })
     }
+}
 
+impl<Env: Envelope> Settle for SeaMessage<Env> {
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
         ready(Err(AckError::Unsupported))
     }
