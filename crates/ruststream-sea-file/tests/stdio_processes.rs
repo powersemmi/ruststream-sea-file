@@ -242,10 +242,8 @@ async fn defer(_job: &Job) -> HandlerOutcome {
 /// failure this refusal exists to prevent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_registration_with_nowhere_to_put_its_copies_refuses_to_start() {
-    let app =
-        RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-            b.include(defer);
-        });
+    let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
+        .with_broker(StdioBroker::new(), |b| b.include(defer));
 
     let failed = app
         .start()

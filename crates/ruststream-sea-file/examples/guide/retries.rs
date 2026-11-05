@@ -86,11 +86,12 @@ fn shipping(file: FileBroker) -> impl App<State = Clients> {
     RustStream::new(AppInfo::new("shipping", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Clients::default()))
         .with_broker(file, |b| {
-            // Three deliveries of one order, the first included; then the dead-letter key.
-            b.include(ship)
+            b
+                // Three deliveries of one order, the first included; then the dead-letter key.
+                .include(ship)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("orders.dead");
-            b.include(review);
+                .dead_letter("orders.dead")
+                .include(review)
         })
 }
 

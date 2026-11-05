@@ -222,7 +222,7 @@ const PRIME_STREAM: &str = "ruststream-internal";
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/orders.ss").end_with_eos(), |b| {
-///             b.include(handle);
+///             b.include(handle)
 ///         })
 /// }
 /// ```
@@ -259,9 +259,7 @@ const PRIME_STREAM: &str = "ruststream-internal";
 /// /// The app `main` runs.
 /// pub fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-///         .with_broker(FileBroker::new("/var/lib/orders.ss"), |b| {
-///             b.include(confirm);
-///         })
+///         .with_broker(FileBroker::new("/var/lib/orders.ss"), |b| b.include(confirm))
 /// }
 ///
 /// pub async fn confirms_an_order() -> Result<(), Box<dyn Error>> {
@@ -358,7 +356,7 @@ impl<Env: Envelope> FileBroker<Env> {
     /// fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
     ///         .with_broker(FileBroker::new("/var/lib/orders.ss").envelope(NoOp), |b| {
-    ///             b.include(confirm);
+    ///             b.include(confirm)
     ///         })
     /// }
     /// ```
@@ -409,7 +407,7 @@ impl<Env: Envelope> FileBroker<Env> {
     ///     // The disk holds 64 GiB for this log, and the service stops writing there.
     ///     let broker = FileBroker::new("/var/lib/readings.ss").size_limit(nonzero!(64 << 30));
     ///     RustStream::new(AppInfo::new("readings", "0.1.0")).with_broker(broker, |b| {
-    ///         b.include(record);
+    ///         b.include(record)
     ///     })
     /// }
     /// ```
@@ -904,7 +902,7 @@ impl<Env: Envelope> ConnectedFileBroker<Env> {
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-///             b.include(confirm).out_reply(Publish);
+///             b.include(confirm).out_reply(Publish)
 ///         })
 /// }
 /// ```
@@ -942,9 +940,7 @@ pub mod prelude {
     //! #[ruststream::app]
     //! fn app() -> impl App {
     //!     RustStream::new(AppInfo::new("orders", "0.1.0"))
-    //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-    //!             b.include(handle);
-    //!         })
+    //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| b.include(handle))
     //! }
     //! ```
 

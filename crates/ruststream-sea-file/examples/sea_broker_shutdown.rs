@@ -36,9 +36,7 @@ fn service(path: &str) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         // Runs after the broker has shut down: the file is synced and closed.
         .after_shutdown(async move |_state| archive(&finished))
-        .with_broker(FileBroker::new(path), |b| {
-            b.include(record);
-        })
+        .with_broker(FileBroker::new(path), |b| b.include(record))
 }
 // --8<-- [end:hooks]
 

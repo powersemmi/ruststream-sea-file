@@ -47,7 +47,7 @@ fn app() -> impl App<State = ()> {
         |b| {
             b.include(subscriber(FileStream::new("labels"), Print).build())
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("labels.dead");
+                .dead_letter("labels.dead")
         },
     )
 }

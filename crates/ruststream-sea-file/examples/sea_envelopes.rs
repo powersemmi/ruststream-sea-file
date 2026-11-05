@@ -121,12 +121,12 @@ fn app(file: FileBroker) -> impl App<State = ()> {
         .with_broker(file, |b| {
             b.include(watch.envelope(NoOp))
                 .out(Alerts, FilePublish.envelope(Framed::new(JsonCodec)))
-                .build();
+                .build()
         })
         .with_broker(StdioBroker::new().envelope(PlantTab), |b| {
             b.include(tally)
                 .out_retry(StdioPublish)
-                .to("readings.retry");
+                .to("readings.retry")
         })
 }
 // --8<-- [end:app]

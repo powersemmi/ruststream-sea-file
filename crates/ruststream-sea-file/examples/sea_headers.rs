@@ -58,9 +58,8 @@ async fn confirm(
 
 /// The service on the file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| {
-        b.include(confirm).out(Receipts, Publish).build();
-    })
+    RustStream::new(AppInfo::new("checkout", "0.1.0"))
+        .with_broker(file, |b| b.include(confirm).out(Receipts, Publish).build())
 }
 // --8<-- [end:handler]
 

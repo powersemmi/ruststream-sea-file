@@ -66,9 +66,7 @@ pub const SEQUENCE_HEADER: &str = "stream-sequence";
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("jobs", "0.1.0"))
-///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
-///             b.include(work);
-///         })
+///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| b.include(work))
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

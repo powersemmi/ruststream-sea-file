@@ -44,7 +44,7 @@ fn writer(path: &str) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Record)
                 .reply()
                 .build(),
-        );
+        )
     })
 }
 
@@ -82,7 +82,7 @@ fn reader(path: &str) -> impl App<State = ()> {
                 subscriber(FileStream::new("receipts"), Audit)
                     .start_at(FilePosition::beginning())
                     .build(),
-            );
+            )
         },
     )
 }
@@ -168,7 +168,10 @@ mod tests {
             assert!(
                 matches!(
                     unread,
-                    Err(PublishError::Publish(TestError::NotSettled { .. }))
+                    Err(PublishError::Publish {
+                        source: TestError::NotSettled { .. },
+                        ..
+                    })
                 ),
                 "a receipt after the mark was read: {unread:?}",
             );

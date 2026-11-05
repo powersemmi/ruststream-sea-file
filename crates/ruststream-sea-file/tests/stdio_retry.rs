@@ -53,12 +53,10 @@ async fn the_deferred_copy_leaves_under_the_name_the_mount_site_gave_it() {
         .await
         .expect("subscription opens");
 
-    let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
-        StdioBroker::new().loopback(),
-        |b| {
-            b.include(defer).out_retry(Publish).to("jobs.retry");
-        },
-    );
+    let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
+        .with_broker(StdioBroker::new().loopback(), |b| {
+            b.include(defer).out_retry(Publish).to("jobs.retry")
+        });
     let running = app.start().await.expect("the service starts");
 
     downstream

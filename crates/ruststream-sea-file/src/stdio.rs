@@ -171,7 +171,7 @@ type StdioCell = Arc<OnceCell<Arc<StdioCore>>>;
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("shout", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-///         b.include(shout).out_retry(Publish).to("lines.retry");
+///         b.include(shout).out_retry(Publish).to("lines.retry")
 ///     })
 /// }
 /// ```
@@ -228,7 +228,7 @@ impl<Env: Envelope> StdioBroker<Env> {
     /// fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("confirm", "0.1.0"))
     ///         .with_broker(StdioBroker::new().envelope(Framed::new(JsonCodec)), |b| {
-    ///             b.include(confirm);
+    ///             b.include(confirm)
     ///         })
     /// }
     /// ```
@@ -654,7 +654,7 @@ impl<Env: Envelope> Subscriber for StdioDeliveries<Env> {
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-///         b.include(work).out_retry(Publish).to("jobs.retry");
+///         b.include(work).out_retry(Publish).to("jobs.retry")
 ///     })
 /// }
 /// ```
@@ -780,7 +780,7 @@ impl<Env: Envelope> StdioPublisher<Env> {
 ///         b.include(confirm)
 ///             .out_reply(StdioPublish)
 ///             .out_retry(StdioPublish)
-///             .to("orders.retry");
+///             .to("orders.retry")
 ///     })
 /// }
 /// ```
@@ -829,7 +829,7 @@ impl<Choice> StdioPublish<Choice> {
     /// #[ruststream::app]
     /// fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("confirm", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-    ///         b.include(confirm).out_reply(Publish.envelope(NoOp));
+    ///         b.include(confirm).out_reply(Publish.envelope(NoOp))
     ///     })
     /// }
     /// ```
@@ -921,7 +921,7 @@ fn stdio_extension(content_type: Option<&'static str>) -> Bindings {
 ///         b.include(confirm)
 ///             .out_reply(Publish)
 ///             .out_retry(Publish)
-///             .to("orders.retry");
+///             .to("orders.retry")
 ///     })
 /// }
 /// ```
@@ -963,7 +963,7 @@ pub mod prelude {
     //! fn app() -> impl App {
     //!     RustStream::new(AppInfo::new("pipeline", "0.1.0"))
     //!         .with_broker(StdioBroker::new(), |b| {
-    //!             b.include(work).out_retry(Publish).to("jobs.retry");
+    //!             b.include(work).out_retry(Publish).to("jobs.retry")
     //!         })
     //! }
     //! ```

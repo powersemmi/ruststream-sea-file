@@ -26,9 +26,7 @@ async fn record(order: &Order) -> Receipt {
 /// The recorder: when it shuts down, the file is marked finished.
 fn writer(path: &str) -> impl App<State = ()> {
     let broker = FileBroker::new(path).end_with_eos();
-    RustStream::new(AppInfo::new("recorder", "0.1.0")).with_broker(broker, |b| {
-        b.include(record);
-    })
+    RustStream::new(AppInfo::new("recorder", "0.1.0")).with_broker(broker, |b| b.include(record))
 }
 
 #[ruststream::app]
@@ -46,12 +44,8 @@ async fn audit(receipt: &Receipt) -> HandlerOutcome {
 }
 
 fn reader(path: &str) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("auditor", "0.1.0")).with_broker(
-        FileBroker::new(path).existing_only(),
-        |b| {
-            b.include(audit);
-        },
-    )
+    RustStream::new(AppInfo::new("auditor", "0.1.0"))
+        .with_broker(FileBroker::new(path).existing_only(), |b| b.include(audit))
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
@@ -115,7 +109,10 @@ mod tests {
             assert!(
                 matches!(
                     unread,
-                    Err(PublishError::Publish(TestError::NotSettled { .. }))
+                    Err(PublishError::Publish {
+                        source: TestError::NotSettled { .. },
+                        ..
+                    })
                 ),
                 "a receipt after the mark was read: {unread:?}",
             );

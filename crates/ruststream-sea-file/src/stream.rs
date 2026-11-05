@@ -55,7 +55,7 @@ use crate::subscriber::FileSubscriber;
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("audit", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/orders.ss").existing_only(), |b| {
-///             b.include(audit);
+///             b.include(audit)
 ///         })
 /// }
 /// ```
@@ -111,7 +111,7 @@ impl FileStream {
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("readings", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/plant.ss"), |b| {
-///             b.include(on_reading.envelope(NoOp));
+///             b.include(on_reading.envelope(NoOp))
 ///         })
 /// }
 /// ```
@@ -209,7 +209,7 @@ impl<Choice> FileStream<Choice> {
     ///         .with_broker(FileBroker::new("/var/lib/plant.ss"), |b| {
     ///             b.include(
     ///                 subscriber(FileStream::new("readings").envelope(NoOp), OnReading).build(),
-    ///             );
+    ///             )
     ///         })
     /// }
     /// # let _ = app;

@@ -30,7 +30,7 @@ async fn take_order(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(take_order).out_retry(Publish).to("orders.retry");
+        b.include(take_order).out_retry(Publish).to("orders.retry")
     })
 }
 // --8<-- [end:service]
@@ -81,10 +81,8 @@ mod tests {
     /// reaches the next process, never its own input.
     #[tokio::test]
     async fn a_stage_that_names_no_retry_destination_does_not_start() {
-        let stage =
-            RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-                b.include(take_order);
-            });
+        let stage = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(StdioBroker::new(), |b| b.include(take_order));
 
         let refused = TestApp::start(stage)
             .await

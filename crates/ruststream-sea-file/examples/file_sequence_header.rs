@@ -44,12 +44,10 @@ async fn number(order: &Order, ctx: &mut Context<'_>) -> Result<Numbered, Handle
 
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("numbering", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/orders.ss"),
-        |b| {
-            b.include(number);
-        },
-    )
+    RustStream::new(AppInfo::new("numbering", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/orders.ss"), |b| {
+            b.include(number)
+        })
 }
 // --8<-- [end:handler]
 
@@ -115,12 +113,10 @@ mod tests {
         /// A pipe counts the lines of a key from zero.
         #[tokio::test]
         async fn a_pipe_numbers_a_key_from_zero() -> Result<(), Box<dyn Error>> {
-            let app = RustStream::new(AppInfo::new("numbering", "0.1.0")).with_broker(
-                StdioBroker::new(),
-                |b| {
-                    b.include(read).out_retry(Publish).to("orders.retry");
-                },
-            );
+            let app = RustStream::new(AppInfo::new("numbering", "0.1.0"))
+                .with_broker(StdioBroker::new(), |b| {
+                    b.include(read).out_retry(Publish).to("orders.retry")
+                });
             let tb = TestApp::start(app).await?;
 
             tb.broker::<StdioBroker>()

@@ -49,7 +49,7 @@ fn app(file: FileBroker) -> impl App<State = ()> {
                 .batch(nonzero!(4))
                 .start_at(FilePosition::beginning())
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:mount]

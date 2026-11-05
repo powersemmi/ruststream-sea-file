@@ -103,7 +103,7 @@ const FILE: &str = "/var/lib/ruststream/envelopes.ss";
 async fn framed_json_carries_the_headers_through_a_stream_file() -> Result<(), Box<dyn Error>> {
     let broker = FileBroker::new(FILE).envelope(Framed::new(JsonCodec));
     let app = RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(broker, |b| {
-        b.include(confirm).out(Receipts, FilePublish).build();
+        b.include(confirm).out(Receipts, FilePublish).build()
     });
     let tb = TestApp::start(app).await?;
 
@@ -130,7 +130,7 @@ fn framed_json_records_on_a_real_stream_file_are_json_documents() {
         let path = common::tmp_path("envelopes");
         let broker = FileBroker::new(&path).envelope(Framed::new(JsonCodec));
         let app = RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(broker, |b| {
-            b.include(confirm).out(Receipts, FilePublish).build();
+            b.include(confirm).out(Receipts, FilePublish).build()
         });
         let tb = TestApp::start_live(app)
             .await
@@ -169,7 +169,7 @@ async fn framed_json_carries_the_headers_through_a_pipe() -> Result<(), Box<dyn 
             .out(Receipts, StdioPublish)
             .out_retry(StdioPublish)
             .to("orders.retry")
-            .build();
+            .build()
     });
     let tb = TestApp::start(app).await?;
 
@@ -190,12 +190,8 @@ async fn framed_json_carries_the_headers_through_a_pipe() -> Result<(), Box<dyn 
 
 #[tokio::test]
 async fn no_envelope_carries_a_bare_payload_through_a_stream_file() -> Result<(), Box<dyn Error>> {
-    let app = RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(
-        FileBroker::new(FILE).envelope(NoOp),
-        |b| {
-            b.include(report);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("plant", "0.1.0"))
+        .with_broker(FileBroker::new(FILE).envelope(NoOp), |b| b.include(report));
     let tb = TestApp::start(app).await?;
 
     tb.broker::<FileBroker<NoOp>>()
@@ -216,12 +212,10 @@ async fn no_envelope_carries_a_bare_payload_through_a_stream_file() -> Result<()
 
 #[tokio::test]
 async fn no_envelope_carries_a_bare_payload_through_a_pipe() -> Result<(), Box<dyn Error>> {
-    let app = RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(
-        StdioBroker::new().envelope(NoOp),
-        |b| {
-            b.include(report).out_retry(StdioPublish).to("feed.retry");
-        },
-    );
+    let app = RustStream::new(AppInfo::new("plant", "0.1.0"))
+        .with_broker(StdioBroker::new().envelope(NoOp), |b| {
+            b.include(report).out_retry(StdioPublish).to("feed.retry")
+        });
     let tb = TestApp::start(app).await?;
 
     tb.broker::<StdioBroker<NoOp>>()
@@ -253,9 +247,9 @@ async fn report_framed(reading: &Reading, Headers(meta): Headers<MaybeTenant>) -
 /// subscription reading documents takes it for a payload with no headers.
 #[tokio::test]
 async fn a_record_of_another_format_reads_as_a_payload() -> Result<(), Box<dyn Error>> {
-    let app =
-        RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(FileBroker::new(FILE), |b| {
-            b.include(report_framed.envelope(Framed::new(JsonCodec)));
+    let app = RustStream::new(AppInfo::new("plant", "0.1.0"))
+        .with_broker(FileBroker::new(FILE), |b| {
+            b.include(report_framed.envelope(Framed::new(JsonCodec)))
         });
     let tb = TestApp::start(app).await?;
 
@@ -311,8 +305,10 @@ async fn a_line_of_another_format_reads_as_a_payload() -> Result<(), Box<dyn Err
             .out(Feed, StdioPublish.envelope(NoOp))
             .out_retry(StdioPublish)
             .to("orders.retry")
-            .build();
-        b.include(report).out_retry(StdioPublish).to("feed.retry");
+            .build()
+            .include(report)
+            .out_retry(StdioPublish)
+            .to("feed.retry")
     });
     let tb = TestApp::start(app).await?;
 
@@ -341,7 +337,7 @@ async fn no_envelope_refuses_a_publish_with_a_header() -> Result<(), Box<dyn Err
         |b| {
             b.include(confirm)
                 .out(Receipts, FilePublish.envelope(NoOp))
-                .build();
+                .build()
         },
     );
     let tb = TestApp::start(app).await?;
@@ -375,7 +371,7 @@ async fn a_refused_publish_names_the_header_and_the_destination() -> Result<(), 
                     .with_headers(&acme())
                     .publish()
                     .await
-            });
+            })
         },
     );
     let Err(err) = TestApp::start(app).await else {
@@ -404,7 +400,7 @@ async fn no_envelope_on_a_pipe_refuses_a_payload_a_line_cannot_carry() -> Result
                     .message(&Line(b"first\nsecond".to_vec()))
                     .publish()
                     .await
-            });
+            })
         },
     );
     let Err(err) = TestApp::start(app).await else {
@@ -475,13 +471,10 @@ struct Sample {
 async fn headers_are_parsed_only_where_a_handler_reads_them() -> Result<(), Box<dyn Error>> {
     let envelope = Counting::default();
     let parsed = Arc::clone(&envelope.0);
-    let app = RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(
-        FileBroker::new(FILE).envelope(envelope),
-        |b| {
-            b.include(plain);
-            b.include(tagged);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("plant", "0.1.0"))
+        .with_broker(FileBroker::new(FILE).envelope(envelope), |b| {
+            b.include(plain).include(tagged)
+        });
     let tb = TestApp::start(app).await?;
 
     tb.broker::<FileBroker<Counting>>()
@@ -563,33 +556,30 @@ async fn reads_bare_records(app: impl App<State = ()>) -> Result<(), Box<dyn Err
 #[tokio::test]
 async fn the_envelope_composes_with_a_start_position_from_the_attribute()
 -> Result<(), Box<dyn Error>> {
-    reads_bare_records(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(
-        FileBroker::new(FILE),
-        |b| {
-            b.include(inspect_from_start.envelope(NoOp));
-        },
-    ))
+    reads_bare_records(
+        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(FileBroker::new(FILE), |b| {
+            b.include(inspect_from_start.envelope(NoOp))
+        }),
+    )
     .await
 }
 
 #[tokio::test]
 async fn the_envelope_then_a_start_position_at_the_mount_site() -> Result<(), Box<dyn Error>> {
-    reads_bare_records(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(
-        FileBroker::new(FILE),
-        |b| {
-            b.include(inspect.envelope(NoOp).start_at(FilePosition::beginning()));
-        },
-    ))
+    reads_bare_records(
+        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(FileBroker::new(FILE), |b| {
+            b.include(inspect.envelope(NoOp).start_at(FilePosition::beginning()))
+        }),
+    )
     .await
 }
 
 #[tokio::test]
 async fn a_start_position_then_the_envelope_at_the_mount_site() -> Result<(), Box<dyn Error>> {
-    reads_bare_records(RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(
-        FileBroker::new(FILE),
-        |b| {
-            b.include(inspect.start_at(FilePosition::beginning()).envelope(NoOp));
-        },
-    ))
+    reads_bare_records(
+        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(FileBroker::new(FILE), |b| {
+            b.include(inspect.start_at(FilePosition::beginning()).envelope(NoOp))
+        }),
+    )
     .await
 }

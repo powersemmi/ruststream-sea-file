@@ -58,7 +58,7 @@ fn service(file: FileBroker) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Checkout)
                 .reply()
                 .build(),
-        );
+        )
     })
 }
 

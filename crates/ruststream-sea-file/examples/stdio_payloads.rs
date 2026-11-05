@@ -29,7 +29,7 @@ async fn thumbnail(image: &Image<'_>) -> Thumbnail {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("thumbnails", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(thumbnail).out_retry(Publish).to("images.retry");
+        b.include(thumbnail).out_retry(Publish).to("images.retry")
     })
 }
 // --8<-- [end:stage]

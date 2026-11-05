@@ -68,7 +68,7 @@ use crate::stream::channel_extension;
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-///             b.include(confirm).out_reply(Publish);
+///             b.include(confirm).out_reply(Publish)
 ///         })
 /// }
 /// ```
@@ -214,7 +214,7 @@ async fn append(
 ///                     .publish()
 ///                     .await
 ///                     .map_err(io::Error::other)
-///             });
+///             })
 ///         })
 /// }
 /// ```
@@ -266,7 +266,7 @@ impl<Choice> FilePublish<Choice> {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
     ///         .with_broker(FileBroker::new("/var/lib/orders.ss"), |b| {
     ///             b.include(confirm)
-    ///                 .out_reply(Publish.envelope(Framed::new(JsonCodec)));
+    ///                 .out_reply(Publish.envelope(Framed::new(JsonCodec)))
     ///         })
     /// }
     /// ```

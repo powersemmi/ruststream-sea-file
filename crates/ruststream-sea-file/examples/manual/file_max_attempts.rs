@@ -52,7 +52,7 @@ fn app() -> impl App<State = ()> {
         FileBroker::new("/var/lib/shop/labels.ss"),
         |b| {
             b.include(subscriber(FileStream::new("labels"), Print).build())
-                .max_attempts(nonzero!(3u32));
+                .max_attempts(nonzero!(3u32))
         },
     )
 }

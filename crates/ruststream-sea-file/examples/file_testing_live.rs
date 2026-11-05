@@ -31,9 +31,8 @@ async fn confirm(order: &Order) -> Receipt {
 
 /// The service on the stream file at `path`.
 fn app(path: &str) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(FileBroker::new(path), |b| {
-        b.include(confirm);
-    })
+    RustStream::new(AppInfo::new("checkout", "0.1.0"))
+        .with_broker(FileBroker::new(path), |b| b.include(confirm))
 }
 
 #[ruststream::app]

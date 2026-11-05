@@ -28,9 +28,7 @@ async fn audit(order: &Order) -> HandlerOutcome {
 
 /// The audit of the day's file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(file, |b| {
-        b.include(audit);
-    })
+    RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(file, |b| b.include(audit))
 }
 
 fn main() -> ExitCode {

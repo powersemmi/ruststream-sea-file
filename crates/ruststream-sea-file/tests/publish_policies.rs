@@ -37,12 +37,10 @@ mod file_form {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_file_policy_pairs_against_the_in_process_broker()
     -> Result<(), Box<dyn std::error::Error>> {
-        let app = RustStream::new(AppInfo::new("policies", "0.1.0")).with_broker(
-            FileBroker::new("/var/lib/policies/orders.ss"),
-            |b| {
-                b.include(confirm).out(Reply, Publish);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("policies", "0.1.0"))
+            .with_broker(FileBroker::new("/var/lib/policies/orders.ss"), |b| {
+                b.include(confirm).out(Reply, Publish)
+            });
         let tb = TestApp::start(app).await?;
 
         tb.message(&Order { id: 1 }).to("orders").publish().await?;
@@ -79,12 +77,13 @@ mod stdio_form {
         let app = RustStream::new(AppInfo::new("policies", "0.1.0")).with_broker(
             StdioBroker::new(),
             |b| {
-                // A pipe addresses none of its retry copies, so the destination is named here,
-                // the way a service on a real pipeline names it.
-                b.include(work)
+                b
+                    // A pipe addresses none of its retry copies, so the destination is named here,
+                    // the way a service on a real pipeline names it.
+                    .include(work)
                     .out(Reply, Publish)
                     .out_retry(Publish)
-                    .to("jobs.retry");
+                    .to("jobs.retry")
             },
         );
         let tb = TestApp::start(app).await?;

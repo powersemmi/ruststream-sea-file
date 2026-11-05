@@ -67,7 +67,7 @@ fn service(file: FileBroker) -> RustStream {
                 .build(),
         )
         .max_attempts(nonzero!(3u32))
-        .dead_letter("orders.review");
+        .dead_letter("orders.review")
     })
 }
 

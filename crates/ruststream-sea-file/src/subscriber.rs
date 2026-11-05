@@ -88,7 +88,7 @@ pub(crate) struct Stamped<Env: Envelope> {
 ///         .with_broker(FileBroker::new("/tmp/readings.ss"), |b| {
 ///             b.include(aggregate.batch(nonzero!(4)))
 ///                 .max_attempts(nonzero!(3u32))
-///                 .dead_letter("readings.dead");
+///                 .dead_letter("readings.dead")
 ///         })
 /// }
 /// ```

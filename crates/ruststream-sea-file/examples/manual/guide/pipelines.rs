@@ -56,10 +56,11 @@ impl Handle<Order, Receipt> for Price {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("pricing", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        // A deferred copy leaves on standard output under this key, for a later stage.
-        b.include(subscriber("orders", Price).reply().build())
+        b
+            // A deferred copy leaves on standard output under this key, for a later stage.
+            .include(subscriber("orders", Price).reply().build())
             .out_retry(Publish)
-            .to("orders.retry");
+            .to("orders.retry")
     })
 }
 // --8<-- [end:stage]

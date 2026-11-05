@@ -36,12 +36,10 @@ async fn print(label: &Label, ctx: &mut Context<'_>) -> HandlerOutcome {
 
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("labels", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/labels.ss"),
-        |b| {
-            b.include(print).max_attempts(nonzero!(3u32));
-        },
-    )
+    RustStream::new(AppInfo::new("labels", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/labels.ss"), |b| {
+            b.include(print).max_attempts(nonzero!(3u32))
+        })
 }
 // --8<-- [end:handler]
 

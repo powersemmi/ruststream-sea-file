@@ -35,7 +35,7 @@ fn app() -> impl App {
         |b| {
             b.include(print)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("labels.dead");
+                .dead_letter("labels.dead")
         },
     )
 }

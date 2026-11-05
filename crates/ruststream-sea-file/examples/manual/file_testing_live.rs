@@ -51,7 +51,7 @@ fn app(path: &str) -> impl App<State = ()> {
             subscriber(FileStream::new("orders"), Confirm)
                 .reply()
                 .build(),
-        );
+        )
     })
 }
 

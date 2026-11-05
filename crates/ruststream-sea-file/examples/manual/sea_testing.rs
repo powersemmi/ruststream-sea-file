@@ -54,7 +54,7 @@ fn app() -> impl App<State = ()> {
                 subscriber(FileStream::new("orders"), Confirm)
                     .reply()
                     .build(),
-            );
+            )
         },
     )
 }
@@ -91,7 +91,7 @@ fn stage() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
         b.include(subscriber("jobs", Work).reply().build())
             .out_retry(StdioPublish)
-            .to("jobs.retry");
+            .to("jobs.retry")
     })
 }
 

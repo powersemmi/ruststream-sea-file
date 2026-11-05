@@ -85,7 +85,7 @@ mod json;
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("confirm", "0.1.0"))
 ///         .with_broker(StdioBroker::new().envelope(Framed::new(JsonCodec)), |b| {
-///             b.include(confirm);
+///             b.include(confirm)
 ///         })
 /// }
 /// ```
@@ -148,7 +148,7 @@ impl<Format: FrameCodec> Framed<Format> {
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("analytics", "0.1.0")).with_broker(
 ///         FileBroker::new("/var/lib/analytics.ss").envelope(Framed::new(AnalyticsCbor)),
-///         |_b| {},
+///         |b| b,
 ///     )
 /// }
 /// ```

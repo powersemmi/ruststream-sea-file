@@ -42,9 +42,8 @@ async fn drain(jobs: &[Job], ctx: &mut Context<'_, FileBatchContext>) -> Handler
 
 /// The worker on the job file `main` hands it, three jobs at a time.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(file, |b| {
-        b.include(drain.batch(nonzero!(3)));
-    })
+    RustStream::new(AppInfo::new("worker", "0.1.0"))
+        .with_broker(file, |b| b.include(drain.batch(nonzero!(3))))
 }
 // --8<-- [end:batch]
 
