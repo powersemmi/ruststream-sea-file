@@ -22,6 +22,9 @@ allow = [
     # permissive; CC0-1.0 (notify) is a public-domain dedication.
     "ISC",
     "CC0-1.0",
+    # assert_no_alloc, the failing allocator of the core's no-heap test leg, reached through the
+    # framework's `testing` feature; permissive.
+    "BSD-1-Clause",
 ]
 
 [bans]
