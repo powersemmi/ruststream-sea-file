@@ -83,7 +83,7 @@ use futures::StreamExt as _;
 use ruststream::runtime::RunningApp;
 use ruststream::{
     AckError, ConnectedBroker as _, IncomingMessage as _, OutgoingMessage, Publisher as _,
-    Subscriber as _,
+    Settle as _, Subscriber as _,
 };
 use ruststream_sea_file::file::prelude::*;
 use ruststream_sea_file::{ConnectedFileBroker, FileSubscriber};
@@ -700,9 +700,7 @@ async fn tail_consume(order: &Order, ctx: &mut Context<'_, (), Run>) -> HandlerO
 async fn start_replay(broker: FileBroker, run: Run) -> RunningApp {
     RustStream::new(AppInfo::new("sea-file-bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(run))
-        .with_broker(broker, |b| {
-            b.include(replay_consume);
-        })
+        .with_broker(broker, |b| b.include(replay_consume))
         .start()
         .await
         .expect("the service starts")
@@ -711,9 +709,7 @@ async fn start_replay(broker: FileBroker, run: Run) -> RunningApp {
 async fn start_tail(broker: FileBroker, run: Run) -> RunningApp {
     RustStream::new(AppInfo::new("sea-file-bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(run))
-        .with_broker(broker, |b| {
-            b.include(tail_consume);
-        })
+        .with_broker(broker, |b| b.include(tail_consume))
         .start()
         .await
         .expect("the service starts")
