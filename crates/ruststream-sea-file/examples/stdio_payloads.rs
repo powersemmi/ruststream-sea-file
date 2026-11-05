@@ -6,6 +6,9 @@
 //! cargo run --example stdio_payloads --features testing -- run
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 use ruststream_sea_file::stdio::prelude::*;
 
 // --8<-- [start:stage]

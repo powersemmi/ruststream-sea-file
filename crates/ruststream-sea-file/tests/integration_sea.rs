@@ -697,7 +697,8 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
                     batch.len() <= STDIO_BATCH.get(),
                     "a batch must never carry more than the size it was opened with",
                 );
-                received.extend(batch.drain(..).map(|msg| msg.payload().to_vec()));
+                received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
+                batch.clear();
             }
         }
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);

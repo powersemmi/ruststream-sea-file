@@ -7,6 +7,9 @@
 //! cargo test --example guide_retries --features testing
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::process::ExitCode;

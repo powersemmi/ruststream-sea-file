@@ -1,13 +1,15 @@
 // The benchmark is a binary of its own, not library surface: the framework's macros generate the
 // handler scaffolding, and a measured loop panics on a transport fault rather than threading a
-// `Result` through a scenario nobody recovers from.
+// `Result` through a scenario nobody recovers from. A service starts on the benchmark's own
+// runtime, and the app's cold path carries no Send.
 #![allow(
     missing_docs,
     unreachable_pub,
     unused_qualifications,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::future_not_send
 )]
 //! What this crate costs over the `sea-streamer-file` client it wraps, and what the framework's
 //! runtime costs on top of that.
