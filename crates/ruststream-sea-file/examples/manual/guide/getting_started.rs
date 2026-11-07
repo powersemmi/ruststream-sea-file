@@ -50,7 +50,7 @@ fn app() -> impl App {
                 subscriber(FileStream::new("orders"), TakeOrder)
                     .start_at(FilePosition::beginning())
                     .build(),
-            );
+            )
         },
     )
 }

@@ -48,9 +48,7 @@ use crate::subscriber::{FileMessage, FileSeeker};
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("jobs", "0.1.0"))
-///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
-///             b.include(work);
-///         })
+///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| b.include(work))
 /// }
 /// ```
 #[derive(Debug)]
@@ -112,9 +110,7 @@ impl BuildContext<FileMessage> for FileContext {
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("worker", "0.1.0"))
-///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| {
-///             b.include(drain.batch(nonzero!(3)));
-///         })
+///         .with_broker(FileBroker::new("/tmp/jobs.ss"), |b| b.include(drain.batch(nonzero!(3))))
 /// }
 /// ```
 ///
@@ -231,7 +227,7 @@ impl Field<FileContext> for Position {
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-///         b.include(work);
+///         b.include(work)
 ///     })
 /// }
 /// ```

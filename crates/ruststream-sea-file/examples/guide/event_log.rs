@@ -56,10 +56,8 @@ async fn notify(receipt: &Receipt) -> HandlerOutcome {
 }
 
 fn shop(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(file, |b| {
-        b.include(checkout);
-        b.include(notify);
-    })
+    RustStream::new(AppInfo::new("shop", "0.1.0"))
+        .with_broker(file, |b| b.include(checkout).include(notify))
 }
 
 fn main() -> ExitCode {
@@ -79,7 +77,7 @@ async fn total(batch: &[Receipt]) -> HandlerOutcome {
 /// The audit job: it reads the shop's file and never creates one.
 fn audit(file: FileBroker) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(file.existing_only(), |b| {
-        b.include(total.batch(nonzero!(64)));
+        b.include(total.batch(nonzero!(64)))
     })
 }
 // --8<-- [end:audit]

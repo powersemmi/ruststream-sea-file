@@ -31,7 +31,7 @@ async fn work(job: &Job) -> Done {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(work).out_retry(Publish).to("jobs.retry");
+        b.include(work).out_retry(Publish).to("jobs.retry")
     })
 }
 // --8<-- [end:stage]

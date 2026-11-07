@@ -100,10 +100,8 @@ async fn record(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_descriptor_form_mounts_on_the_in_process_broker()
 -> Result<(), Box<dyn std::error::Error>> {
-    let app =
-        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
-            b.include(confirm);
-        });
+    let app = RustStream::new(AppInfo::new("sources", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| b.include(confirm));
     let tb = TestApp::start(app).await?;
 
     tb.message(&Order { id: 1 }).to("orders").publish().await?;
@@ -130,10 +128,8 @@ async fn the_replay_mode_opens_at_the_start_of_the_retained_log()
     record(&broker, "recorded", run()).await?;
     record(&broker, "tailed", run()).await?;
 
-    let app = RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(broker, |b| {
-        b.include(replayed);
-        b.include(tailed);
-    });
+    let app = RustStream::new(AppInfo::new("sources", "0.1.0"))
+        .with_broker(broker, |b| b.include(replayed).include(tailed));
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
 
@@ -158,10 +154,8 @@ async fn the_replay_mode_opens_at_the_start_of_the_retained_log()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bare_stream_key_mounts_on_the_in_process_broker()
 -> Result<(), Box<dyn std::error::Error>> {
-    let app =
-        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
-            b.include(audited);
-        });
+    let app = RustStream::new(AppInfo::new("sources", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| b.include(audited));
     let tb = TestApp::start(app).await?;
 
     tb.message(&Order { id: 1 }).to("audit").publish().await?;
@@ -176,9 +170,9 @@ async fn a_bare_stream_key_mounts_on_the_in_process_broker()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_descriptor_mounts_through_the_manual_path_too()
 -> Result<(), Box<dyn std::error::Error>> {
-    let app =
-        RustStream::new(AppInfo::new("sources", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
-            b.include(subscriber(FileStream::new("archive"), Archive).build());
+    let app = RustStream::new(AppInfo::new("sources", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| {
+            b.include(subscriber(FileStream::new("archive"), Archive).build())
         });
     let tb = TestApp::start(app).await?;
 

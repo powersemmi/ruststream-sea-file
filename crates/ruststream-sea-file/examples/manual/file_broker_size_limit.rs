@@ -43,7 +43,7 @@ impl Handle<Reading> for Record {
 fn recorder(path: &str, limit: NonZeroU64) -> impl App<State = ()> {
     let broker = FileBroker::new(path).size_limit(limit);
     RustStream::new(AppInfo::new("recorder", "0.1.0")).with_broker(broker, |b| {
-        b.include(subscriber(FileStream::new("readings"), Record).build());
+        b.include(subscriber(FileStream::new("readings"), Record).build())
     })
 }
 

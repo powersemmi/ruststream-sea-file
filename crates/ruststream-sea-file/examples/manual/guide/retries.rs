@@ -7,6 +7,9 @@
 //! cargo test --example manual_guide_retries --features testing
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::future::{Future, ready};
@@ -103,11 +106,12 @@ fn shipping(file: FileBroker) -> impl App<State = Clients> {
     RustStream::new(AppInfo::new("shipping", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Clients::default()))
         .with_broker(file, |b| {
-            // Three deliveries of one order, the first included; then the dead-letter key.
-            b.include(subscriber(FileStream::new("orders"), Ship).build())
+            b
+                // Three deliveries of one order, the first included; then the dead-letter key.
+                .include(subscriber(FileStream::new("orders"), Ship).build())
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("orders.dead");
-            b.include(subscriber(FileStream::new("orders.dead"), Review).build());
+                .dead_letter("orders.dead")
+                .include(subscriber(FileStream::new("orders.dead"), Review).build())
         })
 }
 

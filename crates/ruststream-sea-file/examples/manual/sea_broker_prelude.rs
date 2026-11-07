@@ -46,13 +46,13 @@ fn app() -> impl App {
         .with_broker(FileBroker::new("/var/lib/orders/orders.ss"), |b| {
             let record = subscriber(FileStream::new("orders"), Record);
             b.include(record.reply().to("receipts").build())
-                .out_reply(FilePublish);
+                .out_reply(FilePublish)
         })
         .with_broker(StdioBroker::new(), |b| {
             b.include(subscriber("orders", Answer).reply().to("receipts").build())
                 .out_reply(StdioPublish)
                 .out_retry(StdioPublish)
-                .to("orders.retry");
+                .to("orders.retry")
         })
 }
 // --8<-- [end:mixed]

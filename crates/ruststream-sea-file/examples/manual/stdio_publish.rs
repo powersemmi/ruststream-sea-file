@@ -50,7 +50,7 @@ fn app() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("shouter", "0.1.0")).with_broker(StdioBroker::new(), |b| {
         b.include(subscriber("words", ShoutBack).reply().build())
             .out_retry(Publish)
-            .to("words.retry");
+            .to("words.retry")
     })
 }
 // --8<-- [end:stage]
@@ -115,7 +115,7 @@ mod tests {
             RustStream::new(AppInfo::new("blank", "0.1.0")).with_broker(StdioBroker::new(), |b| {
                 b.include(subscriber("words", BlankBack).reply().build())
                     .out_retry(Publish)
-                    .to("words.retry");
+                    .to("words.retry")
             });
         let tb = TestApp::start(app).await?;
 

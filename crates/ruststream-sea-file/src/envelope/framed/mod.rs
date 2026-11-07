@@ -85,7 +85,7 @@ mod json;
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("confirm", "0.1.0"))
 ///         .with_broker(StdioBroker::new().envelope(Framed::new(JsonCodec)), |b| {
-///             b.include(confirm);
+///             b.include(confirm)
 ///         })
 /// }
 /// ```
@@ -127,6 +127,12 @@ impl<Format: FrameCodec> Framed<Format> {
 /// impl Codec for AnalyticsCbor {
 ///     const CONTENT_TYPE: &'static str = "application/vnd.acme.analytics+cbor";
 ///
+///     type Frame<'a> = ();
+///
+///     fn frame<'a>(&'a self, _payload: &'a [u8]) -> Result<(), CodecError> {
+///         Ok(())
+///     }
+///
 ///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
 ///         CborCodec.encode(value)
 ///     }
@@ -142,7 +148,7 @@ impl<Format: FrameCodec> Framed<Format> {
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("analytics", "0.1.0")).with_broker(
 ///         FileBroker::new("/var/lib/analytics.ss").envelope(Framed::new(AnalyticsCbor)),
-///         |_b| {},
+///         |b| b,
 ///     )
 /// }
 /// ```
@@ -157,7 +163,7 @@ pub trait FrameCodec: Codec + Clone + 'static {
     /// # Errors
     ///
     /// [`SealError::Encode`] when the codec cannot encode the document.
-    fn frame(
+    fn frame_document(
         &self,
         headers: &HeaderMap,
         payload: &[u8],
@@ -240,7 +246,9 @@ impl<Format: FrameCodec> Envelope for Framed<Format> {
                 name: name.to_string(),
             });
         }
-        self.codec.frame(headers, payload, medium).map(Cow::Owned)
+        self.codec
+            .frame_document(headers, payload, medium)
+            .map(Cow::Owned)
     }
 
     fn open(&self, record: &[u8]) -> FramedOpened {
@@ -466,6 +474,12 @@ mod tests {
 
         impl Codec for Analytics {
             const CONTENT_TYPE: &'static str = "application/vnd.acme.analytics+cbor";
+
+            type Frame<'a> = ();
+
+            fn frame<'a>(&'a self, _payload: &'a [u8]) -> Result<(), CodecError> {
+                Ok(())
+            }
 
             fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
                 CborCodec.encode(value)

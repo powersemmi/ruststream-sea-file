@@ -40,9 +40,7 @@ async fn checkout(order: &Order) -> Receipt {
 }
 
 fn service(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| {
-        b.include(checkout);
-    })
+    RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(file, |b| b.include(checkout))
 }
 
 #[ruststream::app]

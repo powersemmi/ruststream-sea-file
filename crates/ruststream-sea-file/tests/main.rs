@@ -1,6 +1,9 @@
 //! The integration suite, one test binary: each file under `tests/` is a module of it, but for
 //! the two suites that own the process's standard input and output.
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 mod common;
 
 mod asyncapi;

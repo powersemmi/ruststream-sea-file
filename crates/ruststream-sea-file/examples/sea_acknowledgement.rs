@@ -29,9 +29,7 @@ async fn invoice(order: &Order) -> HandlerOutcome {
 
 /// The invoicing service on the file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("invoicing", "0.1.0")).with_broker(file, |b| {
-        b.include(invoice);
-    })
+    RustStream::new(AppInfo::new("invoicing", "0.1.0")).with_broker(file, |b| b.include(invoice))
 }
 // --8<-- [end:handler]
 

@@ -16,7 +16,7 @@ use super::{FrameCodec, FramedOpened, text_headers};
 use crate::envelope::{Medium, SealError};
 
 impl FrameCodec for JsonCodec {
-    fn frame(
+    fn frame_document(
         &self,
         headers: &HeaderMap,
         payload: &[u8],

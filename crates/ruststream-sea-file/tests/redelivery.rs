@@ -70,12 +70,8 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 #[tokio::test(start_paused = true)]
 async fn a_delayed_retry_comes_back_to_the_handler_on_a_stream_file() {
     // --8<-- [start:mount]
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        FileBroker::new(PATH),
-        |b| {
-            b.include(reconcile);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| b.include(reconcile));
     // --8<-- [end:mount]
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -122,7 +118,7 @@ async fn the_cap_sends_the_last_delivery_to_the_dead_letter_stream_key() {
         RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(never_ready)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("parcels.dead");
+                .dead_letter("parcels.dead")
         });
     // --8<-- [end:declaration]
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -168,7 +164,7 @@ async fn a_bare_stream_key_carries_its_declaration_to_the_broker() {
         RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(never_ready_by_name)
                 .max_attempts(nonzero!(2u32))
-                .dead_letter("pallets.dead");
+                .dead_letter("pallets.dead")
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -201,7 +197,7 @@ async fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
     let app =
         RustStream::new(AppInfo::new("capped", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
             b.include(never_ready_uncollected)
-                .max_attempts(nonzero!(2u32));
+                .max_attempts(nonzero!(2u32))
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -228,6 +224,7 @@ async fn a_cap_without_a_destination_stops_the_copies_and_writes_nothing() {
 /// retry position reads the delivery being retried, the way a reply's does, and takes the options
 /// position every publish transform takes. Neither transport has a per-message setting, so this
 /// one stays generic over them and mounts on any publisher.
+#[derive(Clone)]
 struct DeferredStamp;
 
 impl<C, Options> PublishTransform<ForReply<C>, Options> for DeferredStamp {
@@ -266,7 +263,7 @@ async fn a_transform_on_the_retry_position_stamps_the_deferred_copy() {
         |b| {
             b.include(settle)
                 .out_retry(Publish)
-                .transform(DeferredStamp);
+                .transform(DeferredStamp)
         },
     );
     // --8<-- [end:out_retry]
@@ -340,12 +337,8 @@ mod stdio_form {
     /// the step that fixes it.
     #[tokio::test]
     async fn a_mount_without_a_destination_refuses_to_start() {
-        let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
-            StdioBroker::new(),
-            |b| {
-                b.include(work);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
+            .with_broker(StdioBroker::new(), |b| b.include(work));
 
         let failed = TestApp::start(app)
             .await
@@ -362,12 +355,10 @@ mod stdio_form {
     /// it.
     #[tokio::test(start_paused = true)]
     async fn a_named_destination_records_the_copy_the_service_wrote() {
-        let app = RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(
-            StdioBroker::new(),
-            |b| {
-                b.include(work).out_retry(Publish).to("jobs.retry");
-            },
-        );
+        let app = RustStream::new(AppInfo::new("pipeline", "0.1.0"))
+            .with_broker(StdioBroker::new(), |b| {
+                b.include(work).out_retry(Publish).to("jobs.retry")
+            });
         let tb = TestApp::start(app).await.expect("startup failed");
 
         tb.broker::<StdioBroker>()
@@ -432,9 +423,9 @@ async fn record(order: &Order, Out(ledger): Out<impl Publisher, Ledger>) -> Hand
 /// assertion pins that, so a step smuggled in later has to be justified rather than noticed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publish_carries_no_per_message_options() {
-    let app =
-        RustStream::new(AppInfo::new("options", "0.1.0")).with_broker(FileBroker::new(PATH), |b| {
-            b.include(record).out(Ledger, Publish).build();
+    let app = RustStream::new(AppInfo::new("options", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| {
+            b.include(record).out(Ledger, Publish).build()
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

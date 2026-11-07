@@ -37,9 +37,7 @@ async fn work(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
 
 /// The worker on the job file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(file, |b| {
-        b.include(work);
-    })
+    RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(file, |b| b.include(work))
 }
 // --8<-- [end:handler]
 

@@ -117,9 +117,7 @@ pub use rs::Rs;
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("readings", "0.1.0"))
-///         .with_broker(StdioBroker::new().envelope(TenantTab), |b| {
-///             b.include(store);
-///         })
+///         .with_broker(StdioBroker::new().envelope(TenantTab), |b| b.include(store))
 /// }
 /// ```
 pub trait Envelope: Clone + Send + Sync + 'static {

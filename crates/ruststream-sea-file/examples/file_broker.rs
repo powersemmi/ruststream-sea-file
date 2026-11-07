@@ -7,6 +7,8 @@
 //! cargo test --example file_broker --features testing
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
 // A plain build compiles the service; the tests that use it exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -26,9 +28,8 @@ async fn confirm(order: &Order) -> Receipt {
 // --8<-- [start:broker]
 /// The service on the stream file at `path`.
 fn service(path: &str) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(FileBroker::new(path), |b| {
-        b.include(confirm);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(FileBroker::new(path), |b| b.include(confirm))
 }
 
 #[ruststream::app]

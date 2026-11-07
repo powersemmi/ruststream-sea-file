@@ -45,9 +45,9 @@ use ruststream::RawMessage;
 #[cfg(feature = "testing")]
 use ruststream::testing::{Coordinator, InProcess, TestableBroker};
 use ruststream::{
-    BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish, DescribeServer,
-    Lend, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher, ServerSpec, Subscribe,
-    Subscriber,
+    BatchStream, BatchSubscriber, Broker, BufferedSubscriber, ConnectedBroker, DefaultPublish,
+    DescribeServer, Lend, NamedCopies, OutgoingMessage, PairError, PublishMessageError,
+    PublishOutcome, PublishPolicy, Publisher, ServerSpec, Subscribe, Subscriber,
 };
 use sea_streamer_stdio::{StdioConnectOptions, StdioProducer, StdioProducerOptions, StdioStreamer};
 use sea_streamer_types::{Producer as _, StreamKey, Streamer as _, StreamerUri};
@@ -171,7 +171,7 @@ type StdioCell = Arc<OnceCell<Arc<StdioCore>>>;
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("shout", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-///         b.include(shout).out_retry(Publish).to("lines.retry");
+///         b.include(shout).out_retry(Publish).to("lines.retry")
 ///     })
 /// }
 /// ```
@@ -228,7 +228,7 @@ impl<Env: Envelope> StdioBroker<Env> {
     /// fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("confirm", "0.1.0"))
     ///         .with_broker(StdioBroker::new().envelope(Framed::new(JsonCodec)), |b| {
-    ///             b.include(confirm);
+    ///             b.include(confirm)
     ///         })
     /// }
     /// ```
@@ -569,7 +569,7 @@ impl<Env: Envelope> BatchSubscriber for StdioSubscriber<Env> {
     fn batches(
         &mut self,
         size: NonZeroUsize,
-    ) -> impl Stream<Item = Result<Self::Batch, SeaFileError>> + Send + '_ {
+    ) -> impl BatchStream<Self::Batch, Error = SeaFileError> + Send + '_ {
         self.inner.batches(size)
     }
 }
@@ -654,7 +654,7 @@ impl<Env: Envelope> Subscriber for StdioDeliveries<Env> {
 /// #[ruststream::app]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-///         b.include(work).out_retry(Publish).to("jobs.retry");
+///         b.include(work).out_retry(Publish).to("jobs.retry")
 ///     })
 /// }
 /// ```
@@ -680,11 +680,20 @@ impl<Env: Envelope> Publisher for StdioPublisher<Env> {
     type Error = SeaFileError;
     type Options = ();
 
-    async fn publish(
+    async fn publish<'msg>(
         &self,
-        msg: OutgoingMessage<'_, &[u8]>,
+        msg: OutgoingMessage<'msg, &'msg [u8]>,
         _options: Option<&()>,
-    ) -> Result<(), Self::Error> {
+    ) -> PublishOutcome<'msg, SeaFileError, Lend> {
+        // The client only reads the bytes, so a refused message goes back whole.
+        let sent = self.write_line(&msg).await;
+        sent.map_err(|error| PublishMessageError::with_message(error, msg))
+    }
+}
+
+impl<Env: Envelope> StdioPublisher<Env> {
+    /// Writes one message as a line on standard output, or to the in-process pipe.
+    async fn write_line(&self, msg: &OutgoingMessage<'_, &[u8]>) -> Result<(), SeaFileError> {
         let core = self.cell.get().ok_or(SeaFileError::NotConnected)?;
         core.ensure_open()?;
         let line = envelope::seal(&self.envelope, msg.headers(), msg.payload(), Medium::Line)
@@ -771,7 +780,7 @@ impl<Env: Envelope> Publisher for StdioPublisher<Env> {
 ///         b.include(confirm)
 ///             .out_reply(StdioPublish)
 ///             .out_retry(StdioPublish)
-///             .to("orders.retry");
+///             .to("orders.retry")
 ///     })
 /// }
 /// ```
@@ -820,7 +829,7 @@ impl<Choice> StdioPublish<Choice> {
     /// #[ruststream::app]
     /// fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("confirm", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-    ///         b.include(confirm).out_reply(Publish.envelope(NoOp));
+    ///         b.include(confirm).out_reply(Publish.envelope(NoOp))
     ///     })
     /// }
     /// ```
@@ -912,7 +921,7 @@ fn stdio_extension(content_type: Option<&'static str>) -> Bindings {
 ///         b.include(confirm)
 ///             .out_reply(Publish)
 ///             .out_retry(Publish)
-///             .to("orders.retry");
+///             .to("orders.retry")
 ///     })
 /// }
 /// ```
@@ -954,7 +963,7 @@ pub mod prelude {
     //! fn app() -> impl App {
     //!     RustStream::new(AppInfo::new("pipeline", "0.1.0"))
     //!         .with_broker(StdioBroker::new(), |b| {
-    //!             b.include(work).out_retry(Publish).to("jobs.retry");
+    //!             b.include(work).out_retry(Publish).to("jobs.retry")
     //!         })
     //! }
     //! ```

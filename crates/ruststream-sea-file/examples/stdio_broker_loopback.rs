@@ -28,8 +28,12 @@ async fn total(counted: &Counted) -> HandlerOutcome {
 fn app() -> impl App {
     let broker = StdioBroker::new().loopback();
     RustStream::new(AppInfo::new("word-count", "0.1.0")).with_broker(broker, |b| {
-        b.include(count).out_retry(Publish).to("lines.retry");
-        b.include(total).out_retry(Publish).to("counts.retry");
+        b.include(count)
+            .out_retry(Publish)
+            .to("lines.retry")
+            .include(total)
+            .out_retry(Publish)
+            .to("counts.retry")
     })
 }
 // --8<-- [end:stage]

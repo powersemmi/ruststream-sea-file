@@ -41,7 +41,8 @@ async fn a_stream_key_the_file_refuses_is_refused_in_process() {
         .publisher()
         .publish(OutgoingMessage::new(REFUSED_KEY, b"{}".as_slice()), None)
         .await
-        .expect_err("the file takes no such stream key");
+        .expect_err("the file takes no such stream key")
+        .into_error();
     assert!(
         matches!(published, SeaFileError::Invalid(ref why) if why.contains(REFUSED_KEY)),
         "got {published:?}",
@@ -67,7 +68,8 @@ async fn a_stream_key_a_pipe_refuses_is_refused_in_process() {
         .publisher()
         .publish(OutgoingMessage::new(REFUSED_KEY, b"{}".as_slice()), None)
         .await
-        .expect_err("a line takes no such stream key");
+        .expect_err("a line takes no such stream key")
+        .into_error();
     assert!(
         matches!(published, SeaFileError::Invalid(_)),
         "got {published:?}"
@@ -95,7 +97,8 @@ async fn an_empty_line_is_refused_in_process() {
         .publisher()
         .publish(OutgoingMessage::new("lines", b"".as_slice()), None)
         .await
-        .expect_err("an empty message must not be transmitted");
+        .expect_err("an empty message must not be transmitted")
+        .into_error();
     assert!(
         matches!(refused, SeaFileError::Invalid(ref why) if why.contains("empty")),
         "got {refused:?}",
@@ -459,8 +462,12 @@ mod a_pipe {
 
     fn app(broker: StdioBroker) -> impl App {
         RustStream::new(AppInfo::new("pipeline", "0.1.0")).with_broker(broker, |b| {
-            b.include(stage).out_retry(Publish).to("jobs.retry");
-            b.include(tee).out_retry(Publish).to("lines.retry");
+            b.include(stage)
+                .out_retry(Publish)
+                .to("jobs.retry")
+                .include(tee)
+                .out_retry(Publish)
+                .to("lines.retry")
         })
     }
 

@@ -29,7 +29,7 @@ async fn invoice(order: &Order) -> HandlerOutcome {
 /// The service, opened at the first sequence the previous run did not invoice.
 fn app(file: FileBroker, resume_at: u64) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("invoicing", "0.1.0")).with_broker(file, |b| {
-        b.include(invoice.start_at(FilePosition::sequence(resume_at)));
+        b.include(invoice.start_at(FilePosition::sequence(resume_at)))
     })
 }
 // --8<-- [end:resume]
@@ -101,7 +101,7 @@ mod tests {
 
         // The shop appends three orders while the service is down; the file numbers them 1 to 3.
         let shop = RustStream::new(AppInfo::new("shop", "0.1.0"))
-            .with_broker(FileBroker::new(&path), |_| {});
+            .with_broker(FileBroker::new(&path), |b| b);
         let shop = TestApp::start_live(shop).await?;
         for id in 1..=3 {
             shop.broker::<FileBroker>()

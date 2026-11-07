@@ -30,7 +30,7 @@ async fn work(job: &Job) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(work).out_retry(Publish).to("jobs.retry");
+        b.include(work).out_retry(Publish).to("jobs.retry")
     })
 }
 // --8<-- [end:stage]
@@ -69,10 +69,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_registration_that_names_no_destination_does_not_start() {
-        let app =
-            RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-                b.include(work);
-            });
+        let app = RustStream::new(AppInfo::new("worker", "0.1.0"))
+            .with_broker(StdioBroker::new(), |b| b.include(work));
 
         let refused = TestApp::start(app)
             .await

@@ -63,13 +63,13 @@ fn app() -> impl App {
         .with_broker_labeled("file", file_broker(), |b| {
             let record = subscriber(FileStream::new("orders"), Record);
             b.include(record.reply().to("receipts").build())
-                .out_reply(FilePublish);
+                .out_reply(FilePublish)
         })
         .with_broker_labeled("pipe", stdio_broker(), |b| {
             b.include(subscriber("lines", Tee).reply().to("lines.out").build())
                 .out_reply(StdioPublish)
                 .out_retry(StdioPublish)
-                .to("lines.retry");
+                .to("lines.retry")
         })
 }
 // --8<-- [end:app]

@@ -33,9 +33,8 @@ async fn aggregate(batch: &[Reading]) -> Vec<HandlerOutcome> {
 // --8<-- [start:mount]
 /// The service on the sensors' stream file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("readings", "0.1.0")).with_broker(file, |b| {
-        b.include(aggregate.batch(nonzero!(4)));
-    })
+    RustStream::new(AppInfo::new("readings", "0.1.0"))
+        .with_broker(file, |b| b.include(aggregate.batch(nonzero!(4))))
 }
 // --8<-- [end:mount]
 

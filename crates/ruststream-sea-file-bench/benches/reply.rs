@@ -38,9 +38,7 @@ async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmatio
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, |b| {
-        b.include(confirm);
-    })
+    common::pending(messages, |b| b.include(confirm))
 }
 
 // Five runs allocated 143,943 to 147,620 blocks over the longest run: how often the service

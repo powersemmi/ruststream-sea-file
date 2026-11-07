@@ -29,9 +29,7 @@ async fn report(order: &Order) -> HandlerOutcome {
 
 /// The report on the shop's stream file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("revenue", "0.1.0")).with_broker(file, |b| {
-        b.include(report);
-    })
+    RustStream::new(AppInfo::new("revenue", "0.1.0")).with_broker(file, |b| b.include(report))
 }
 // --8<-- [end:positions]
 

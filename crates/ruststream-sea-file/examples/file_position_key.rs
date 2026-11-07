@@ -42,12 +42,10 @@ async fn invoice(order: &Order, Ctx(at): Ctx<Position>) -> Invoiced {
 
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("invoicing", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/orders.ss"),
-        |b| {
-            b.include(invoice);
-        },
-    )
+    RustStream::new(AppInfo::new("invoicing", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/orders.ss"), |b| {
+            b.include(invoice)
+        })
 }
 // --8<-- [end:handler]
 

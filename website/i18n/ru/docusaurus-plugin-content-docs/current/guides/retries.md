@@ -61,7 +61,7 @@ import TabItem from '@theme/TabItem';
 </Tabs>
 
 [`max_attempts`](../components/settlement/retries.md) считает все доставки одного заказа, включая первую.
-Третья доставка не повторяется: [`dead_letter`](api:ruststream::runtime::Mounting::dead_letter) дописывает её под ключом `orders.dead` с полезной нагрузкой и заголовками в том виде, в каком они пришли.
+Третья доставка не повторяется: [`dead_letter`](api:ruststream::runtime::RouterWith::dead_letter) дописывает её под ключом `orders.dead` с полезной нагрузкой и заголовками в том виде, в каком они пришли.
 На файле потока ключ dead-letter - ещё один ключ потока того же файла.
 Предел без ключа dead-letter рядом с ним никуда не записывает заказ, у которого кончились попытки.
 

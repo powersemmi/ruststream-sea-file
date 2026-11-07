@@ -32,9 +32,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
         FileBroker::new("/var/lib/orders/orders.ss"),
-        |b| {
-            b.include(handle);
-        },
+        |b| b.include(handle),
     )
 }
 ```

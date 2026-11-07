@@ -50,12 +50,12 @@ a service resumes from a captured position. The file transport does not run on W
 
 ```toml
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "json"] }
-ruststream-sea-file = "0.7"
+ruststream = { version = "0.8", features = ["macros", "json"] }
+ruststream-sea-file = "0.8"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-ruststream-sea-file = { version = "0.7", features = ["testing"] }
+ruststream-sea-file = { version = "0.8", features = ["testing"] }
 ```
 
 ## Write a service
@@ -87,7 +87,7 @@ async fn confirm(order: &Order) -> Confirmation {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .with_broker(FileBroker::new("/var/lib/svc/orders.ss"), |b| {
-            b.include(confirm).out_reply(Publish);
+            b.include(confirm).out_reply(Publish)
         })
 }
 ```
