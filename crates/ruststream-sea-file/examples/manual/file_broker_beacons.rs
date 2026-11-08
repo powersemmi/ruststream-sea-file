@@ -44,7 +44,7 @@ fn broker(path: &str) -> FileBroker {
 
 fn service(path: &str) -> impl App<State = ()> {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker(path), |b| {
-        b.include(subscriber(FileStream::new("orders"), Accept).build());
+        b.include(subscriber(FileStream::new("orders"), Accept).build())
     })
 }
 // --8<-- [end:broker]

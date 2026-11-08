@@ -65,7 +65,7 @@ fn app() -> impl App<State = ()> {
                 subscriber(FileStream::new("orders"), Number)
                     .reply()
                     .build(),
-            );
+            )
         },
     )
 }
@@ -152,7 +152,7 @@ mod tests {
                 |b| {
                     b.include(subscriber("orders", Read).build())
                         .out_retry(Publish)
-                        .to("orders.retry");
+                        .to("orders.retry")
                 },
             );
             let tb = TestApp::start(app).await?;

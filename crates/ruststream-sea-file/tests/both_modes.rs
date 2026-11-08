@@ -61,8 +61,7 @@ async fn confirm(checkout: &Checkout) -> Receipt {
 /// The app `main` runs, on the file it is handed.
 fn app(path: &str) -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(FileBroker::new(path), |b| {
-        b.include(defer_once);
-        b.include(confirm);
+        b.include(defer_once).include(confirm)
     })
 }
 

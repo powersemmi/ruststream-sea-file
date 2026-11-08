@@ -6,6 +6,9 @@
 //! cargo run --example manual_stdio_payloads --features testing -- run
 //! ```
 
+// A test drives the app on its own task; the app's cold path carries no Send.
+#![allow(clippy::future_not_send)]
+
 use std::future::{Future, ready};
 use std::process::ExitCode;
 
@@ -42,7 +45,7 @@ fn app() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("thumbnails", "0.1.0")).with_broker(StdioBroker::new(), |b| {
         b.include(subscriber("images", Shrink).reply().build())
             .out_retry(Publish)
-            .to("images.retry");
+            .to("images.retry")
     })
 }
 // --8<-- [end:stage]

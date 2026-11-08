@@ -33,7 +33,7 @@ async fn shout(word: &Word) -> Shout {
 #[ruststream::app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("shouter", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(shout).out_retry(Publish).to("words.retry");
+        b.include(shout).out_retry(Publish).to("words.retry")
     })
 }
 // --8<-- [end:stage]
@@ -81,9 +81,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_empty_message_is_refused_and_nothing_is_written() -> Result<(), Box<dyn Error>> {
-        let app =
-            RustStream::new(AppInfo::new("blank", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-                b.include(blank).out_retry(Publish).to("words.retry");
+        let app = RustStream::new(AppInfo::new("blank", "0.1.0"))
+            .with_broker(StdioBroker::new(), |b| {
+                b.include(blank).out_retry(Publish).to("words.retry")
             });
         let tb = TestApp::start(app).await?;
 

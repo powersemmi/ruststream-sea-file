@@ -48,12 +48,10 @@ impl Handle<Payment> for Charge {
 }
 
 fn app() -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/payments.ss"),
-        |b| {
-            b.include(subscriber(FileStream::new("payments"), Charge).build());
-        },
-    )
+    RustStream::new(AppInfo::new("billing", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/payments.ss"), |b| {
+            b.include(subscriber(FileStream::new("payments"), Charge).build())
+        })
 }
 // --8<-- [end:handler]
 

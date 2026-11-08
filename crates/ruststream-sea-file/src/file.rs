@@ -222,7 +222,7 @@ const PRIME_STREAM: &str = "ruststream-internal";
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .with_broker(FileBroker::new("/var/lib/orders.ss").end_with_eos(), |b| {
-///             b.include(handle);
+///             b.include(handle)
 ///         })
 /// }
 /// ```
@@ -259,9 +259,7 @@ const PRIME_STREAM: &str = "ruststream-internal";
 /// /// The app `main` runs.
 /// pub fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
-///         .with_broker(FileBroker::new("/var/lib/orders.ss"), |b| {
-///             b.include(confirm);
-///         })
+///         .with_broker(FileBroker::new("/var/lib/orders.ss"), |b| b.include(confirm))
 /// }
 ///
 /// pub async fn confirms_an_order() -> Result<(), Box<dyn Error>> {
@@ -358,7 +356,7 @@ impl<Env: Envelope> FileBroker<Env> {
     /// fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
     ///         .with_broker(FileBroker::new("/var/lib/orders.ss").envelope(NoOp), |b| {
-    ///             b.include(confirm);
+    ///             b.include(confirm)
     ///         })
     /// }
     /// ```
@@ -409,7 +407,7 @@ impl<Env: Envelope> FileBroker<Env> {
     ///     // The disk holds 64 GiB for this log, and the service stops writing there.
     ///     let broker = FileBroker::new("/var/lib/readings.ss").size_limit(nonzero!(64 << 30));
     ///     RustStream::new(AppInfo::new("readings", "0.1.0")).with_broker(broker, |b| {
-    ///         b.include(record);
+    ///         b.include(record)
     ///     })
     /// }
     /// ```
@@ -904,7 +902,7 @@ impl<Env: Envelope> ConnectedFileBroker<Env> {
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-///             b.include(confirm).out_reply(Publish);
+///             b.include(confirm).out_reply(Publish)
 ///         })
 /// }
 /// ```
@@ -942,9 +940,7 @@ pub mod prelude {
     //! #[ruststream::app]
     //! fn app() -> impl App {
     //!     RustStream::new(AppInfo::new("orders", "0.1.0"))
-    //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| {
-    //!             b.include(handle);
-    //!         })
+    //!         .with_broker(FileBroker::new("/tmp/orders.ss"), |b| b.include(handle))
     //! }
     //! ```
 
@@ -966,7 +962,9 @@ mod tests {
     use std::time::Duration;
 
     use futures::future::join_all;
-    use ruststream::{Broker as _, ConnectedBroker as _, OutgoingMessage, Publisher as _};
+    use ruststream::{
+        Broker as _, ConnectedBroker as _, OutgoingMessage, PublishMessageError, Publisher as _,
+    };
     use sea_streamer_file::{FileErr, FileId, MessageSource, StreamMode};
     use sea_streamer_types::{Buffer as _, Message as _, StreamKey};
     use tokio::runtime::Runtime;
@@ -1039,7 +1037,7 @@ mod tests {
                     let result = timeout(STEP, publish).await.unwrap_or_else(|_| {
                         panic!("publish {n} never returned ({concurrent} at a time)")
                     });
-                    (n, result)
+                    (n, result.map_err(PublishMessageError::into_error))
                 }
             }))
             .await;
@@ -1090,7 +1088,10 @@ mod tests {
             let size = || std::fs::metadata(&path).expect("the file is there").len();
             let publish = async |bytes: &[u8]| {
                 let publish = publisher.publish(OutgoingMessage::new("orders", bytes), None);
-                timeout(STEP, publish).await.expect("the publish returns")
+                timeout(STEP, publish)
+                    .await
+                    .expect("the publish returns")
+                    .map_err(PublishMessageError::into_error)
             };
 
             publish(&body(0)).await.expect("the first message fits");

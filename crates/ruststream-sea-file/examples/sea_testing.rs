@@ -33,12 +33,10 @@ async fn confirm(order: &Order) -> Receipt {
 /// The service on a stream file: the app `main` runs, and the one the tests hand the harness.
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/orders.ss"),
-        |b| {
-            b.include(confirm);
-        },
-    )
+    RustStream::new(AppInfo::new("checkout", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/orders.ss"), |b| {
+            b.include(confirm)
+        })
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
@@ -61,7 +59,7 @@ async fn work(job: &Job) -> Done {
 /// The same kind of service as a pipeline stage.
 fn stage() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("worker", "0.1.0")).with_broker(StdioBroker::new(), |b| {
-        b.include(work).out_retry(StdioPublish).to("jobs.retry");
+        b.include(work).out_retry(StdioPublish).to("jobs.retry")
     })
 }
 

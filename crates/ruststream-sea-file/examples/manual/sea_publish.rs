@@ -67,14 +67,15 @@ fn app() -> impl App<State = ()> {
     RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker(
         FileBroker::new("/var/lib/shop/orders.ss"),
         |b| {
-            // The reply needs no policy: the runtime pairs the form's own `Publish`.
-            b.include(
-                subscriber(FileStream::new("orders"), Confirm)
-                    .reply()
-                    .build(),
-            )
-            .out(Ledger, Publish)
-            .build();
+            b
+                // The reply needs no policy: the runtime pairs the form's own `Publish`.
+                .include(
+                    subscriber(FileStream::new("orders"), Confirm)
+                        .reply()
+                        .build(),
+                )
+                .out(Ledger, Publish)
+                .build()
         },
     )
 }

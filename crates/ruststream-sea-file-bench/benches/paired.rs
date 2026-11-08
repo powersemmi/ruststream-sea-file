@@ -1,13 +1,15 @@
 // The benchmark is a binary of its own, not library surface: the framework's macros generate the
 // handler scaffolding, and a measured loop panics on a transport fault rather than threading a
-// `Result` through a scenario nobody recovers from.
+// `Result` through a scenario nobody recovers from. A service starts on the benchmark's own
+// runtime, and the app's cold path carries no Send.
 #![allow(
     missing_docs,
     unreachable_pub,
     unused_qualifications,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::future_not_send
 )]
 //! What this crate costs over the `sea-streamer-file` client it wraps, and what the framework's
 //! runtime costs on top of that.
@@ -83,7 +85,7 @@ use futures::StreamExt as _;
 use ruststream::runtime::RunningApp;
 use ruststream::{
     AckError, ConnectedBroker as _, IncomingMessage as _, OutgoingMessage, Publisher as _,
-    Subscriber as _,
+    Settle as _, Subscriber as _,
 };
 use ruststream_sea_file::file::prelude::*;
 use ruststream_sea_file::{ConnectedFileBroker, FileSubscriber};
@@ -700,9 +702,7 @@ async fn tail_consume(order: &Order, ctx: &mut Context<'_, (), Run>) -> HandlerO
 async fn start_replay(broker: FileBroker, run: Run) -> RunningApp {
     RustStream::new(AppInfo::new("sea-file-bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(run))
-        .with_broker(broker, |b| {
-            b.include(replay_consume);
-        })
+        .with_broker(broker, |b| b.include(replay_consume))
         .start()
         .await
         .expect("the service starts")
@@ -711,9 +711,7 @@ async fn start_replay(broker: FileBroker, run: Run) -> RunningApp {
 async fn start_tail(broker: FileBroker, run: Run) -> RunningApp {
     RustStream::new(AppInfo::new("sea-file-bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(run))
-        .with_broker(broker, |b| {
-            b.include(tail_consume);
-        })
+        .with_broker(broker, |b| b.include(tail_consume))
         .start()
         .await
         .expect("the service starts")

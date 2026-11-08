@@ -28,9 +28,7 @@ async fn ship(order: &Order) -> HandlerOutcome {
 
 /// The service on the stream file `main` hands it.
 fn app(file: FileBroker) -> impl App<State = ()> {
-    RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(file, |b| {
-        b.include(ship);
-    })
+    RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(file, |b| b.include(ship))
 }
 // --8<-- [end:descriptor]
 

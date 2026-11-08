@@ -50,13 +50,13 @@ fn document() -> Value {
         .with_broker_labeled("file", FileBroker::new(PATH), |b| {
             b.include(reconcile)
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("orders.dead");
+                .dead_letter("orders.dead")
         })
         .with_broker_labeled("pipe", StdioBroker::new(), |b| {
             b.include(tee)
                 .out(Reply, StdioPublish)
                 .out_retry(StdioPublish)
-                .to("lines.retry");
+                .to("lines.retry")
         });
     let json = build_spec(&app)
         .to_json()
@@ -185,7 +185,7 @@ fn framed_document() -> Value {
         .with_broker_labeled("file", FileBroker::new(PATH), |b| {
             b.include(archive.envelope(Framed::new(JsonCodec)))
                 .max_attempts(nonzero!(3u32))
-                .dead_letter("documents.dead");
+                .dead_letter("documents.dead")
         })
         .with_broker_labeled(
             "pipe",
@@ -194,7 +194,7 @@ fn framed_document() -> Value {
                 b.include(answer)
                     .out(Reply, StdioPublish.envelope(Rs))
                     .out_retry(StdioPublish)
-                    .to("requests.retry");
+                    .to("requests.retry")
             },
         );
     let json = build_spec(&app)

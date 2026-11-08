@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 
 `dead_letter` names the stream key a spent delivery is written to, with its payload, its headers and its delivery count.
 
-[`dead_letter(key)`](api:ruststream::runtime::Mounting::dead_letter) goes beside [`max_attempts(n)`](./retries.md).
+[`dead_letter(key)`](api:ruststream::runtime::RouterWith::dead_letter) goes beside [`max_attempts(n)`](./retries.md).
 The delivery that reaches the cap is published under that key instead of coming back.
 It keeps its payload and the headers it arrived with, and its retry count says how many deliveries the message got.
 On a stream file the key is one more stream inside the same file.

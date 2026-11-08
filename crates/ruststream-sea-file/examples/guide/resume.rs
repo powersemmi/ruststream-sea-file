@@ -81,9 +81,7 @@ fn invoicing(file: FileBroker, checkpoint: Checkpoint) -> impl App<State = Invoi
         .map_or(FilePosition::beginning(), FilePosition::sequence);
     RustStream::new(AppInfo::new("invoicing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Invoicing { checkpoint }))
-        .with_broker(file, |b| {
-            b.include(invoice.start_at(start));
-        })
+        .with_broker(file, |b| b.include(invoice.start_at(start)))
 }
 
 fn main() -> ExitCode {

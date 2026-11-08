@@ -25,12 +25,10 @@ async fn ship(order: &Order) -> HandlerOutcome {
 
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(
-        FileBroker::new("/var/lib/shop/orders.ss"),
-        |b| {
-            b.include(ship);
-        },
-    )
+    RustStream::new(AppInfo::new("shipping", "0.1.0"))
+        .with_broker(FileBroker::new("/var/lib/shop/orders.ss"), |b| {
+            b.include(ship)
+        })
 }
 // --8<-- [end:bare]
 
@@ -70,12 +68,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_key_the_file_does_not_take_stops_the_service_at_startup() {
-        let app = RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(
-            FileBroker::new("/var/lib/shop/orders.ss"),
-            |b| {
-                b.include(ship_eu);
-            },
-        );
+        let app = RustStream::new(AppInfo::new("shipping", "0.1.0"))
+            .with_broker(FileBroker::new("/var/lib/shop/orders.ss"), |b| {
+                b.include(ship_eu)
+            });
 
         let refused = TestApp::start(app)
             .await

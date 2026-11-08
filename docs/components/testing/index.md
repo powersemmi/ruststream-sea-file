@@ -35,7 +35,7 @@ The dependency line:
 
 ```toml
 [dev-dependencies]
-ruststream-sea-file = { version = "0.7", features = ["testing"] }
+ruststream-sea-file = { version = "0.8", features = ["testing"] }
 ```
 
 A file service answers an order with a receipt.

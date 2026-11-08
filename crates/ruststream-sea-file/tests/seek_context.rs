@@ -149,9 +149,11 @@ async fn a_handler_reads_its_position_off_the_delivery_context()
     let app = RustStream::new(AppInfo::new("seek-context", "0.1.0")).with_broker(
         FileBroker::new(PATH),
         |b| {
-            // The audit reply through the policy the mount site names, rather than through the
-            // broker's default: the same route the other tests take by omission.
-            b.include(work).out(Reply, Publish);
+            b
+                // The audit reply through the policy the mount site names, rather than through the
+                // broker's default: the same route the other tests take by omission.
+                .include(work)
+                .out(Reply, Publish)
         },
     );
     let tb = TestApp::start(app).await?;
@@ -182,9 +184,8 @@ async fn a_handler_repositions_its_own_subscription_through_the_seek_key()
     let broker = FileBroker::new(PATH);
     record(&broker, "jobs", poisoned_run()).await?;
 
-    let app = RustStream::new(AppInfo::new("seek-context", "0.1.0")).with_broker(broker, |b| {
-        b.include(work);
-    });
+    let app = RustStream::new(AppInfo::new("seek-context", "0.1.0"))
+        .with_broker(broker, |b| b.include(work));
     let tb = TestApp::start(app).await?;
     // The subscription opens at the start of the retained log, so the whole recorded run replays
     // into it; nothing else is published.
@@ -215,9 +216,8 @@ async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
     let broker = FileBroker::new(PATH);
     record(&broker, "digest", poisoned_run()).await?;
 
-    let app = RustStream::new(AppInfo::new("batch-context", "0.1.0")).with_broker(broker, |b| {
-        b.include(digest.batch(nonzero!(4)));
-    });
+    let app = RustStream::new(AppInfo::new("batch-context", "0.1.0"))
+        .with_broker(broker, |b| b.include(digest.batch(nonzero!(4))));
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
 
@@ -242,12 +242,8 @@ async fn a_batch_body_reaches_the_seek_handle_through_the_batch_context()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reply_type_that_declares_a_key_is_published_there()
 -> Result<(), Box<dyn std::error::Error>> {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        FileBroker::new(PATH),
-        |b| {
-            b.include(checkout);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| b.include(checkout));
     let tb = TestApp::start(app).await?;
 
     tb.broker::<FileBroker>()
@@ -269,12 +265,10 @@ async fn a_reply_type_that_declares_a_key_is_published_there()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reply_type_declaring_no_key_takes_the_one_the_subscriber_names()
 -> Result<(), Box<dyn std::error::Error>> {
-    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0")).with_broker(
-        FileBroker::new(PATH),
-        |b| {
-            b.include(review).out(Reply, Publish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-destination", "0.1.0"))
+        .with_broker(FileBroker::new(PATH), |b| {
+            b.include(review).out(Reply, Publish)
+        });
     let tb = TestApp::start(app).await?;
 
     tb.broker::<FileBroker>()

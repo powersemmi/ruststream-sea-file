@@ -11,7 +11,7 @@ import TabItem from '@theme/TabItem';
 
 On a pipe a deferred copy goes to the next stage, so the mount site names it with `out_retry(Publish).to(key)` or the service does not start.
 
-[`out_retry(policy)`](api:ruststream::runtime::Mounting::out_retry) names the publisher the runtime's deferred copies leave through, and `.to(key)` names the stream key they go to.
+[`out_retry(policy)`](api:ruststream::runtime::RouterWith::out_retry) names the publisher the runtime's deferred copies leave through, and `.to(key)` names the stream key they go to.
 Standard output reaches the next process in the pipeline and never this one's standard input.
 So a copy cannot come back to the stage that deferred it, and the stage says where it goes.
 Every registration on [`StdioBroker`](../broker/stdio-broker.md) names it, because a handler may answer [`retry_after`](./retry-after.md) on any delivery.

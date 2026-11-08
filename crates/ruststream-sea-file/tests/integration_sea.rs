@@ -3,6 +3,7 @@
 
 use crate::common;
 
+use std::future::poll_fn;
 use std::num::NonZeroUsize;
 use std::pin::pin;
 use std::time::Duration;
@@ -11,8 +12,8 @@ use futures::StreamExt;
 #[cfg(feature = "testing")]
 use ruststream::testing::{InProcess, TestableBroker};
 use ruststream::{
-    AckError, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
-    OutgoingMessage, Positioned, Publisher, Seekable, Seeker, Subscribe, Subscriber,
+    AckError, BatchStream, BatchSubscriber, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
+    OutgoingMessage, Positioned, Publisher, Seekable, Seeker, Settle, Subscribe, Subscriber,
 };
 use ruststream_sea_file::{
     FileBroker, FilePosition, FileStream, SEQUENCE_HEADER, SeaFileError, StdioBroker,
@@ -664,7 +665,8 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         let empty = publisher
             .publish(OutgoingMessage::new("pipe", b"".as_slice()), None)
             .await
-            .expect_err("an empty message must not be transmitted");
+            .expect_err("an empty message must not be transmitted")
+            .into_error();
         assert!(
             matches!(empty, SeaFileError::Invalid(ref why) if why.contains("empty")),
             "an empty message must say why it cannot travel, got {empty:?}",
@@ -681,18 +683,22 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         let mut received = Vec::new();
         {
             let mut batches = pin!(subscriber.batches(STDIO_BATCH));
+            // The slot the runtime would lend: one allocation, reused for every batch.
+            let mut batch = Vec::with_capacity(STDIO_BATCH.get());
             while received.len() < 3 {
-                let batch = tokio::time::timeout(RECV_TIMEOUT, batches.next())
+                let filled = poll_fn(|cx| batches.as_mut().poll_fill(cx, &mut batch));
+                tokio::time::timeout(RECV_TIMEOUT, filled)
                     .await
                     .expect("batch arrives")
                     .expect("stream is open")
                     .expect("batch is ok");
-                assert!(!batch.is_empty(), "a yielded batch must not be empty");
+                assert!(!batch.is_empty(), "a filled batch must not be empty");
                 assert!(
                     batch.len() <= STDIO_BATCH.get(),
                     "a batch must never carry more than the size it was opened with",
                 );
                 received.extend(batch.iter().map(|msg| msg.payload().to_vec()));
+                batch.clear();
             }
         }
         assert_eq!(received, vec![vec![0], vec![1], vec![2]]);
@@ -714,7 +720,8 @@ fn stdio_loopback_carries_binary_payloads_and_batches() {
         let after = publisher
             .publish(OutgoingMessage::new("pipe", b"late".as_slice()), None)
             .await
-            .expect_err("a publish through a closed transport must error");
+            .expect_err("a publish through a closed transport must error")
+            .into_error();
         assert!(
             matches!(after, SeaFileError::NotConnected),
             "a publish after shutdown must report a closed transport, got {after:?}",
