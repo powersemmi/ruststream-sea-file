@@ -1277,9 +1277,9 @@ dependencies = [
 
 [[package]]
 name = "sea-streamer-types"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1038a581b330b496effb5bfb39d1220201746c19242417ee5d839f31adcce3a"
+checksum = "4a58e27cdc2c89e3f79a8718548a1e61c8df3988747af65faf6dd486eabae3fe"
 dependencies = [
  "futures",
  "thiserror",
